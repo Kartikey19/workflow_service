@@ -89,7 +89,17 @@ var RunDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Buckets: []float64{.1, .5, 1, 5, 15, 60, 300, 900, 3600, 21600, 86400, 604800},
 }, []string{"workflow", "status"})
 
-func init() { Registry.MustRegister(RunDuration) }
+func init() {
+	Registry.MustRegister(RunDuration)
+	// Known label values start at zero, so dashboards and alerts see the
+	// series before the first event rather than "no data".
+	for _, action := range []string{"wake_waiting", "run_deadline", "lease_released"} {
+		SweeperActions.WithLabelValues(action)
+	}
+	for _, result := range []string{"delivered", "no_waiter", "duplicate", "invalid_payload"} {
+		Signals.WithLabelValues(result)
+	}
+}
 
 // Querier is the database surface the engine gauges read at scrape time.
 type Querier interface {

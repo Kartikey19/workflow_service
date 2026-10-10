@@ -14,7 +14,7 @@ import (
 const cancelRunNodes = `-- name: CancelRunNodes :many
 update node_executions
    set status = 'cancelled', ended_at = now(),
-       lease_owner = null, lease_expires_at = null
+       lease_owner = null, lease_token = null, lease_expires_at = null
  where run_id = $1
    and status in ('ready', 'waiting')
 returning id
@@ -43,21 +43,28 @@ func (q *Queries) CancelRunNodes(ctx context.Context, runID pgtype.UUID) ([]pgty
 const cancelRunningNode = `-- name: CancelRunningNode :execrows
 update node_executions
    set status = 'cancelled', ended_at = now(), metrics = $1,
-       lease_owner = null, lease_expires_at = null
+       lease_owner = null, lease_token = null, lease_expires_at = null
  where id = $2
    and status = 'running'
    and lease_owner = $3
+   and lease_token = $4
 `
 
 type CancelRunningNodeParams struct {
-	Metrics  []byte      `json:"metrics"`
-	ID       pgtype.UUID `json:"id"`
-	WorkerID pgtype.Text `json:"worker_id"`
+	Metrics    []byte      `json:"metrics"`
+	ID         pgtype.UUID `json:"id"`
+	WorkerID   pgtype.Text `json:"worker_id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
 }
 
 // The run ended while this attempt ran; record that the result was not used.
 func (q *Queries) CancelRunningNode(ctx context.Context, arg CancelRunningNodeParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelRunningNode, arg.Metrics, arg.ID, arg.WorkerID)
+	result, err := q.db.Exec(ctx, cancelRunningNode,
+		arg.Metrics,
+		arg.ID,
+		arg.WorkerID,
+		arg.LeaseToken,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -68,6 +75,7 @@ const claimReady = `-- name: ClaimReady :many
 update node_executions ne
    set status           = 'running',
        lease_owner      = $1,
+       lease_token      = gen_random_uuid(),
        lease_expires_at = now() + $2::interval,
        started_at       = coalesce(ne.started_at, now())
  where ne.id in (
@@ -79,7 +87,7 @@ update node_executions ne
         for update skip locked
         limit $3
  )
-returning ne.id, ne.run_id, ne.tenant_id, ne.node_id, ne.node_type, ne.branch_key, ne.attempt, ne.status, ne.input, ne.output, ne.error, ne.metrics, ne.idempotency_key, ne.run_after, ne.lease_owner, ne.lease_expires_at, ne.created_at, ne.started_at, ne.ended_at
+returning ne.id, ne.run_id, ne.tenant_id, ne.node_id, ne.node_type, ne.branch_key, ne.attempt, ne.status, ne.input, ne.output, ne.error, ne.metrics, ne.idempotency_key, ne.run_after, ne.lease_owner, ne.lease_expires_at, ne.created_at, ne.started_at, ne.ended_at, ne.lease_token
 `
 
 type ClaimReadyParams struct {
@@ -117,6 +125,7 @@ func (q *Queries) ClaimReady(ctx context.Context, arg ClaimReadyParams) ([]NodeE
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.EndedAt,
+			&i.LeaseToken,
 		); err != nil {
 			return nil, err
 		}
@@ -136,20 +145,23 @@ update node_executions
        metrics          = $4,
        ended_at         = now(),
        lease_owner      = null,
+       lease_token      = null,
        lease_expires_at = null
  where id = $5
    and status = 'running'
    and lease_owner = $6
+   and lease_token = $7
    and lease_expires_at > now()
 `
 
 type CompleteNodeParams struct {
-	Status   string      `json:"status"`
-	Output   []byte      `json:"output"`
-	Error    []byte      `json:"error"`
-	Metrics  []byte      `json:"metrics"`
-	ID       pgtype.UUID `json:"id"`
-	WorkerID pgtype.Text `json:"worker_id"`
+	Status     string      `json:"status"`
+	Output     []byte      `json:"output"`
+	Error      []byte      `json:"error"`
+	Metrics    []byte      `json:"metrics"`
+	ID         pgtype.UUID `json:"id"`
+	WorkerID   pgtype.Text `json:"worker_id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
 }
 
 func (q *Queries) CompleteNode(ctx context.Context, arg CompleteNodeParams) (int64, error) {
@@ -160,6 +172,7 @@ func (q *Queries) CompleteNode(ctx context.Context, arg CompleteNodeParams) (int
 		arg.Metrics,
 		arg.ID,
 		arg.WorkerID,
+		arg.LeaseToken,
 	)
 	if err != nil {
 		return 0, err
@@ -256,7 +269,7 @@ func (q *Queries) DepStates(ctx context.Context, arg DepStatesParams) ([]DepStat
 }
 
 const dueWaitingNodes = `-- name: DueWaitingNodes :many
-select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at
+select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
   from node_executions
  where status = 'waiting'
    and run_after <= now()
@@ -294,6 +307,7 @@ func (q *Queries) DueWaitingNodes(ctx context.Context) ([]NodeExecution, error) 
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.EndedAt,
+			&i.LeaseToken,
 		); err != nil {
 			return nil, err
 		}
@@ -315,7 +329,7 @@ insert into node_executions (
   case when $7::text = 'skipped' then now() end
 )
 on conflict (run_id, node_id, branch_key, attempt) do nothing
-returning id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at
+returning id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
 `
 
 type EnqueueNodeParams struct {
@@ -366,6 +380,7 @@ func (q *Queries) EnqueueNode(ctx context.Context, arg EnqueueNodeParams) (NodeE
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.EndedAt,
+		&i.LeaseToken,
 	)
 	return i, err
 }
@@ -417,6 +432,7 @@ update node_executions ne
    set lease_expires_at = now() + $1::interval
  where ne.id = $2
    and ne.lease_owner = $3
+   and ne.lease_token = $4
    and ne.status = 'running'
    and ne.lease_expires_at > now()
    and exists (
@@ -427,14 +443,20 @@ update node_executions ne
 `
 
 type ExtendLeaseParams struct {
-	LeaseTtl pgtype.Interval `json:"lease_ttl"`
-	ID       pgtype.UUID     `json:"id"`
-	WorkerID pgtype.Text     `json:"worker_id"`
+	LeaseTtl   pgtype.Interval `json:"lease_ttl"`
+	ID         pgtype.UUID     `json:"id"`
+	WorkerID   pgtype.Text     `json:"worker_id"`
+	LeaseToken pgtype.UUID     `json:"lease_token"`
 }
 
 // A cancelled or finished run stops extending, which cancels the attempt (03 §10).
 func (q *Queries) ExtendLease(ctx context.Context, arg ExtendLeaseParams) (int64, error) {
-	result, err := q.db.Exec(ctx, extendLease, arg.LeaseTtl, arg.ID, arg.WorkerID)
+	result, err := q.db.Exec(ctx, extendLease,
+		arg.LeaseTtl,
+		arg.ID,
+		arg.WorkerID,
+		arg.LeaseToken,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -442,7 +464,7 @@ func (q *Queries) ExtendLease(ctx context.Context, arg ExtendLeaseParams) (int64
 }
 
 const getNodeExecution = `-- name: GetNodeExecution :one
-select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at from node_executions where id = $1
+select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token from node_executions where id = $1
 `
 
 func (q *Queries) GetNodeExecution(ctx context.Context, id pgtype.UUID) (NodeExecution, error) {
@@ -468,6 +490,7 @@ func (q *Queries) GetNodeExecution(ctx context.Context, id pgtype.UUID) (NodeExe
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.EndedAt,
+		&i.LeaseToken,
 	)
 	return i, err
 }
@@ -569,7 +592,7 @@ func (q *Queries) LatestNodeStates(ctx context.Context, runID pgtype.UUID) ([]La
 }
 
 const listRunNodes = `-- name: ListRunNodes :many
-select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at
+select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
   from node_executions
  where run_id = $1
    and tenant_id = $2
@@ -610,6 +633,7 @@ func (q *Queries) ListRunNodes(ctx context.Context, arg ListRunNodesParams) ([]N
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.EndedAt,
+			&i.LeaseToken,
 		); err != nil {
 			return nil, err
 		}
@@ -628,19 +652,22 @@ update node_executions
        output           = $2,
        metrics          = $3,
        lease_owner      = null,
+       lease_token      = null,
        lease_expires_at = null
  where id = $4
    and status = 'running'
    and lease_owner = $5
+   and lease_token = $6
    and lease_expires_at > now()
 `
 
 type ParkNodeParams struct {
-	RunAfter pgtype.Timestamptz `json:"run_after"`
-	Output   []byte             `json:"output"`
-	Metrics  []byte             `json:"metrics"`
-	ID       pgtype.UUID        `json:"id"`
-	WorkerID pgtype.Text        `json:"worker_id"`
+	RunAfter   pgtype.Timestamptz `json:"run_after"`
+	Output     []byte             `json:"output"`
+	Metrics    []byte             `json:"metrics"`
+	ID         pgtype.UUID        `json:"id"`
+	WorkerID   pgtype.Text        `json:"worker_id"`
+	LeaseToken pgtype.UUID        `json:"lease_token"`
 }
 
 // sleep/wait_event: release the lease and wake at run_after (03 §7.2). Fenced.
@@ -651,6 +678,7 @@ func (q *Queries) ParkNode(ctx context.Context, arg ParkNodeParams) (int64, erro
 		arg.Metrics,
 		arg.ID,
 		arg.WorkerID,
+		arg.LeaseToken,
 	)
 	if err != nil {
 		return 0, err
@@ -660,7 +688,7 @@ func (q *Queries) ParkNode(ctx context.Context, arg ParkNodeParams) (int64, erro
 
 const reclaimExpiredLeases = `-- name: ReclaimExpiredLeases :many
 update node_executions
-   set status = 'ready', lease_owner = null, lease_expires_at = null
+   set status = 'ready', lease_owner = null, lease_token = null, lease_expires_at = null
  where id in (
    select id
      from node_executions
@@ -706,7 +734,7 @@ func (q *Queries) ReclaimExpiredLeases(ctx context.Context) ([]ReclaimExpiredLea
 
 const releaseWorkerLeases = `-- name: ReleaseWorkerLeases :many
 update node_executions
-   set status = 'ready', lease_owner = null, lease_expires_at = null
+   set status = 'ready', lease_owner = null, lease_token = null, lease_expires_at = null
  where lease_owner = $1
    and status = 'running'
 returning id
@@ -739,17 +767,24 @@ update node_executions
  where id = $2
    and status = 'running'
    and lease_owner = $3
+   and lease_token = $4
    and lease_expires_at > now()
 `
 
 type SetNodeInputParams struct {
-	Input    []byte      `json:"input"`
-	ID       pgtype.UUID `json:"id"`
-	WorkerID pgtype.Text `json:"worker_id"`
+	Input      []byte      `json:"input"`
+	ID         pgtype.UUID `json:"id"`
+	WorkerID   pgtype.Text `json:"worker_id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
 }
 
 func (q *Queries) SetNodeInput(ctx context.Context, arg SetNodeInputParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setNodeInput, arg.Input, arg.ID, arg.WorkerID)
+	result, err := q.db.Exec(ctx, setNodeInput,
+		arg.Input,
+		arg.ID,
+		arg.WorkerID,
+		arg.LeaseToken,
+	)
 	if err != nil {
 		return 0, err
 	}

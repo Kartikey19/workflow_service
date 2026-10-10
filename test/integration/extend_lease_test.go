@@ -32,7 +32,7 @@ func TestExtendLeaseFencing(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "completed node":
-				if _, err := queries.CompleteNode(ctx, gen.CompleteNodeParams{ID: node.ID, WorkerID: text(owner), Status: "succeeded", Output: []byte(`{}`)}); err != nil {
+				if _, err := queries.CompleteNode(ctx, gen.CompleteNodeParams{ID: node.ID, LeaseToken: node.LeaseToken, WorkerID: text(owner), Status: "succeeded", Output: []byte(`{}`)}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -41,7 +41,7 @@ func TestExtendLeaseFencing(t *testing.T) {
 				t.Fatal(err)
 			}
 			rows, err := queries.ExtendLease(ctx, gen.ExtendLeaseParams{
-				ID: node.ID, WorkerID: text(owner),
+				ID: node.ID, LeaseToken: node.LeaseToken, WorkerID: text(owner),
 				LeaseTtl: pgtype.Interval{Microseconds: (2 * time.Minute).Microseconds(), Valid: true},
 			})
 			if err != nil {

@@ -262,7 +262,7 @@ func (d *Dispatcher) markStarted(ctx context.Context, ne gen.NodeExecution, inpu
 		if err != nil {
 			return err
 		}
-		rows, err := q.SetNodeInput(ctx, gen.SetNodeInputParams{ID: ne.ID, WorkerID: d.leaseOwner(), Input: input})
+		rows, err := q.SetNodeInput(ctx, gen.SetNodeInputParams{ID: ne.ID, LeaseToken: ne.LeaseToken, WorkerID: d.leaseOwner(), Input: input})
 		if err != nil {
 			return fmt.Errorf("set node input: %w", err)
 		}
@@ -298,7 +298,10 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 			return err
 		}
 		if flow.IsTerminalRun(run.Status) {
-			_, err := q.CancelRunningNode(ctx, gen.CancelRunningNodeParams{ID: ne.ID, WorkerID: d.leaseOwner(), Metrics: o.metrics})
+			rows, err := q.CancelRunningNode(ctx, gen.CancelRunningNodeParams{ID: ne.ID, LeaseToken: ne.LeaseToken, WorkerID: d.leaseOwner(), Metrics: o.metrics})
+			if err == nil && rows == 0 {
+				return errLeaseLost // another worker already finished this node
+			}
 			return err
 		}
 		if o.park != nil && o.park.wait != nil {
@@ -314,7 +317,7 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 
 		if o.park != nil {
 			rows, err := q.ParkNode(ctx, gen.ParkNodeParams{
-				ID: ne.ID, WorkerID: d.leaseOwner(), Output: o.output, Metrics: o.metrics,
+				ID: ne.ID, LeaseToken: ne.LeaseToken, WorkerID: d.leaseOwner(), Output: o.output, Metrics: o.metrics,
 				RunAfter: pgtype.Timestamptz{Time: o.park.until, Valid: true},
 			})
 			if err != nil {
@@ -344,7 +347,7 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 		}
 
 		rows, err := q.CompleteNode(ctx, gen.CompleteNodeParams{
-			ID: ne.ID, WorkerID: d.leaseOwner(), Status: o.status,
+			ID: ne.ID, LeaseToken: ne.LeaseToken, WorkerID: d.leaseOwner(), Status: o.status,
 			Output: o.output, Error: o.err, Metrics: o.metrics,
 		})
 		if err != nil {
@@ -428,7 +431,7 @@ func (d *Dispatcher) cancelStale(parent context.Context, ne gen.NodeExecution, m
 	if err != nil || !flow.IsTerminalRun(run.Status) {
 		return
 	}
-	if _, err := d.store.CancelRunningNode(ctx, gen.CancelRunningNodeParams{ID: ne.ID, WorkerID: d.leaseOwner(), Metrics: metrics}); err != nil {
+	if _, err := d.store.CancelRunningNode(ctx, gen.CancelRunningNodeParams{ID: ne.ID, LeaseToken: ne.LeaseToken, WorkerID: d.leaseOwner(), Metrics: metrics}); err != nil {
 		d.logger.Warn("mark stale node cancelled", zap.Error(err), zap.String("node_execution_id", ids.String(ne.ID)))
 	}
 }

@@ -27,10 +27,10 @@ func TestCompleteNodeFencing(t *testing.T) {
 		node := claimOne(t, ctx, queries, "worker-a")
 
 		rows, err := queries.CompleteNode(ctx, gen.CompleteNodeParams{
-			Status:   "succeeded",
-			Output:   []byte(`{"result":"ok"}`),
-			Metrics:  []byte(`{"duration_ms":12}`),
-			ID:       node.ID,
+			Status:  "succeeded",
+			Output:  []byte(`{"result":"ok"}`),
+			Metrics: []byte(`{"duration_ms":12}`),
+			ID:      node.ID, LeaseToken: node.LeaseToken,
 			WorkerID: text("worker-a"),
 		})
 		if err != nil {
@@ -67,9 +67,9 @@ func TestCompleteNodeFencing(t *testing.T) {
 		node := claimOne(t, ctx, queries, "worker-a")
 
 		rows, err := queries.CompleteNode(ctx, gen.CompleteNodeParams{
-			Status:   "succeeded",
-			Output:   []byte(`{"result":"stale"}`),
-			ID:       node.ID,
+			Status: "succeeded",
+			Output: []byte(`{"result":"stale"}`),
+			ID:     node.ID, LeaseToken: node.LeaseToken,
 			WorkerID: text("worker-b"),
 		})
 		if err != nil {
@@ -92,9 +92,9 @@ func TestCompleteNodeFencing(t *testing.T) {
 			t.Fatalf("expire lease: %v", err)
 		}
 		rows, err := queries.CompleteNode(ctx, gen.CompleteNodeParams{
-			Status:   "succeeded",
-			Output:   []byte(`{"result":"stale"}`),
-			ID:       node.ID,
+			Status: "succeeded",
+			Output: []byte(`{"result":"stale"}`),
+			ID:     node.ID, LeaseToken: node.LeaseToken,
 			WorkerID: text("worker-a"),
 		})
 		if err != nil {
@@ -105,6 +105,36 @@ func TestCompleteNodeFencing(t *testing.T) {
 		}
 		assertRunningLease(t, ctx, pool, node.ID, "worker-a")
 	})
+}
+
+// The fence is the per-claim token, not the worker ID: when a worker
+// re-claims its own expired row, the earlier attempt's write must not land.
+func TestCompleteNodeFencedByClaimToken(t *testing.T) {
+	ctx := context.Background()
+	pool := newIsolatedPool(t, ctx)
+	seedReadyNodes(t, ctx, pool, 1)
+	queries := gen.New(pool)
+	stale := claimOne(t, ctx, queries, "worker-a")
+	if _, err := pool.Exec(ctx, `update node_executions set lease_expires_at = now() - interval '1 second' where id = $1`, stale.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReclaimExpiredLeases(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current := claimOne(t, ctx, queries, "worker-a")
+	if current.ID != stale.ID || current.LeaseToken == stale.LeaseToken {
+		t.Fatalf("re-claim did not issue a new token")
+	}
+	rows, err := queries.CompleteNode(ctx, gen.CompleteNodeParams{ID: stale.ID, LeaseToken: stale.LeaseToken,
+		WorkerID: text("worker-a"), Status: "succeeded", Output: []byte(`{"result":"stale"}`)})
+	if err != nil || rows != 0 {
+		t.Fatalf("stale token completed %d rows (%v), want 0", rows, err)
+	}
+	rows, err = queries.CompleteNode(ctx, gen.CompleteNodeParams{ID: current.ID, LeaseToken: current.LeaseToken,
+		WorkerID: text("worker-a"), Status: "succeeded", Output: []byte(`{"result":"fresh"}`)})
+	if err != nil || rows != 1 {
+		t.Fatalf("current token completed %d rows (%v), want 1", rows, err)
+	}
 }
 
 func TestEnqueueNodeConcurrentInsertCreatesOneRow(t *testing.T) {

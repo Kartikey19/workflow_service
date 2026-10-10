@@ -53,7 +53,7 @@ func (d *Dispatcher) extendLease(ctx context.Context, ne gen.NodeExecution, time
 	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	rows, err := d.store.ExtendLease(queryCtx, gen.ExtendLeaseParams{
-		ID:       ne.ID,
+		ID: ne.ID, LeaseToken: ne.LeaseToken,
 		WorkerID: pgtype.Text{String: d.cfg.ID, Valid: true},
 		LeaseTtl: pgtype.Interval{Microseconds: d.cfg.LeaseTTL.Microseconds(), Valid: true},
 	})

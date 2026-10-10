@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -106,8 +107,8 @@ func workerConfig(id string) config.WorkerConfig {
 func (h *harness) startWorkers(n int) {
 	for i := range n {
 		cfg := workerConfig(fmt.Sprintf("worker-%d-%s", i, randomHex(h.t, 3)))
-		dispatcher := engine.NewDispatcher(cfg, h.flow, h.registry, nil, zap.NewNop())
-		worker := engine.NewWorker(cfg, zap.NewNop(), h.pool, h.flow, dispatcher.Run)
+		dispatcher := engine.NewDispatcher(cfg, h.flow, h.registry, nil, testLogger())
+		worker := engine.NewWorker(cfg, testLogger(), h.pool, h.flow, dispatcher.Run)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
@@ -605,4 +606,12 @@ nodes:
 	h.startWorkers(1)
 	h.waitStatus(runID, 10*time.Second, "succeeded")
 	h.checkInvariants(runID)
+}
+
+// testLogger is silent unless WF_TEST_LOG=1, for debugging engine tests.
+func testLogger() *zap.Logger {
+	if os.Getenv("WF_TEST_LOG") == "1" {
+		return zap.Must(zap.NewDevelopment())
+	}
+	return zap.NewNop()
 }

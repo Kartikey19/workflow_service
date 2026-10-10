@@ -2,6 +2,7 @@
 update node_executions ne
    set status           = 'running',
        lease_owner      = @worker_id,
+       lease_token      = gen_random_uuid(),
        lease_expires_at = now() + @lease_ttl::interval,
        started_at       = coalesce(ne.started_at, now())
  where ne.id in (
@@ -21,6 +22,7 @@ update node_executions ne
    set lease_expires_at = now() + @lease_ttl::interval
  where ne.id = @id
    and ne.lease_owner = @worker_id
+   and ne.lease_token = @lease_token
    and ne.status = 'running'
    and ne.lease_expires_at > now()
    and exists (
@@ -37,10 +39,12 @@ update node_executions
        metrics          = @metrics,
        ended_at         = now(),
        lease_owner      = null,
+       lease_token      = null,
        lease_expires_at = null
  where id = @id
    and status = 'running'
    and lease_owner = @worker_id
+   and lease_token = @lease_token
    and lease_expires_at > now();
 
 -- name: EnqueueNode :one
@@ -72,7 +76,7 @@ select node_id, status
 
 -- name: ReclaimExpiredLeases :many
 update node_executions
-   set status = 'ready', lease_owner = null, lease_expires_at = null
+   set status = 'ready', lease_owner = null, lease_token = null, lease_expires_at = null
  where id in (
    select id
      from node_executions
@@ -89,6 +93,7 @@ update node_executions
  where id = @id
    and status = 'running'
    and lease_owner = @worker_id
+   and lease_token = @lease_token
    and lease_expires_at > now();
 
 -- name: LatestAttemptsForRun :many
@@ -123,10 +128,12 @@ update node_executions
        output           = @output,
        metrics          = @metrics,
        lease_owner      = null,
+       lease_token      = null,
        lease_expires_at = null
  where id = @id
    and status = 'running'
    and lease_owner = @worker_id
+   and lease_token = @lease_token
    and lease_expires_at > now();
 
 -- name: CompleteWaitingNode :execrows
@@ -151,7 +158,7 @@ select *
 -- name: ReleaseWorkerLeases :many
 -- Graceful shutdown: hand running nodes back immediately instead of after a TTL.
 update node_executions
-   set status = 'ready', lease_owner = null, lease_expires_at = null
+   set status = 'ready', lease_owner = null, lease_token = null, lease_expires_at = null
  where lease_owner = @worker_id
    and status = 'running'
 returning id;
@@ -167,7 +174,7 @@ select distinct on (node_id, branch_key)
 -- name: CancelRunNodes :many
 update node_executions
    set status = 'cancelled', ended_at = now(),
-       lease_owner = null, lease_expires_at = null
+       lease_owner = null, lease_token = null, lease_expires_at = null
  where run_id = @run_id
    and status in ('ready', 'waiting')
 returning id;
@@ -176,10 +183,11 @@ returning id;
 -- The run ended while this attempt ran; record that the result was not used.
 update node_executions
    set status = 'cancelled', ended_at = now(), metrics = @metrics,
-       lease_owner = null, lease_expires_at = null
+       lease_owner = null, lease_token = null, lease_expires_at = null
  where id = @id
    and status = 'running'
-   and lease_owner = @worker_id;
+   and lease_owner = @worker_id
+   and lease_token = @lease_token;
 
 -- name: CountRunNodeExecutions :one
 select count(*) from node_executions where run_id = @run_id;
