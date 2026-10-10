@@ -69,6 +69,17 @@ func (q *Queries) GetWorkflowByName(ctx context.Context, arg GetWorkflowByNamePa
 	return i, err
 }
 
+const getWorkflowName = `-- name: GetWorkflowName :one
+select name from workflows where id = $1
+`
+
+func (q *Queries) GetWorkflowName(ctx context.Context, id pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getWorkflowName, id)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const getWorkflowVersion = `-- name: GetWorkflowVersion :one
 select wv.id, wv.workflow_id, wv.version, wv.yaml_source, wv.spec, wv.spec_hash, wv.created_by, wv.created_at
 from workflow_versions wv

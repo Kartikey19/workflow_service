@@ -47,13 +47,3 @@ func TestRunReleasesListenerOnDependencyFailure(t *testing.T) {
 	}
 	replacement.Close()
 }
-func TestRunRejectsUnimplementedModes(t *testing.T) {
-	for _, mode := range []string{"worker", "all"} {
-		cfg := testConfig()
-		cfg.App.Mode = mode
-		cfg.Worker = config.WorkerConfig{ID: "test", Concurrency: 1, BatchSize: 1, PollInterval: time.Second, LeaseTTL: time.Minute}
-		if err := Run(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "not implemented") {
-			t.Fatalf("mode %s: %v", mode, err)
-		}
-	}
-}

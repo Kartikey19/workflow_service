@@ -2,6 +2,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +19,14 @@ type Config struct {
 	Log      LogConfig
 	Database DatabaseConfig
 	Worker   WorkerConfig
+	Egress   EgressConfig
+}
+
+// EgressConfig widens internal/netguard for outbound calls made on a tenant's
+// behalf. By default loopback, private and metadata addresses are blocked.
+type EgressConfig struct {
+	AllowCIDRs   string // EGRESS_ALLOW_CIDRS, comma separated
+	AllowPrivate bool   // EGRESS_ALLOW_PRIVATE; local development only
 }
 
 type AppConfig struct {
@@ -48,6 +58,11 @@ type WorkerConfig struct {
 	LeaseTTL     time.Duration // WORKER_LEASE_TTL
 	// SweepInterval is optional (WORKER_SWEEP_INTERVAL, default 5s).
 	SweepInterval time.Duration
+	// MetricsAddress serves /metrics and /healthz in worker mode
+	// (WORKER_METRICS_ADDRESS, optional; empty disables it).
+	MetricsAddress string
+	// MaxNodesPerRun bounds node executions per run (MAX_NODES_PER_RUN, default 1000).
+	MaxNodesPerRun int
 }
 
 // LoadEnv loads an optional .env from the working directory. Shell values win.
@@ -60,6 +75,12 @@ func LoadEnv() error {
 }
 
 func LoadConfig() (*Config, error) {
+	return LoadConfigMode("")
+}
+
+// LoadConfigMode is LoadConfig for a dedicated entry point (cmd/api, cmd/worker):
+// a non-empty mode replaces APP_MODE, which is then not required.
+func LoadConfigMode(fixedMode string) (*Config, error) {
 	if err := LoadEnv(); err != nil {
 		return nil, err
 	}
@@ -68,9 +89,12 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	mode, err := required("APP_MODE")
-	if err != nil {
-		return nil, err
+	mode := fixedMode
+	if mode == "" {
+		mode, err = required("APP_MODE")
+		if err != nil {
+			return nil, err
+		}
 	}
 	var addr string
 	if mode != "worker" {
@@ -113,9 +137,10 @@ func LoadConfig() (*Config, error) {
 	}
 	var worker WorkerConfig
 	if mode != "api" {
-		worker.ID, err = required("WORKER_ID")
-		if err != nil {
-			return nil, err
+		// Unique per replica so `docker compose up --scale worker=N` works.
+		worker.ID = strings.TrimSpace(os.Getenv("WORKER_ID"))
+		if worker.ID == "" {
+			worker.ID = defaultWorkerID()
 		}
 		worker.Concurrency, err = intFromEnv("WORKER_CONCURRENCY")
 		if err != nil {
@@ -133,6 +158,17 @@ func LoadConfig() (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
+		if worker.SweepInterval, err = optionalDuration("WORKER_SWEEP_INTERVAL", 5*time.Second); err != nil {
+			return nil, err
+		}
+		worker.MetricsAddress = strings.TrimSpace(os.Getenv("WORKER_METRICS_ADDRESS"))
+		if worker.MaxNodesPerRun, err = optionalInt("MAX_NODES_PER_RUN", 1000); err != nil {
+			return nil, err
+		}
+	}
+	allowPrivate, err := optionalBool("EGRESS_ALLOW_PRIVATE", false)
+	if err != nil {
+		return nil, err
 	}
 	shutdownGrace, err := durationFromEnv("SHUTDOWN_GRACE")
 	if err != nil {
@@ -158,6 +194,10 @@ func LoadConfig() (*Config, error) {
 			ConnectTimeout: dbConnectTimeout,
 		},
 		Worker: worker,
+		Egress: EgressConfig{
+			AllowCIDRs:   strings.TrimSpace(os.Getenv("EGRESS_ALLOW_CIDRS")),
+			AllowPrivate: allowPrivate,
+		},
 	}
 
 	if err := config.Validate(); err != nil {
@@ -175,6 +215,45 @@ func required(name string) (string, error) {
 	}
 
 	return value, nil
+}
+
+// defaultWorkerID is the hostname plus a random suffix.
+func defaultWorkerID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "worker"
+	}
+	suffix := make([]byte, 3)
+	_, _ = rand.Read(suffix)
+	return host + "-" + hex.EncodeToString(suffix)
+}
+
+func optionalDuration(name string, fallback time.Duration) (time.Duration, error) {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return fallback, nil
+	}
+	return durationFromEnv(name)
+}
+
+func optionalInt(name string, fallback int) (int, error) {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return fallback, nil
+	}
+	return intFromEnv(name)
+}
+
+func optionalBool(name string, fallback bool) (bool, error) {
+	if strings.TrimSpace(os.Getenv(name)) == "" {
+		return fallback, nil
+	}
+	return boolFromEnv(name)
+}
+
+func optionalString(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func boolFromEnv(name string) (bool, error) {

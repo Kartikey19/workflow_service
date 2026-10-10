@@ -358,10 +358,12 @@ select r.id, r.tenant_id, r.workflow_id, r.workflow_version_id, r.status, r.inpu
    and ($2::text is null or w.name = $2::text)
    and ($3::text is null or r.status = $3::text)
    and ($4::text is null or r.correlation_id = $4::text)
-   and ($5::timestamptz is null
-        or (r.created_at, r.id) < ($5::timestamptz, $6::uuid))
+   and ($5::timestamptz is null or r.created_at >= $5::timestamptz)
+   and ($6::timestamptz is null or r.created_at < $6::timestamptz)
+   and ($7::timestamptz is null
+        or (r.created_at, r.id) < ($7::timestamptz, $8::uuid))
  order by r.created_at desc, r.id desc
- limit $7
+ limit $9
 `
 
 type ListRunsParams struct {
@@ -369,6 +371,8 @@ type ListRunsParams struct {
 	WorkflowName  pgtype.Text        `json:"workflow_name"`
 	Status        pgtype.Text        `json:"status"`
 	CorrelationID pgtype.Text        `json:"correlation_id"`
+	CreatedAfter  pgtype.Timestamptz `json:"created_after"`
+	CreatedBefore pgtype.Timestamptz `json:"created_before"`
 	BeforeCreated pgtype.Timestamptz `json:"before_created"`
 	BeforeID      pgtype.UUID        `json:"before_id"`
 	Lim           int32              `json:"lim"`
@@ -387,6 +391,8 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]ListRunsR
 		arg.WorkflowName,
 		arg.Status,
 		arg.CorrelationID,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
 		arg.BeforeCreated,
 		arg.BeforeID,
 		arg.Lim,

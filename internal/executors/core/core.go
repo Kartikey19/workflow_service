@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kartikey/workflow_service/internal/executor"
+	"github.com/kartikey/workflow_service/internal/jsonschema"
 )
 
 // All returns the built-in executors.
@@ -205,22 +206,35 @@ func (WaitEvent) Describe() executor.Description {
   on_timeout: escalate
   config:
     key: "approval:${input.request_id}"
-    timeout: 48h`,
+    timeout: 48h
+    schema: {type: object, required: [approved]}`,
 		Output: "the signal payload",
 	}
 }
 
 func (WaitEvent) ValidateConfig(raw json.RawMessage) error {
-	return executor.CheckFields(raw, []executor.Field{
+	if err := executor.CheckFields(raw, []executor.Field{
 		{Name: "key", Kind: "string", Required: true},
 		{Name: "timeout", Kind: "duration"},
-	})
+		{Name: "schema", Kind: "object"},
+	}); err != nil {
+		return err
+	}
+	var config map[string]any
+	_ = json.Unmarshal(raw, &config)
+	if schema, ok := config["schema"]; ok {
+		if err := jsonschema.Check(schema); err != nil {
+			return fmt.Errorf("schema: %w", err)
+		}
+	}
+	return nil
 }
 
 func (WaitEvent) Execute(ctx context.Context, req executor.Request) (executor.Result, error) {
 	var config struct {
-		Key     string `json:"key"`
-		Timeout string `json:"timeout"`
+		Key     string          `json:"key"`
+		Timeout string          `json:"timeout"`
+		Schema  json.RawMessage `json:"schema"`
 	}
 	if err := executor.DecodeConfig(req.Config, &config); err != nil {
 		return executor.Result{}, err
@@ -237,6 +251,6 @@ func (WaitEvent) Execute(ctx context.Context, req executor.Request) (executor.Re
 		timeout = parsed
 	}
 	return executor.Result{Control: &executor.Control{Wait: &executor.WaitSpec{
-		Key: config.Key, Expires: time.Now().Add(timeout),
+		Key: config.Key, Expires: time.Now().Add(timeout), Schema: config.Schema,
 	}}}, nil
 }

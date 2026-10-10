@@ -48,8 +48,8 @@ func (q *Queries) FulfillWait(ctx context.Context, arg FulfillWaitParams) error 
 }
 
 const insertWait = `-- name: InsertWait :exec
-insert into run_waits (id, tenant_id, run_id, node_execution_id, wait_key, status, expires_at)
-values ($1, $2, $3, $4, $5, 'waiting', $6)
+insert into run_waits (id, tenant_id, run_id, node_execution_id, wait_key, status, expires_at, schema)
+values ($1, $2, $3, $4, $5, 'waiting', $6, $7)
 `
 
 type InsertWaitParams struct {
@@ -59,6 +59,7 @@ type InsertWaitParams struct {
 	NodeExecutionID pgtype.UUID        `json:"node_execution_id"`
 	WaitKey         string             `json:"wait_key"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	Schema          []byte             `json:"schema"`
 }
 
 func (q *Queries) InsertWait(ctx context.Context, arg InsertWaitParams) error {
@@ -69,12 +70,13 @@ func (q *Queries) InsertWait(ctx context.Context, arg InsertWaitParams) error {
 		arg.NodeExecutionID,
 		arg.WaitKey,
 		arg.ExpiresAt,
+		arg.Schema,
 	)
 	return err
 }
 
 const latestFulfilledWait = `-- name: LatestFulfilledWait :one
-select id, tenant_id, run_id, node_execution_id, wait_key, status, payload, created_at, expires_at, fulfilled_at from run_waits
+select id, tenant_id, run_id, node_execution_id, wait_key, status, payload, created_at, expires_at, fulfilled_at, schema from run_waits
  where tenant_id = $1 and wait_key = $2 and status = 'fulfilled'
  order by fulfilled_at desc
  limit 1
@@ -100,12 +102,13 @@ func (q *Queries) LatestFulfilledWait(ctx context.Context, arg LatestFulfilledWa
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.FulfilledAt,
+		&i.Schema,
 	)
 	return i, err
 }
 
 const lockLiveWait = `-- name: LockLiveWait :one
-select id, tenant_id, run_id, node_execution_id, wait_key, status, payload, created_at, expires_at, fulfilled_at from run_waits
+select id, tenant_id, run_id, node_execution_id, wait_key, status, payload, created_at, expires_at, fulfilled_at, schema from run_waits
  where tenant_id = $1 and wait_key = $2 and status = 'waiting'
  for update
 `
@@ -129,6 +132,7 @@ func (q *Queries) LockLiveWait(ctx context.Context, arg LockLiveWaitParams) (Run
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.FulfilledAt,
+		&i.Schema,
 	)
 	return i, err
 }

@@ -67,3 +67,6 @@ update workflows
 
 -- name: CountActiveWorkflows :one
 select count(*) from workflows where tenant_id = @tenant_id and archived_at is null;
+
+-- name: GetWorkflowName :one
+select name from workflows where id = @id;

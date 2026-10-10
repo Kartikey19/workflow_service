@@ -75,6 +75,7 @@ type RunWait struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
 	FulfilledAt     pgtype.Timestamptz `json:"fulfilled_at"`
+	Schema          []byte             `json:"schema"`
 }
 
 type Workflow struct {

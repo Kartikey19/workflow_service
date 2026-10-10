@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kartikey/workflow_service/internal/ids"
+	"github.com/kartikey/workflow_service/internal/jsonschema"
 	"github.com/kartikey/workflow_service/internal/obs"
 	"github.com/kartikey/workflow_service/internal/store"
 	"github.com/kartikey/workflow_service/internal/store/gen"
@@ -48,6 +49,14 @@ func (f *Flow) Cancel(ctx context.Context, tenantID, runID pgtype.UUID, reason s
 		obs.RunsFinished.WithLabelValues("cancelled").Inc()
 		return q.NotifyRunEvents(ctx, ids.String(runID))
 	})
+}
+
+// PayloadError is a signal payload that fails the wait's schema (422). The
+// wait stays live so a corrected signal can still be delivered.
+type PayloadError struct{ Fields []jsonschema.FieldError }
+
+func (e *PayloadError) Error() string {
+	return fmt.Sprintf("%d payload field(s) invalid", len(e.Fields))
 }
 
 // SignalResult names the node a signal completed.
@@ -96,6 +105,15 @@ func (f *Flow) Signal(ctx context.Context, tenantID pgtype.UUID, key string, pay
 		if err != nil {
 			return fmt.Errorf("lock waiter: %w", err)
 		}
+		if len(wait.Schema) > 0 {
+			var schema any
+			if err := json.Unmarshal(wait.Schema, &schema); err != nil {
+				return fmt.Errorf("decode wait schema: %w", err)
+			}
+			if fields := jsonschema.ValidateJSON(schema, payload); len(fields) > 0 {
+				return &PayloadError{Fields: fields}
+			}
+		}
 		node, err := q.GetNodeExecution(ctx, wait.NodeExecutionID)
 		if err != nil {
 			return fmt.Errorf("load waiting node: %w", err)
@@ -127,8 +145,12 @@ func (f *Flow) Signal(ctx context.Context, tenantID pgtype.UUID, key string, pay
 		return q.NotifyRunEvents(ctx, ids.String(run.ID))
 	})
 	if err != nil {
-		if errors.Is(err, ErrNoWaiter) {
+		var payloadErr *PayloadError
+		switch {
+		case errors.Is(err, ErrNoWaiter):
 			obs.Signals.WithLabelValues("no_waiter").Inc()
+		case errors.As(err, &payloadErr):
+			obs.Signals.WithLabelValues("invalid_payload").Inc()
 		}
 		return SignalResult{}, err
 	}

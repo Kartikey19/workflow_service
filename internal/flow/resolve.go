@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -238,6 +239,11 @@ func (f *Flow) finishRun(ctx context.Context, q *gen.Queries, run gen.Run, statu
 		return err
 	}
 	obs.RunsFinished.WithLabelValues(status).Inc()
+	if run.StartedAt.Valid {
+		if workflow, err := q.GetWorkflowName(ctx, run.WorkflowID); err == nil {
+			obs.RunDuration.WithLabelValues(workflow, status).Observe(time.Since(run.StartedAt.Time).Seconds())
+		}
+	}
 	return nil
 }
 

@@ -69,6 +69,8 @@ select sqlc.embed(r), w.name as workflow_name, wv.version as workflow_version
    and (sqlc.narg(workflow_name)::text is null or w.name = sqlc.narg(workflow_name)::text)
    and (sqlc.narg(status)::text is null or r.status = sqlc.narg(status)::text)
    and (sqlc.narg(correlation_id)::text is null or r.correlation_id = sqlc.narg(correlation_id)::text)
+   and (sqlc.narg(created_after)::timestamptz is null or r.created_at >= sqlc.narg(created_after)::timestamptz)
+   and (sqlc.narg(created_before)::timestamptz is null or r.created_at < sqlc.narg(created_before)::timestamptz)
    and (sqlc.narg(before_created)::timestamptz is null
         or (r.created_at, r.id) < (sqlc.narg(before_created)::timestamptz, sqlc.narg(before_id)::uuid))
  order by r.created_at desc, r.id desc

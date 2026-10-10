@@ -3,7 +3,13 @@
 package obs
 
 import (
+	"context"
 	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -74,4 +80,77 @@ func Handler() http.Handler {
 // RegisterGauge adds a gauge whose value is read at scrape time.
 func RegisterGauge(name, help string, read func() float64) {
 	Registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, read))
+}
+
+// RunDuration is observed when a run reaches a terminal status. The workflow
+// label is the workflow name: bounded by the number of workflows, not runs.
+var RunDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Name: "wf_run_duration_seconds", Help: "Run duration from start to terminal status.",
+	Buckets: []float64{.1, .5, 1, 5, 15, 60, 300, 900, 3600, 21600, 86400, 604800},
+}, []string{"workflow", "status"})
+
+func init() { Registry.MustRegister(RunDuration) }
+
+// Querier is the database surface the engine gauges read at scrape time.
+type Querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+var (
+	gaugeOnce sync.Once
+	gaugeDB   atomic.Pointer[Querier]
+)
+
+// RegisterEngineGauges exposes wf_ready_backlog and wf_runs_active{status},
+// read from PostgreSQL at scrape time (05 §6). Safe to call more than once;
+// the latest database wins.
+func RegisterEngineGauges(db Querier) {
+	gaugeDB.Store(&db)
+	gaugeOnce.Do(func() { Registry.MustRegister(engineGauges{}) })
+}
+
+var (
+	readyBacklogDesc = prometheus.NewDesc("wf_ready_backlog", "Ready node executions whose run_after has passed; rising means too few workers.", nil, nil)
+	runsActiveDesc   = prometheus.NewDesc("wf_runs_active", "Runs not yet terminal, by status.", []string{"status"}, nil)
+)
+
+type engineGauges struct{}
+
+func (engineGauges) Describe(ch chan<- *prometheus.Desc) {
+	ch <- readyBacklogDesc
+	ch <- runsActiveDesc
+}
+
+func (engineGauges) Collect(ch chan<- prometheus.Metric) {
+	pointer := gaugeDB.Load()
+	if pointer == nil {
+		return
+	}
+	db := *pointer
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var backlog int64
+	if err := db.QueryRow(ctx, `select count(*) from node_executions where status = 'ready' and run_after <= now()`).Scan(&backlog); err == nil {
+		ch <- prometheus.MustNewConstMetric(readyBacklogDesc, prometheus.GaugeValue, float64(backlog))
+	}
+	counts := map[string]float64{"pending": 0, "running": 0, "waiting": 0}
+	rows, err := db.Query(ctx, `select status, count(*) from runs where status in ('pending', 'running', 'waiting') group by status`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int64
+		if rows.Scan(&status, &count) == nil {
+			counts[status] = float64(count)
+		}
+	}
+	if rows.Err() != nil {
+		return
+	}
+	for status, count := range counts {
+		ch <- prometheus.MustNewConstMetric(runsActiveDesc, prometheus.GaugeValue, count, status)
+	}
 }

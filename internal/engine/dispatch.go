@@ -328,6 +328,7 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 				if err := q.InsertWait(ctx, gen.InsertWaitParams{
 					ID: ids.New(), TenantID: ne.TenantID, RunID: ne.RunID, NodeExecutionID: ne.ID,
 					WaitKey: o.park.wait.Key, ExpiresAt: pgtype.Timestamptz{Time: o.park.wait.Expires, Valid: true},
+					Schema: waitSchema(o.park.wait.Schema),
 				}); err != nil {
 					return fmt.Errorf("register wait: %w", err)
 				}
@@ -473,4 +474,12 @@ func encodeMetrics(metrics map[string]any, duration time.Duration) []byte {
 		encoded, _ = json.Marshal(map[string]any{"duration_ms": duration.Milliseconds()})
 	}
 	return encoded
+}
+
+// waitSchema stores a wait_event payload schema; JSON null means none.
+func waitSchema(schema json.RawMessage) []byte {
+	if len(schema) == 0 || string(schema) == "null" {
+		return nil
+	}
+	return schema
 }

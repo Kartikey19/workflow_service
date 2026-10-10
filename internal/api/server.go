@@ -8,8 +8,10 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/kartikey/workflow_service/internal/obs"
 	"go.uber.org/zap"
 )
 
@@ -26,6 +28,10 @@ type ReadinessChecker interface {
 type Config struct {
 	Address          string
 	ReadinessTimeout time.Duration
+	// Services enables the /v1 API; nil serves health endpoints only.
+	Services *Services
+	// Metrics serves /metrics without the API, for worker processes.
+	Metrics bool
 }
 
 type Server struct {
@@ -33,6 +39,11 @@ type Server struct {
 	readiness        ReadinessChecker
 	readinessTimeout time.Duration
 	logger           *zap.Logger
+	services         *Services
+	events           *eventHub
+	// closing ends SSE streams when shutdown starts, so they do not hold the
+	// drain open until the grace period expires.
+	closing chan struct{}
 }
 
 type statusResponse struct {
@@ -62,12 +73,23 @@ func New(cfg Config, readiness ReadinessChecker, logger *zap.Logger) (*Server, e
 		readiness:        readiness,
 		readinessTimeout: cfg.ReadinessTimeout,
 		logger:           logger,
+		services:         cfg.Services,
+		events:           newEventHub(),
+		closing:          make(chan struct{}),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.healthz)
 	mux.HandleFunc("GET /readyz", server.readyz)
-	mux.HandleFunc("POST /workflows", server.handleWorkflow)
+	if cfg.Metrics && cfg.Services == nil {
+		mux.Handle("GET /metrics", obs.Handler())
+	}
+	if cfg.Services != nil {
+		if cfg.Services.Flow == nil || cfg.Services.Workflows == nil || cfg.Services.Registry == nil || cfg.Services.Auth == nil {
+			return nil, errors.New("API services require flow, workflows, registry and auth")
+		}
+		server.routesV1(mux)
+	}
 
 	server.httpServer = &http.Server{
 		Addr:              cfg.Address,
@@ -75,6 +97,8 @@ func New(cfg Config, readiness ReadinessChecker, logger *zap.Logger) (*Server, e
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 	}
+	var closeOnce sync.Once
+	server.httpServer.RegisterOnShutdown(func() { closeOnce.Do(func() { close(server.closing) }) })
 
 	return server, nil
 }
@@ -94,6 +118,23 @@ func (s *Server) Run(ctx context.Context, listener net.Listener, grace time.Dura
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
+	// The event hub shares one LISTEN connection among SSE streams. It is owned
+	// here and stops with the server.
+	hubCtx, stopHub := context.WithCancel(context.WithoutCancel(ctx))
+	hubDone := make(chan struct{})
+	if s.services != nil && s.services.Pool != nil {
+		go func() {
+			defer close(hubDone)
+			s.events.run(hubCtx, s.services.Pool, s.logger)
+		}()
+	} else {
+		close(hubDone)
+	}
+	defer func() {
+		stopHub()
+		<-hubDone
+	}()
 
 	served := make(chan error, 1)
 	go func() {

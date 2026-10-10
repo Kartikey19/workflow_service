@@ -1,6 +1,6 @@
 -- name: InsertWait :exec
-insert into run_waits (id, tenant_id, run_id, node_execution_id, wait_key, status, expires_at)
-values (@id, @tenant_id, @run_id, @node_execution_id, @wait_key, 'waiting', @expires_at);
+insert into run_waits (id, tenant_id, run_id, node_execution_id, wait_key, status, expires_at, schema)
+values (@id, @tenant_id, @run_id, @node_execution_id, @wait_key, 'waiting', @expires_at, sqlc.narg(schema));
 
 -- name: LockLiveWait :one
 select * from run_waits
