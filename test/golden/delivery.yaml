@@ -1,0 +1,61 @@
+# Feature: the delivery example from 02 §5.1.
+apiVersion: workflow/v1
+name: order-fulfilment
+inputs:
+  order_id: {type: string, required: true}
+correlation: '${input.order_id}'
+timeout: 24h
+defaults:
+  retry: {max_attempts: 3, backoff: exponential, initial: 1s, max: 30s}
+  timeout: 15s
+nodes:
+  - id: reserve_stock
+    type: http
+    retry: {max_attempts: 5, backoff: exponential, initial: 2s, max: 60s}
+    config:
+      method: POST
+      url: "https://inv.internal/v1/reserve"
+      headers: {Authorization: "Bearer ${secrets.INV_TOKEN}"}
+      body: {order_id: '${input.order_id}'}
+  - id: assign_rider
+    type: http
+    needs: [reserve_stock]
+    on_failure: release_stock
+    config:
+      method: POST
+      url: "https://dispatch.internal/v1/assign"
+      body: {reservation: '${nodes.reserve_stock.output.body.reservation_id}'}
+  - id: await_pickup
+    type: wait_event
+    needs: [assign_rider]
+    on_timeout: reassign_rider
+    config:
+      key: "order.picked_up:${input.order_id}"
+      timeout: 45m
+  - id: reassign_rider
+    type: http
+    needs: [await_pickup]
+    join: any
+    config:
+      method: POST
+      url: "https://dispatch.internal/v1/reassign"
+      body: {order_id: '${input.order_id}'}
+  - id: notify_customer
+    type: http
+    needs: [await_pickup]
+    config:
+      method: POST
+      url: "https://notify.internal/v1/sms"
+      body:
+        to: '${input.order_id}'
+        text: "Your order is on the way with ${nodes.await_pickup.output.rider}."
+  - id: release_stock
+    type: http
+    needs: [assign_rider]
+    join: any
+    config:
+      method: POST
+      url: "https://inv.internal/v1/release"
+      body: {reservation: '${nodes.reserve_stock.output.body.reservation_id}'}
+outputs:
+  reservation: '${nodes.reserve_stock.output.body.reservation_id}'

@@ -1,0 +1,6 @@
+# also: E_CYCLE
+apiVersion: workflow/v1
+name: no-root
+nodes:
+  - {id: a, type: noop, needs: [b], config: {}}
+  - {id: b, type: noop, needs: [a], config: {}}

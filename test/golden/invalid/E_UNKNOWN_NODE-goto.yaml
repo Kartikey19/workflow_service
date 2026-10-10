@@ -1,0 +1,8 @@
+apiVersion: workflow/v1
+name: unknown-goto
+nodes:
+  - id: route
+    type: branch
+    config:
+      cases:
+        - {when: '${true}', goto: missing}

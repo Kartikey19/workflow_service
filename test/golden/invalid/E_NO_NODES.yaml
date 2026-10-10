@@ -1,0 +1,3 @@
+apiVersion: workflow/v1
+name: no-nodes
+nodes: []

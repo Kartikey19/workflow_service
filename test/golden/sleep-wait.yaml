@@ -1,0 +1,21 @@
+# Feature: sleep, wait_event and on_timeout routing to a join: any handler.
+apiVersion: workflow/v1
+name: sleep-wait
+inputs:
+  order_id: {type: string, required: true}
+nodes:
+  - id: nap
+    type: sleep
+    config: {duration: 10m}
+  - id: await_pickup
+    type: wait_event
+    needs: [nap]
+    on_timeout: reassign
+    config:
+      key: 'order.picked_up:${input.order_id}'
+      timeout: 45m
+  - {id: reassign, type: noop, needs: [await_pickup], join: any, config: {}}
+  - id: notify
+    type: transform
+    needs: [await_pickup]
+    config: {value: '${nodes.await_pickup.output}'}

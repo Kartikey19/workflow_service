@@ -1,0 +1,7 @@
+apiVersion: workflow/v1
+name: cycle
+nodes:
+  - {id: start, type: noop, config: {}}
+  - {id: a, type: noop, needs: [start, c], config: {}}
+  - {id: b, type: noop, needs: [a], config: {}}
+  - {id: c, type: noop, needs: [b], config: {}}

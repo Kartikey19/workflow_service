@@ -1,0 +1,18 @@
+# Feature: the http executor's config surface, with secrets.
+apiVersion: workflow/v1
+name: http
+inputs:
+  order_id: {type: string, required: true}
+nodes:
+  - id: reserve
+    type: http
+    timeout: 10s
+    retry: {max_attempts: 5, backoff: exponential, initial: 2s, max: 60s}
+    config:
+      method: POST
+      url: https://inv.example.com/v1/reserve
+      headers: {Authorization: 'Bearer ${secrets.INV_TOKEN}'}
+      query: {source: workflow}
+      body: {order_id: '${input.order_id}'}
+      expect_status: [200, 201]
+      send_idempotency_key: true

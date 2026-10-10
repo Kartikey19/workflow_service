@@ -1,0 +1,9 @@
+apiVersion: workflow/v1
+name: unused-input
+inputs:
+  used: {type: string}
+  unused: {type: string}
+nodes:
+  - id: a
+    type: transform
+    config: {value: '${input.used}'}

@@ -1,0 +1,16 @@
+# Feature: branch with a default arm and a join: any merge after it.
+apiVersion: workflow/v1
+name: branch-merge
+inputs:
+  severity: {type: string, enum: [P0, P1, P2], default: P2}
+nodes:
+  - id: route
+    type: branch
+    config:
+      cases:
+        - when: '${input.severity == "P0"}'
+          goto: page
+      default: reply
+  - {id: page, type: noop, needs: [route], config: {}}
+  - {id: reply, type: noop, needs: [route], config: {}}
+  - {id: record, type: noop, needs: [page, reply], join: any, config: {}}

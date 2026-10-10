@@ -1,0 +1,66 @@
+{
+  "spec_hash": "sha256:3cbcba7c9a2254f53bfe9db38fd8a1d8f8a951996b3cf1f4514f47d6d720b929",
+  "warnings": [],
+  "spec": {
+    "api_version": "workflow/v1",
+    "name": "retry-defaults",
+    "timeout_ns": 3600000000000,
+    "nodes": [
+      {
+        "id": "inherits",
+        "type": "noop",
+        "needs": [],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 3,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 30000000000,
+          "jitter": 0.2
+        },
+        "timeout_ns": 15000000000
+      },
+      {
+        "id": "overrides",
+        "type": "noop",
+        "needs": [
+          "inherits"
+        ],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 5,
+          "backoff": "linear",
+          "initial_ns": 2000000000,
+          "max_ns": 30000000000,
+          "jitter": 0.2,
+          "retry_on": [
+            "timeout",
+            "upstream_5xx"
+          ]
+        },
+        "timeout_ns": 120000000000
+      }
+    ],
+    "edges": {
+      "inherits": [
+        "overrides"
+      ],
+      "overrides": []
+    },
+    "reverse_edges": {
+      "inherits": [],
+      "overrides": [
+        "inherits"
+      ]
+    },
+    "roots": [
+      "inherits"
+    ],
+    "topo_order": [
+      "inherits",
+      "overrides"
+    ]
+  }
+}

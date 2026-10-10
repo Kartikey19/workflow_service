@@ -1,0 +1,7 @@
+apiVersion: workflow/v1
+name: expr-condition
+nodes:
+  - id: a
+    type: noop
+    if: '${"yes"}'
+    config: {}

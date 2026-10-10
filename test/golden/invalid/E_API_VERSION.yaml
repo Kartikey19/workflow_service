@@ -1,0 +1,4 @@
+apiVersion: workflow/v2
+name: api-version
+nodes:
+  - {id: a, type: noop, config: {}}

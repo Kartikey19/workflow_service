@@ -1,0 +1,21 @@
+# Feature: correlation, description and workflow outputs referencing any node.
+apiVersion: workflow/v1
+name: outputs-correlation
+description: Correlated by order and shaped outputs.
+inputs:
+  order_id: {type: string, required: true}
+correlation: 'order:${input.order_id}'
+nodes:
+  - id: price
+    type: transform
+    config:
+      value: {items: [{price: 2}, {price: 3}]}
+  - id: total
+    type: transform
+    needs: [price]
+    config:
+      value: '${nodes.price.output.items.map(i, i.price).sum()}'
+outputs:
+  order: '${input.order_id}'
+  total: '${nodes.total.output}'
+  literal: 'cost: $${not_an_expression}'

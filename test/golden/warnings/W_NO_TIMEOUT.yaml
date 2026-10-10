@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: no-timeout
+nodes:
+  - {id: a, type: http, config: {url: "https://example.com"}}

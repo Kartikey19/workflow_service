@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: join
+nodes:
+  - {id: a, type: noop, join: some, config: {}}

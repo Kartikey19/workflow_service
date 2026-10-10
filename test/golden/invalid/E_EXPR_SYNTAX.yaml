@@ -1,0 +1,6 @@
+apiVersion: workflow/v1
+name: expr-syntax
+nodes:
+  - id: a
+    type: transform
+    config: {value: '${input.x +}'}

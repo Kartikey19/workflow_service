@@ -1,0 +1,12 @@
+apiVersion: workflow/v1
+name: join-all-branch
+nodes:
+  - id: route
+    type: branch
+    config:
+      cases:
+        - {when: '${true}', goto: page}
+      default: reply
+  - {id: page, type: noop, needs: [route], config: {}}
+  - {id: reply, type: noop, needs: [route], config: {}}
+  - {id: record, type: noop, needs: [page, reply], config: {}}

@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: unknown-on-failure
+nodes:
+  - {id: a, type: noop, on_failure: missing, config: {}}

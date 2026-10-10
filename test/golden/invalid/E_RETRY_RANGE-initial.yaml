@@ -1,0 +1,7 @@
+apiVersion: workflow/v1
+name: retry-initial
+nodes:
+  - id: a
+    type: noop
+    retry: {initial: 2m, max: 1m}
+    config: {}

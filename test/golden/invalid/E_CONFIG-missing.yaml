@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: missing-config
+nodes:
+  - {id: a, type: noop}

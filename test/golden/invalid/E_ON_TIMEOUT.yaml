@@ -1,0 +1,5 @@
+apiVersion: workflow/v1
+name: on-timeout
+nodes:
+  - {id: a, type: noop, on_timeout: b, config: {}}
+  - {id: b, type: noop, needs: [a], config: {}}

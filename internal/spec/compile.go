@@ -46,6 +46,8 @@ func CompileWith(source []byte, opts Options) (*Compiled, []Diagnostic) {
 	diagnostics = append(diagnostics, validateTargets(document)...)
 	diagnostics = append(diagnostics, validateExecutors(document, opts.Registry)...)
 	diagnostics = append(diagnostics, branchJoinWarnings(document, graph)...)
+	diagnostics = append(diagnostics, unusedInputWarnings(document)...)
+	diagnostics = append(diagnostics, longSleepWarnings(document)...)
 	environment, err := expr.NewEnv()
 	if err != nil {
 		diagnostics = append(diagnostics, Diagnostic{Severity: "error", Code: "E_COMPILER", Message: err.Error()})

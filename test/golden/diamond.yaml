@@ -1,0 +1,8 @@
+# Feature: fan-out and a join: all fan-in.
+apiVersion: workflow/v1
+name: diamond
+nodes:
+  - {id: d, type: noop, needs: [b, c], config: {}}
+  - {id: c, type: noop, needs: [a], config: {}}
+  - {id: b, type: noop, needs: [a], config: {}}
+  - {id: a, type: noop, config: {}}

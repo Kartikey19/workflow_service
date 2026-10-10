@@ -1,0 +1,5 @@
+apiVersion: workflow/v1
+name: dup-node
+nodes:
+  - {id: a, type: noop, config: {}}
+  - {id: a, type: noop, config: {}}

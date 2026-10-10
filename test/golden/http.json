@@ -1,0 +1,67 @@
+{
+  "spec_hash": "sha256:006017ba4662389906b3f208c0a407ee329cae4bcce418fc1e7172db81355f83",
+  "warnings": [],
+  "spec": {
+    "api_version": "workflow/v1",
+    "name": "http",
+    "inputs": {
+      "order_id": {
+        "type": "string",
+        "required": true,
+        "default": null,
+        "enum": null,
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      }
+    },
+    "timeout_ns": 2592000000000000,
+    "nodes": [
+      {
+        "id": "reserve",
+        "type": "http",
+        "needs": [],
+        "join": "all",
+        "config": {
+          "body": {
+            "order_id": "${input.order_id}"
+          },
+          "expect_status": [
+            200,
+            201
+          ],
+          "headers": {
+            "Authorization": "Bearer ${secrets.INV_TOKEN}"
+          },
+          "method": "POST",
+          "query": {
+            "source": "workflow"
+          },
+          "send_idempotency_key": true,
+          "url": "https://inv.example.com/v1/reserve"
+        },
+        "retry": {
+          "max_attempts": 5,
+          "backoff": "exponential",
+          "initial_ns": 2000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        },
+        "timeout_ns": 10000000000
+      }
+    ],
+    "edges": {
+      "reserve": []
+    },
+    "reverse_edges": {
+      "reserve": []
+    },
+    "roots": [
+      "reserve"
+    ],
+    "topo_order": [
+      "reserve"
+    ]
+  }
+}

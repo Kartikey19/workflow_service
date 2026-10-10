@@ -1,0 +1,133 @@
+{
+  "spec_hash": "sha256:3c49762000aa842e23d04d673af47ead5bc51bdb04871a378500f5ef3d3ed3f1",
+  "warnings": [],
+  "spec": {
+    "api_version": "workflow/v1",
+    "name": "branch-merge",
+    "inputs": {
+      "severity": {
+        "type": "string",
+        "required": false,
+        "default": "P2",
+        "enum": [
+          "P0",
+          "P1",
+          "P2"
+        ],
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      }
+    },
+    "timeout_ns": 2592000000000000,
+    "nodes": [
+      {
+        "id": "page",
+        "type": "noop",
+        "needs": [
+          "route"
+        ],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      },
+      {
+        "id": "record",
+        "type": "noop",
+        "needs": [
+          "page",
+          "reply"
+        ],
+        "join": "any",
+        "config": {},
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      },
+      {
+        "id": "reply",
+        "type": "noop",
+        "needs": [
+          "route"
+        ],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      },
+      {
+        "id": "route",
+        "type": "branch",
+        "needs": [],
+        "join": "all",
+        "config": {
+          "cases": [
+            {
+              "goto": "page",
+              "when": "${input.severity == \"P0\"}"
+            }
+          ],
+          "default": "reply"
+        },
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      }
+    ],
+    "edges": {
+      "page": [
+        "record"
+      ],
+      "record": [],
+      "reply": [
+        "record"
+      ],
+      "route": [
+        "page",
+        "reply"
+      ]
+    },
+    "reverse_edges": {
+      "page": [
+        "route"
+      ],
+      "record": [
+        "page",
+        "reply"
+      ],
+      "reply": [
+        "route"
+      ],
+      "route": []
+    },
+    "roots": [
+      "route"
+    ],
+    "topo_order": [
+      "route",
+      "page",
+      "reply",
+      "record"
+    ]
+  }
+}

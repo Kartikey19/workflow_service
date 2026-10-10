@@ -1,0 +1,11 @@
+apiVersion: workflow/v1
+name: branch-target
+nodes:
+  - id: route
+    type: branch
+    config:
+      cases:
+        - {when: '${true}', goto: page}
+      default: reply
+  - {id: page, type: noop, needs: [route], config: {}}
+  - {id: reply, type: noop, config: {}}

@@ -22,7 +22,14 @@ func validateTargets(document *Document) []Diagnostic {
 			return
 		}
 		if _, ok := needs[target]; !ok {
-			return // E_UNKNOWN_NODE was already reported
+			if code == "E_BRANCH_TARGET" {
+				// needs, on_failure and on_timeout are checked by Validate.
+				diagnostics = append(diagnostics, Diagnostic{
+					Severity: "error", Code: "E_UNKNOWN_NODE", NodeID: source, Path: path,
+					Message: fmt.Sprintf("referenced node %q does not exist", target),
+				})
+			}
+			return
 		}
 		if !slices.Contains(needs[target], source) {
 			diagnostics = append(diagnostics, Diagnostic{
@@ -36,30 +43,42 @@ func validateTargets(document *Document) []Diagnostic {
 		check(node.ID, node.OnFailure, "E_FAILURE_TARGET", path+".on_failure")
 		check(node.ID, node.OnTimeout, "E_FAILURE_TARGET", path+".on_timeout")
 		if node.Type == "branch" {
-			for j, target := range branchTargets(node.Config) {
-				check(node.ID, target, "E_BRANCH_TARGET", fmt.Sprintf("%s.config.targets[%d]", path, j))
+			for _, target := range branchTargetPaths(node.Config) {
+				check(node.ID, target.id, "E_BRANCH_TARGET", path+".config."+target.path)
 			}
 		}
 	}
 	return diagnostics
 }
 
-// branchTargets lists goto targets and the default of a branch config.
-func branchTargets(config map[string]any) []string {
-	var targets []string
+type branchTarget struct{ id, path string }
+
+// branchTargetPaths lists goto targets and the default of a branch config with
+// their config paths.
+func branchTargetPaths(config map[string]any) []branchTarget {
+	var targets []branchTarget
 	if cases, ok := config["cases"].([]any); ok {
-		for _, item := range cases {
+		for i, item := range cases {
 			if c, ok := item.(map[string]any); ok {
 				if target, ok := c["goto"].(string); ok && target != "" {
-					targets = append(targets, target)
+					targets = append(targets, branchTarget{target, fmt.Sprintf("cases[%d].goto", i)})
 				}
 			}
 		}
 	}
 	if target, ok := config["default"].(string); ok && target != "" {
-		targets = append(targets, target)
+		targets = append(targets, branchTarget{target, "default"})
 	}
 	return targets
+}
+
+// branchTargets lists goto targets and the default of a branch config.
+func branchTargets(config map[string]any) []string {
+	var ids []string
+	for _, target := range branchTargetPaths(config) {
+		ids = append(ids, target.id)
+	}
+	return ids
 }
 
 func validateExecutors(document *Document, registry *executor.Registry) []Diagnostic {
@@ -123,12 +142,22 @@ func branchJoinWarnings(document *Document, graph *Graph) []Diagnostic {
 			if node.Join == nil || *node.Join != "all" || len(node.Needs) < 2 {
 				continue
 			}
+			// A dependency counts for an arm only when it lies on that arm
+			// alone; a node after an earlier merge belongs to every arm.
 			hit := map[int]bool{}
 			for _, dependency := range node.Needs {
+				only := -1
 				for arm, members := range arms {
-					if members[dependency] && !members[node.ID] {
-						hit[arm] = true
+					if members[dependency] {
+						if only != -1 {
+							only = -2
+							break
+						}
+						only = arm
 					}
+				}
+				if only >= 0 {
+					hit[only] = true
 				}
 			}
 			if len(hit) > 1 {

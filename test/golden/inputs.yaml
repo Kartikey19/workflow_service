@@ -1,0 +1,17 @@
+# Feature: the input schema subset (types, defaults, enum, format, range, pattern).
+apiVersion: workflow/v1
+name: inputs
+inputs:
+  id: {type: string, format: uuid, required: true}
+  email: {type: string, format: email}
+  qty: {type: integer, minimum: 1, maximum: 100, default: 1}
+  ratio: {type: number}
+  express: {type: boolean, default: false}
+  sku: {type: string, pattern: '^[A-Z]{3}-[0-9]+$'}
+  tags: {type: array}
+  meta: {type: object}
+nodes:
+  - id: echo
+    type: transform
+    config:
+      value: '${input}'

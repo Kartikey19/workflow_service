@@ -1,0 +1,17 @@
+# Feature: defaults.retry and defaults.timeout merged into nodes; node overrides.
+apiVersion: workflow/v1
+name: retry-defaults
+timeout: 1h
+defaults:
+  retry: {max_attempts: 3, backoff: exponential, initial: 1s, max: 30s, jitter: 0.2}
+  timeout: 15s
+nodes:
+  - id: inherits
+    type: noop
+    config: {}
+  - id: overrides
+    type: noop
+    needs: [inherits]
+    timeout: 2m
+    retry: {max_attempts: 5, backoff: linear, initial: 2s, retry_on: [timeout, upstream_5xx]}
+    config: {}

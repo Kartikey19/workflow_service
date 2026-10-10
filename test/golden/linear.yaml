@@ -1,0 +1,21 @@
+# Feature: a linear chain with typed whole-value and interpolated expressions.
+apiVersion: workflow/v1
+name: linear
+inputs:
+  name: {type: string, required: true}
+nodes:
+  - id: greet
+    type: transform
+    config:
+      value: {text: "Hello, ${input.name}"}
+  - id: shout
+    type: transform
+    needs: [greet]
+    config:
+      value: '${nodes.greet.output.text.upperAscii()}'
+  - id: done
+    type: noop
+    needs: [shout]
+    config: {}
+outputs:
+  message: '${nodes.shout.output}'

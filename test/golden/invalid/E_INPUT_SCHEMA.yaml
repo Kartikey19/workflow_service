@@ -1,0 +1,8 @@
+apiVersion: workflow/v1
+name: input-schema
+inputs:
+  qty: {type: decimal}
+nodes:
+  - id: a
+    type: transform
+    config: {value: '${input.qty}'}

@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: Bad_Name
+nodes:
+  - {id: a, type: noop, config: {}}

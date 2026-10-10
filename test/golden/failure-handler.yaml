@@ -1,0 +1,14 @@
+# Feature: on_failure compensation and an if: condition.
+apiVersion: workflow/v1
+name: failure-handler
+inputs:
+  notify: {type: boolean, default: true}
+nodes:
+  - {id: charge, type: noop, on_failure: refund, config: {}}
+  - {id: refund, type: noop, needs: [charge], config: {}}
+  - {id: ship, type: noop, needs: [charge], config: {}}
+  - id: tell
+    type: noop
+    needs: [ship]
+    if: '${input.notify}'
+    config: {}

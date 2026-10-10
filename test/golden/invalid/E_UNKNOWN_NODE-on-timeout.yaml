@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: unknown-on-timeout
+nodes:
+  - {id: a, type: sleep, on_timeout: missing, config: {duration: 1m}}

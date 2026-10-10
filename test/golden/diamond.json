@@ -1,0 +1,109 @@
+{
+  "spec_hash": "sha256:65483cfb3081b7f3466946cd9748e014574c50fb64e59cc189f072dbdab92808",
+  "warnings": [],
+  "spec": {
+    "api_version": "workflow/v1",
+    "name": "diamond",
+    "timeout_ns": 2592000000000000,
+    "nodes": [
+      {
+        "id": "a",
+        "type": "noop",
+        "needs": [],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      },
+      {
+        "id": "b",
+        "type": "noop",
+        "needs": [
+          "a"
+        ],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      },
+      {
+        "id": "c",
+        "type": "noop",
+        "needs": [
+          "a"
+        ],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      },
+      {
+        "id": "d",
+        "type": "noop",
+        "needs": [
+          "b",
+          "c"
+        ],
+        "join": "all",
+        "config": {},
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      }
+    ],
+    "edges": {
+      "a": [
+        "b",
+        "c"
+      ],
+      "b": [
+        "d"
+      ],
+      "c": [
+        "d"
+      ],
+      "d": []
+    },
+    "reverse_edges": {
+      "a": [],
+      "b": [
+        "a"
+      ],
+      "c": [
+        "a"
+      ],
+      "d": [
+        "b",
+        "c"
+      ]
+    },
+    "roots": [
+      "a"
+    ],
+    "topo_order": [
+      "a",
+      "b",
+      "c",
+      "d"
+    ]
+  }
+}

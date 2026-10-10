@@ -1,0 +1,7 @@
+apiVersion: workflow/v1
+name: retry-range
+nodes:
+  - id: a
+    type: noop
+    retry: {max_attempts: 21}
+    config: {}

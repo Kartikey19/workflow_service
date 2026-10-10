@@ -1,0 +1,8 @@
+apiVersion: workflow/v1
+name: expr-scope-typo
+nodes:
+  - {id: reserve_stock, type: noop, config: {}}
+  - id: b
+    type: transform
+    needs: [reserve_stock]
+    config: {value: '${nodes.reserv_stock.output}'}

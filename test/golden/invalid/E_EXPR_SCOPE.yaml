@@ -1,0 +1,7 @@
+apiVersion: workflow/v1
+name: expr-scope
+nodes:
+  - {id: a, type: noop, config: {}}
+  - id: b
+    type: transform
+    config: {value: '${nodes.a.output}'}

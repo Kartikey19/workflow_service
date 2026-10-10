@@ -1,0 +1,5 @@
+apiVersion: workflow/v1
+name: timeout-range
+timeout: 1m
+nodes:
+  - {id: a, type: noop, timeout: 2m, config: {}}

@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: unknown-type
+nodes:
+  - {id: a, type: teleport, config: {}}

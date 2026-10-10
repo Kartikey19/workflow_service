@@ -1,0 +1,121 @@
+{
+  "spec_hash": "sha256:765152daff85bb6d7e866660a0d51a2ebb8217cc38a3089a561ae74e67ef732f",
+  "warnings": [],
+  "spec": {
+    "api_version": "workflow/v1",
+    "name": "inputs",
+    "inputs": {
+      "email": {
+        "type": "string",
+        "required": false,
+        "default": null,
+        "enum": null,
+        "format": "email",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      },
+      "express": {
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "enum": null,
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      },
+      "id": {
+        "type": "string",
+        "required": true,
+        "default": null,
+        "enum": null,
+        "format": "uuid",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      },
+      "meta": {
+        "type": "object",
+        "required": false,
+        "default": null,
+        "enum": null,
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      },
+      "qty": {
+        "type": "integer",
+        "required": false,
+        "default": 1,
+        "enum": null,
+        "format": "",
+        "minimum": 1,
+        "maximum": 100,
+        "pattern": ""
+      },
+      "ratio": {
+        "type": "number",
+        "required": false,
+        "default": null,
+        "enum": null,
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      },
+      "sku": {
+        "type": "string",
+        "required": false,
+        "default": null,
+        "enum": null,
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": "^[A-Z]{3}-[0-9]+$"
+      },
+      "tags": {
+        "type": "array",
+        "required": false,
+        "default": null,
+        "enum": null,
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      }
+    },
+    "timeout_ns": 2592000000000000,
+    "nodes": [
+      {
+        "id": "echo",
+        "type": "transform",
+        "needs": [],
+        "join": "all",
+        "config": {
+          "value": "${input}"
+        },
+        "retry": {
+          "max_attempts": 1,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        }
+      }
+    ],
+    "edges": {
+      "echo": []
+    },
+    "reverse_edges": {
+      "echo": []
+    },
+    "roots": [
+      "echo"
+    ],
+    "topo_order": [
+      "echo"
+    ]
+  }
+}

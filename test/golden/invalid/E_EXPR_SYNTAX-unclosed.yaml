@@ -1,0 +1,6 @@
+apiVersion: workflow/v1
+name: expr-unclosed
+nodes:
+  - id: a
+    type: transform
+    config: {value: 'hello ${input.x'}

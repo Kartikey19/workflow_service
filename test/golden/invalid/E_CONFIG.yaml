@@ -1,0 +1,4 @@
+apiVersion: workflow/v1
+name: bad-config
+nodes:
+  - {id: a, type: http, timeout: 5s, config: {method: FETCH, url: "https://example.com"}}

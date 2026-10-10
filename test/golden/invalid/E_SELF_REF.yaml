@@ -1,0 +1,6 @@
+apiVersion: workflow/v1
+name: self-ref
+nodes:
+  - id: a
+    type: transform
+    config: {value: '${nodes.a.output}'}

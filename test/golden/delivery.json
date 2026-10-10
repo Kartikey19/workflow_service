@@ -1,0 +1,211 @@
+{
+  "spec_hash": "sha256:c74d16dd9a0916d6e34db3b3ce5b984aaba473a5b2f2990410989226cc72529c",
+  "warnings": [],
+  "spec": {
+    "api_version": "workflow/v1",
+    "name": "order-fulfilment",
+    "inputs": {
+      "order_id": {
+        "type": "string",
+        "required": true,
+        "default": null,
+        "enum": null,
+        "format": "",
+        "minimum": null,
+        "maximum": null,
+        "pattern": ""
+      }
+    },
+    "timeout_ns": 86400000000000,
+    "correlation": "${input.order_id}",
+    "nodes": [
+      {
+        "id": "assign_rider",
+        "type": "http",
+        "needs": [
+          "reserve_stock"
+        ],
+        "join": "all",
+        "config": {
+          "body": {
+            "reservation": "${nodes.reserve_stock.output.body.reservation_id}"
+          },
+          "method": "POST",
+          "url": "https://dispatch.internal/v1/assign"
+        },
+        "retry": {
+          "max_attempts": 3,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 30000000000,
+          "jitter": 0
+        },
+        "timeout_ns": 15000000000,
+        "on_failure": "release_stock"
+      },
+      {
+        "id": "await_pickup",
+        "type": "wait_event",
+        "needs": [
+          "assign_rider"
+        ],
+        "join": "all",
+        "config": {
+          "key": "order.picked_up:${input.order_id}",
+          "timeout": "45m"
+        },
+        "retry": {
+          "max_attempts": 3,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 30000000000,
+          "jitter": 0
+        },
+        "timeout_ns": 15000000000,
+        "on_timeout": "reassign_rider"
+      },
+      {
+        "id": "notify_customer",
+        "type": "http",
+        "needs": [
+          "await_pickup"
+        ],
+        "join": "all",
+        "config": {
+          "body": {
+            "text": "Your order is on the way with ${nodes.await_pickup.output.rider}.",
+            "to": "${input.order_id}"
+          },
+          "method": "POST",
+          "url": "https://notify.internal/v1/sms"
+        },
+        "retry": {
+          "max_attempts": 3,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 30000000000,
+          "jitter": 0
+        },
+        "timeout_ns": 15000000000
+      },
+      {
+        "id": "reassign_rider",
+        "type": "http",
+        "needs": [
+          "await_pickup"
+        ],
+        "join": "any",
+        "config": {
+          "body": {
+            "order_id": "${input.order_id}"
+          },
+          "method": "POST",
+          "url": "https://dispatch.internal/v1/reassign"
+        },
+        "retry": {
+          "max_attempts": 3,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 30000000000,
+          "jitter": 0
+        },
+        "timeout_ns": 15000000000
+      },
+      {
+        "id": "release_stock",
+        "type": "http",
+        "needs": [
+          "assign_rider"
+        ],
+        "join": "any",
+        "config": {
+          "body": {
+            "reservation": "${nodes.reserve_stock.output.body.reservation_id}"
+          },
+          "method": "POST",
+          "url": "https://inv.internal/v1/release"
+        },
+        "retry": {
+          "max_attempts": 3,
+          "backoff": "exponential",
+          "initial_ns": 1000000000,
+          "max_ns": 30000000000,
+          "jitter": 0
+        },
+        "timeout_ns": 15000000000
+      },
+      {
+        "id": "reserve_stock",
+        "type": "http",
+        "needs": [],
+        "join": "all",
+        "config": {
+          "body": {
+            "order_id": "${input.order_id}"
+          },
+          "headers": {
+            "Authorization": "Bearer ${secrets.INV_TOKEN}"
+          },
+          "method": "POST",
+          "url": "https://inv.internal/v1/reserve"
+        },
+        "retry": {
+          "max_attempts": 5,
+          "backoff": "exponential",
+          "initial_ns": 2000000000,
+          "max_ns": 60000000000,
+          "jitter": 0
+        },
+        "timeout_ns": 15000000000
+      }
+    ],
+    "edges": {
+      "assign_rider": [
+        "await_pickup",
+        "release_stock"
+      ],
+      "await_pickup": [
+        "notify_customer",
+        "reassign_rider"
+      ],
+      "notify_customer": [],
+      "reassign_rider": [],
+      "release_stock": [],
+      "reserve_stock": [
+        "assign_rider"
+      ]
+    },
+    "reverse_edges": {
+      "assign_rider": [
+        "reserve_stock"
+      ],
+      "await_pickup": [
+        "assign_rider"
+      ],
+      "notify_customer": [
+        "await_pickup"
+      ],
+      "reassign_rider": [
+        "await_pickup"
+      ],
+      "release_stock": [
+        "assign_rider"
+      ],
+      "reserve_stock": []
+    },
+    "roots": [
+      "reserve_stock"
+    ],
+    "topo_order": [
+      "reserve_stock",
+      "assign_rider",
+      "await_pickup",
+      "notify_customer",
+      "reassign_rider",
+      "release_stock"
+    ],
+    "outputs": {
+      "reservation": "${nodes.reserve_stock.output.body.reservation_id}"
+    }
+  }
+}
