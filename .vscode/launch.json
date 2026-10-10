@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Workflow API",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "APP_MODE": "api",
+        "HTTP_ADDRESS": "127.0.0.1:8081"
+      }
+    },
+    {
+      "name": "Support ticket compiler",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/internal/spec",
+      "cwd": "${workspaceFolder}",
+      "args": ["-test.run", "^TestSupportTicketExample$", "-test.v"]
+    }
+  ]
+}

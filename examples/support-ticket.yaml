@@ -1,0 +1,39 @@
+apiVersion: workflow/v1
+name: support-ticket
+description: Create a support ticket and alert on-call for high-priority requests.
+inputs:
+  request_id: {type: string, required: true}
+  customer_email: {type: string, required: true}
+  subject: {type: string, required: true}
+  priority: {type: string, enum: [normal, high], default: normal}
+correlation: '${input.request_id}'
+timeout: 5m
+defaults:
+  timeout: 10s
+  retry: {max_attempts: 3, backoff: exponential, initial: 1s, max: 10s}
+nodes:
+  - id: create_ticket
+    type: http
+    config:
+      method: POST
+      url: http://localhost:9090/tickets
+      headers:
+        Idempotency-Key: '${input.request_id}'
+      body:
+        email: '${input.customer_email}'
+        subject: '${input.subject}'
+        priority: '${input.priority}'
+  - id: alert_oncall
+    type: http
+    needs: [create_ticket]
+    if: '${input.priority == "high"}'
+    config:
+      method: POST
+      url: http://localhost:9090/alerts
+      headers:
+        Idempotency-Key: 'alert-${input.request_id}'
+      body:
+        ticket_id: '${nodes.create_ticket.output.body.ticket_id}'
+        subject: '${input.subject}'
+outputs:
+  ticket_id: '${nodes.create_ticket.output.body.ticket_id}'
