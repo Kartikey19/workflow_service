@@ -34,7 +34,9 @@ func CompileWith(source []byte, opts Options) (*Compiled, []Diagnostic) {
 	// A no-root graph is still traversed to report the actual cycle path.
 	for _, d := range diagnostics {
 		if d.Severity == "error" && d.Code != "E_NO_ROOT" {
-			return nil, diagnostics
+			// Node types and configs do not depend on the graph: report them
+			// too, so one publish shows every independent error.
+			return nil, append(diagnostics, validateExecutors(document, opts.Registry)...)
 		}
 	}
 	graph, graphDiagnostics := BuildGraph(document)
