@@ -20,7 +20,9 @@ import (
 	"github.com/kartikey/workflow_service/internal/engine"
 	"github.com/kartikey/workflow_service/internal/executor"
 	"github.com/kartikey/workflow_service/internal/executors/core"
+	"github.com/kartikey/workflow_service/internal/executors/httpexec"
 	"github.com/kartikey/workflow_service/internal/flow"
+	"github.com/kartikey/workflow_service/internal/netguard"
 	"github.com/kartikey/workflow_service/internal/workflows"
 )
 
@@ -86,6 +88,8 @@ func newHarness(t *testing.T, ctx context.Context) *harness {
 	registry := executor.NewRegistry()
 	registry.MustRegister(core.All()...)
 	registry.MustRegister(script)
+	// httptest upstreams listen on loopback, which the default policy blocks.
+	registry.MustRegister(httpexec.New(netguard.Policy{AllowPrivate: true}))
 	h := &harness{t: t, pool: pool, flow: f, script: script, tenant: newUUID(t), registry: registry, publish: workflows.NewService(pool, registry)}
 	t.Cleanup(h.stopWorkers)
 	return h
@@ -189,7 +193,7 @@ func (h *harness) runOutput(runID pgtype.UUID) (map[string]any, map[string]any) 
 	return output, runError
 }
 
-// checkInvariants asserts I1, I3, I4, I5 and I6 (05 §4) for one run.
+// checkInvariants asserts I1–I7 (01 §4) for one run.
 func (h *harness) checkInvariants(runID pgtype.UUID) {
 	h.t.Helper()
 	ctx := context.Background()
@@ -204,8 +208,29 @@ func (h *harness) checkInvariants(runID pgtype.UUID) {
 			group by node_id, branch_key having count(distinct idempotency_key) > 1) d`,
 		"I6 seq gaps": `select count(*) from (select seq, row_number() over (order by seq) as n
 			from run_events where run_id = $1) s where seq <> n`,
+		// I2: a node that ran has a terminal row for every need; with join: all
+		// every need succeeded, unless the node is that need's failure handler.
+		"I2 ran before its needs": `with spec as (
+				select wv.spec from runs r join workflow_versions wv on wv.id = r.workflow_version_id where r.id = $1),
+			specnodes as (select n from spec, jsonb_array_elements(spec.spec->'nodes') n),
+			needs as (select n->>'id' as node_id, n->>'join' as join_mode, dep
+				from specnodes, jsonb_array_elements_text(n->'needs') dep),
+			ran as (select distinct node_id from node_executions
+				where run_id = $1 and status not in ('skipped', 'cancelled'))
+			select count(*) from ran join needs using (node_id)
+			 where not exists (select 1 from node_executions d where d.run_id = $1 and d.node_id = needs.dep
+			                     and d.status in ('succeeded', 'failed', 'skipped'))
+			    or (needs.join_mode = 'all'
+			        and not exists (select 1 from node_executions d where d.run_id = $1 and d.node_id = needs.dep and d.status = 'succeeded')
+			        and not exists (select 1 from specnodes s where s.n->>'id' = needs.dep
+			                          and (s.n->>'on_failure' = needs.node_id or s.n->>'on_timeout' = needs.node_id)))`,
 		"two succeeded attempts": `select count(*) from (select node_id from node_executions where run_id = $1 and status = 'succeeded'
 			group by node_id, branch_key having count(*) > 1) d`,
+	}
+	// I7: the run's version cannot be updated.
+	if _, err := h.pool.Exec(ctx, `update workflow_versions set created_by = created_by
+		where id = (select workflow_version_id from runs where id = $1)`, runID); err == nil {
+		h.t.Error("invariant I7 violated: workflow_versions row was updatable")
 	}
 	for name, query := range checks {
 		var violations int
@@ -266,7 +291,7 @@ nodes:
   - {id: d, type: script, needs: [b, c], config: {}}
 `)
 	h.startWorkers(8)
-	const runs = 60
+	const runs = 200
 	ids := make([]pgtype.UUID, runs)
 	for i := range runs {
 		ids[i] = h.start("diamond", nil)

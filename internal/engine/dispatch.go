@@ -364,6 +364,16 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 			return err
 		}
 
+		if !o.retryAt.IsZero() && d.flow.MaxNodesPerRun > 0 {
+			count, err := q.CountRunNodeExecutions(ctx, ne.RunID)
+			if err != nil {
+				return fmt.Errorf("count run node executions: %w", err)
+			}
+			if count >= int64(d.flow.MaxNodesPerRun) {
+				// Poison-node protection (03 §6.4): the budget wins over retries.
+				return d.flow.FailRun(ctx, q, run, "E_RUN_BUDGET", fmt.Sprintf("run exceeded %d node executions", d.flow.MaxNodesPerRun))
+			}
+		}
 		if !o.retryAt.IsZero() {
 			if _, err := q.EnqueueRetry(ctx, gen.EnqueueRetryParams{
 				ID: ids.New(), RunID: ne.RunID, TenantID: ne.TenantID, NodeID: ne.NodeID,
