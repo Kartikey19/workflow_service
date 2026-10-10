@@ -1,7 +1,87 @@
 # 05 — Implementation Plan
 
-Go 1.27.0, PostgreSQL 16+. Roughly five weeks to a shippable v1 at a steady pace,
-milestone by milestone, each independently demoable.
+Go 1.27.0, PostgreSQL 16+. Roughly five weeks to a shippable engine v1 at a steady
+pace, milestone by milestone, each independently demoable. Milestones M10–M19
+(§3.1) then turn the engine into a hosted product.
+
+---
+
+## 0. Product scope (updated 2026-10-10)
+
+The engine (M0–M9) is the core. The product built around it must let people:
+
+| # | Requirement | Milestone |
+|---|---|---|
+| 1 | Create workflows easily in a UI; an assistant agent turns written requirements into YAML that can be reviewed and published from the UI | M17, M18 |
+| 2 | Update workflows in the UI (each save publishes a new immutable version) | M18 |
+| 3 | See run status: list, detail, node timeline, inputs/outputs, live events | M6, M18 |
+| 4 | Create agents: pick a provider and model (4.1), declare input (4.2) and output (4.3), use the agent as a workflow node (4.4), and add provider API keys with a connection test before saving (4.5) | M13 |
+| 5 | Send email through a configured integration, or with credentials passed in the request | M14 |
+| 6 | Integrations with third-party apps: Gmail, Dropbox, Google Drive, OneDrive, and database connectors to save data | M14 |
+| 7 | Define data-exploration agents (an agent with read-only database tools) | M15 |
+| 8 | MCP connectors (agents call tools on remote MCP servers) | M15 |
+| 9 | Trigger a workflow run from a webhook | M16 |
+| 10 | A vault for credentials (API keys and so on) that workflows can reference, e.g. `${secrets.API_KEY}` | M12 |
+| 11 | Separate entry points for the API server and the worker; horizontally scalable and controllable | M10 |
+| 12 | Cheap infrastructure; price is a concern | M19 |
+| 13 | Free observability | M6, M19 |
+| 14 | Production deployment | M19 |
+
+### 0.1 Decisions
+
+- **Tenancy.** An *organization* is the tenant (`tenant_id` everywhere is the
+  organization ID). A user can belong to several organizations and switch
+  between them, so a team designs and runs workflows together.
+- **Roles.** `owner`, `admin`, `editor` (create and edit workflows, agents and
+  connections, start runs), `viewer` (read only). A platform-admin flag on the user
+  allows inviting new organizations.
+- **Sign-up.** Invite-only at launch: a platform admin invites a user to a new
+  organization, and organization admins invite members. Self sign-up with paid
+  plans comes later behind a `SIGNUP_ENABLED` flag; the data model supports it
+  from day one.
+- **Plans and limits.** Plans are rows, not code. Limits are enforced at publish
+  time (workflow count, steps per workflow) and at run creation (runs per calendar
+  month). Starting values:
+
+  | Plan | Workflows | Steps per workflow | Runs per month |
+  |---|---|---|---|
+  | Free | 1 | 5 | 20 |
+  | Pro (paid) | 50 | 50 | 10 000 |
+  | Team (paid) | unlimited | 200 | 100 000 |
+
+  Paid limits are placeholders until pricing is decided. Billing (Stripe) is
+  out of scope until self sign-up opens; an admin assigns plans manually meanwhile.
+- **LLM providers at launch.** Anthropic, OpenAI, any OpenAI-compatible endpoint
+  (Groq, Together, OpenRouter, Ollama, vLLM and others via base URL), and Google
+  Gemini. Clients are plain `net/http`, with no vendor SDKs, behind one internal
+  interface.
+- **Credentials.** Provider keys, integration credentials and OAuth tokens are
+  stored encrypted (AES-256-GCM, master key from the environment, key version
+  column for rotation). Secrets are decrypted only inside the worker, passed to
+  executors, and never written to `node_executions.input`, logs or events.
+- **Integrations that use OAuth** (Gmail, Google Drive, Dropbox, OneDrive) need an
+  OAuth app registered by the operator with each provider. Client IDs and secrets
+  come from the environment; integrations without them are hidden in the UI.
+- **MCP.** Only remote MCP servers over HTTP (streamable HTTP and SSE). Stdio MCP
+  servers are not supported in a multi-tenant service because they would run
+  tenant-supplied commands on our hosts.
+- **Egress.** Every outbound connection made on a tenant's behalf (http nodes,
+  MCP, OpenAI-compatible base URLs, database connectors) goes through
+  `internal/netguard`. It blocks loopback, private, link-local and metadata
+  addresses unless they are allowed by `EGRESS_ALLOW_CIDRS`.
+- **UI.** React, Vite and TypeScript, built into `web/dist` and embedded in the API
+  binary with `go:embed`, so one image serves both. Same-origin session cookies
+  (HttpOnly, SameSite=Lax); API keys (`Authorization: Bearer`) for programmatic
+  use and webhooks.
+- **Infrastructure.** No decision yet; see the comparison in §11. The
+  recommendation is one small dedicated droplet running Docker Compose (Caddy,
+  API, N workers, PostgreSQL) with nightly `pg_dump` to object storage, at roughly
+  $12/month. Scale-to-zero serverless is a poor fit because workers must stay up to
+  poll, hold leases and run long LLM calls. Everything ships as Docker images
+  configured by environment, so moving host is configuration, not code.
+- **Observability.** Prometheus `/metrics` on the API and the worker, JSON logs,
+  and Grafana Cloud's free tier (10k series, 50 GB logs, 14-day retention) fed by
+  a Grafana Alloy agent on the host. Tracing (OpenTelemetry) is optional, later.
 
 ---
 
@@ -15,6 +95,8 @@ workflow_service/
   .github/workflows/ci.yml       // checks with a PostgreSQL 16 service
 
   cmd/
+    api/main.go                 // HTTP API + UI                   (M10)
+    worker/main.go              // claim loop, dispatcher, sweeper (M10)
     migrate/main.go             // forward-only embedded SQL migrations
     wfctl/main.go               // CLI: publish, lint, run, tail  (M6)
 
@@ -42,9 +124,28 @@ workflow_service/
     executor/     executor.go           // Executor, Request, Result, Control, errors
                   registry.go
 
-    executors/    noop/    http/    transform/
-                  branch/  sleep/   waitevent/
-                  agent/   humantask/                    // M7, M8
+    executors/    core/     (noop, transform, branch, sleep, wait_event)
+                  httpexec/ (http)
+                  agent/    (M13)    email/  gmail/  gdrive/  dropbox/
+                  onedrive/ dbquery/ mcp/    (M14, M15)
+                  humantask/                             // M8
+
+    flow/         cache.go start.go resolve.go control.go
+                  // run transitions shared by API and worker: start, advance,
+                  // recompute, cancel, signal, wake sleeps, deadlines
+    workflows/    publish.go            // compile → hash → version max+1
+    ids/          ids.go                // UUIDv7, node idempotency keys
+    netguard/     netguard.go           // SSRF-safe dialer and HTTP client
+    obs/          metrics.go            // Prometheus registry
+    auth/         // users, orgs, sessions, API keys, invites, roles  (M11)
+    vault/        // AES-GCM secret storage, SecretSource             (M12)
+    llm/          // anthropic, openai, openaicompat, gemini clients  (M13)
+    agents/       // agent definitions, test-connection               (M13)
+    connections/  // integration credentials, OAuth flows             (M14)
+    mcpclient/    // MCP over HTTP: initialize, tools/list, call      (M15)
+    assistant/    // requirements → YAML generation loop              (M17)
+  web/            // React + Vite SPA, embedded into the API binary   (M18)
+  deploy/         // Dockerfile, compose, Caddyfile, Alloy, backups   (M19)
 
     engine/       worker.go  claim.go   dispatch.go
                   resolve.go lease.go   retry.go   sweep.go
@@ -259,6 +360,24 @@ get all six errors in one response.
 - [ ] Add canonical hashing, golden fixtures, and publish/read APIs. This compiler
       stage does not yet validate registered executor types or persist workflows.
 
+**M1 progress (2026-10-10)**
+- [x] `spec.CompileWith(source, Options{Registry})`: unknown node types
+      (`E_UNKNOWN_TYPE`) and executor `ValidateConfig` (`E_CONFIG`) at publish.
+- [x] `E_BRANCH_TARGET` and `E_FAILURE_TARGET`: `goto`, `on_failure` and
+      `on_timeout` targets must list their source in `needs`.
+- [x] `W_JOIN_ALL_ACROSS_BRANCH` warning.
+- [x] Input schema validation at publish (`E_INPUT_SCHEMA`) and
+      `spec.ValidateInput` at run creation (defaults, types, enum, format,
+      min/max, pattern; undeclared fields pass through for webhook payloads).
+- [x] `Spec.Hash()` (sha256 of canonical JSON) and `spec.Load` (rebuild programs
+      from the stored spec, not the YAML).
+- [x] `internal/workflows.Service.Publish`: row lock, hash dedupe
+      (`unchanged`), version max+1, plan limits (workflows, steps).
+- [x] Expression library: CEL strings, encoders (base64), math, lists, sets,
+      optional types and `list.sum()`.
+- [ ] Golden fixtures; spec_hash 1 000-iteration stability test; HTTP publish/read
+      endpoints (M10).
+
 
 ### M2 — Engine core (1 week) ← the hard one
 
@@ -281,6 +400,34 @@ and watch another finish it.
 - [ ] Run status transitions match `01 §3.2` for every node population.
 - [ ] Invariants I1–I4 asserted by a `checkInvariants(t, db, runID)` helper called
       at the end of **every** engine test. Write the helper once; use it everywhere.
+
+**M2–M5 progress (2026-10-10)**
+- [x] `internal/flow`: spec cache (LRU by version ID), `Start` (run plus roots,
+      idempotency key with request-hash conflict detection, correlation,
+      deadline), `Advance` (successors, joins, failure handlers, branch pruning,
+      skip cascade, run budget), `Recompute` (run status, outputs, unhandled
+      failure), `Cancel`, `Signal`, `WakeDue`, `FailPastDeadline`; every
+      transition under the run row lock; gap-free `run_events`; `pg_notify`.
+- [x] Dispatcher rewritten on `flow`: cached programs, `if` skip, secrets resolved
+      twice (real for the executor, `***` for the stored input), 256 KB input and
+      output caps, `Control` for branch/sleep/wait, `E_WAIT_KEY_CONFLICT`, panic
+      containment, metrics, cancelled-run handling.
+- [x] Worker: capacity-aware claim loop with `LISTEN wf_ready` wakeups, sweeper
+      (reclaim leases, wake sleeps and time out waits, run deadlines, jittered),
+      graceful shutdown that releases leases.
+- [x] Executors: `noop`, `transform`, `branch`, `sleep`, `wait_event`, `http`
+      (error classification, Retry-After, Idempotency-Key, 256 KB cap, SSRF guard).
+- [x] Migration `0005_engine.sql`: `run_waits`, `runs.request_hash`,
+      `runs.created_by`, list indexes, `workflow_versions` immutability trigger (I7).
+- [x] Engine integration tests with a `checkInvariants` helper (I1, I3–I6, no
+      double success): linear with outputs, 60-run diamond on 8 workers, branch
+      with `join: any`, retries with a stable key, `on_failure` and unhandled
+      failure, sleep plus signal plus duplicate signal, cancel mid-node,
+      idempotent start, shutdown lease release. All passed with `-race`.
+- [x] `test/integration/migrations_test.go` counts embedded migrations instead
+      of hard-coding 4.
+- [ ] Re-run the full integration suite after that change (not yet re-run).
+- [ ] Kill -9 crash test; 200-iteration diamond; wait payload `schema` validation.
 
 ### M3 — The `http` executor (3–4 days)
 
@@ -383,6 +530,162 @@ Where `branch_key` finally earns the column you added in M0. Fan-out inserts N
 child executions; a fan-in node with `join: all` over `branch_key='*'` collects
 them. Sub-workflows use `parent_run_id` and a `wait_event` on child completion —
 which means they need no new engine mechanism at all.
+
+### 3.1 Product milestones (M10–M19)
+
+Each milestone keeps the engine rules: executors never import `store`, every
+query takes `tenant_id`, and credentials never reach `node_executions.input`,
+logs or events.
+
+### M10 — Entry points, API surface, scaling (3–4 days)
+
+Build: `cmd/api` and `cmd/worker` (the root `main.go` keeps `APP_MODE=all` for
+local development); `WORKER_ID` defaults to hostname plus a random suffix so
+`docker compose up --scale worker=N` works; worker `/metrics` and `/healthz` on
+`WORKER_METRICS_ADDRESS`. API: RFC 7807 errors; `POST /v1/workflows` (YAML or
+JSON, `?dry_run`), `GET /v1/workflows[/{name}[/versions/{n}]]`, archive;
+`POST /v1/runs`, `GET /v1/runs`, `GET /v1/runs/{id}`, `/nodes`, `/events`
+(polling and SSE), `/cancel`; `POST /v1/signals`; `GET /v1/executors`;
+`GET /metrics`.
+
+**Control:** `WORKER_CONCURRENCY`, `WORKER_BATCH_SIZE` and the replica count set
+throughput. Workers can be drained with `SIGTERM` (leases are released). Separate
+worker pools by node type (for example, agent-only workers) are a later option
+through a `WORKER_NODE_TYPES` filter on `ClaimReady`.
+
+**Acceptance**
+- [ ] API and worker run as separate processes against one database; two worker
+      replicas share load with no duplicate execution.
+- [ ] `SIGTERM` on a worker mid-run hands its nodes to another replica in under a second.
+- [ ] Every endpoint is tenant-scoped; one tenant can never read another tenant's runs.
+
+### M11 — Identity, organizations, plans (4–5 days)
+
+Tables: `users`, `organizations`, `memberships(role)`, `invites`, `sessions`,
+`api_keys`, `plans`, `organization_usage` (runs per month). Password hashing with
+bcrypt; session and API-key tokens stored as SHA-256 hashes; first platform admin
+bootstrapped from `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` when no
+users exist. Invite emails are sent via platform SMTP when configured; otherwise
+the UI shows a copyable link.
+
+**Acceptance**
+- [ ] Invite → accept → login → switch organization works end to end.
+- [ ] Role checks on every mutating endpoint; viewers cannot publish or run.
+- [ ] Free plan: the second workflow, a sixth step, and the 21st run in a
+      month are rejected with `402` and a clear message.
+
+### M12 — Vault (2 days)
+
+`secrets(org, name, ciphertext, nonce, key_version)`; AES-256-GCM with
+`VAULT_MASTER_KEY` (32 bytes, base64) and AAD of organization plus name.
+Values are write-only via the API (list returns names only). The worker's
+`SecretSource` decrypts per run; expressions use `${secrets.NAME}`.
+
+**Acceptance**
+- [ ] A secret used in an http header reaches the upstream but the stored node
+      input shows `***`.
+- [ ] Rotating `VAULT_MASTER_KEY` via key versions re-encrypts without downtime.
+
+### M13 — LLM providers and agents (1–1.5 weeks)
+
+- `provider_connections(org, provider, name, base_url, encrypted key)`, with
+  `POST /v1/providers/test` that lists models before saving (4.5).
+- `agents(org, name, provider_connection, model, system_prompt, input_schema,
+  output_schema, tools, max_iterations, temperature, max_tokens)` (4.1–4.3).
+- `agent` node type: `config: {agent: <name>, input: {...}}` (4.4); the tool loop
+  runs inside the executor (02 §4.6); output is validated against
+  `output_schema`; metrics record tokens, cost, iterations and model.
+- Tools available to agents: `http_request`, connector tools (M14), database tools
+  (M15) and MCP tools (M15).
+
+**Acceptance**
+- [ ] Each of Anthropic, OpenAI, OpenAI-compatible and Gemini passes the connection
+      test and runs a structured-output agent in a workflow.
+- [ ] `max_iterations` is enforced; schema-violating output is a permanent failure;
+      429 is retryable and honours Retry-After.
+
+### M14 — Email and app integrations (1.5 weeks)
+
+- `connections(org, kind, name, config, encrypted credentials, oauth tokens)` with
+  OAuth start/callback, token refresh, and a test action per kind.
+- Node types: `email.send` (SMTP or Resend; credentials from a connection *or*
+  inline in config via `${secrets.*}`, 5), `gmail.send`, `gdrive.upload`,
+  `dropbox.upload`, `onedrive.upload`, `db.query` and `db.insert` for
+  PostgreSQL and MySQL connections (6).
+- Executors receive credentials through a `Connections` interface defined in
+  `executor`, never by importing `store`.
+
+**Acceptance**
+- [ ] Each integration has a recorded-response test and a manual end-to-end check
+      against a real account.
+- [ ] Database connectors respect egress rules and a per-query timeout and row cap.
+
+### M15 — Data-exploration agents and MCP connectors (1 week)
+
+- Data-exploration agent: an agent bound to a database connection with read-only
+  tools `list_tables`, `describe_table` and `run_query` (read-only transaction,
+  statement timeout, row cap) (7).
+- `mcp_servers(org, name, url, auth)` connections; the MCP client supports
+  initialize, `tools/list` and `tools/call` over streamable HTTP or SSE;
+  agents list MCP servers in `tools`, and an `mcp.call` node type calls one
+  tool directly (8).
+
+**Acceptance**
+- [ ] An exploration agent answers a question by querying a sample database and
+      cannot write to it.
+- [ ] An agent calls a tool on a public MCP test server.
+
+### M16 — Webhook triggers (2–3 days)
+
+`triggers(org, workflow, kind, token_hash, secret, enabled)`. Calling
+`POST /hooks/{token}` starts a run with the JSON body as input (or
+`{body, headers, query}` when `input_mode: envelope`); an optional HMAC signature
+check; the `Idempotency-Key` header is honoured (9). Plan run limits apply.
+
+### M17 — Workflow assistant (4–5 days)
+
+`POST /v1/assistant/workflows`: requirements text in, YAML out. The prompt
+includes the spec rules, `GET /v1/executors` descriptions, and the organization's
+agents, connections and secret names (never values). The draft is compiled with
+`?dry_run`, and the diagnostics are fed back to the model for up to three repair
+rounds. It runs on a platform key (`ASSISTANT_PROVIDER`, `ASSISTANT_API_KEY`) or
+the organization's own provider connection.
+
+**Acceptance**
+- [ ] Ten reference prompts produce YAML that compiles without errors.
+
+### M18 — Web UI (2–3 weeks)
+
+Pages: login and accept invite; workflows (list, YAML editor with live
+validation, DAG graph, versions, run button with an input form); assistant
+panel; runs (filters, detail with node timeline, inputs/outputs, live events
+over SSE, cancel); agents (create, test, use); connections and integrations
+(OAuth connect buttons, test); vault; webhooks; members and invites; API keys;
+plan and usage.
+
+**Acceptance**
+- [ ] A new user can go from invite to a successful run with an agent node
+      without touching YAML by hand.
+
+### M19 — Production (3–4 days)
+
+Multi-stage Dockerfile (UI build, Go build, distroless); `deploy/compose.yml`
+with Caddy (automatic HTTPS), `migrate` one-shot, `api`, `worker`
+(scalable), PostgreSQL 16 with tuned settings, nightly `pg_dump` to S3-compatible
+storage with retention, and Grafana Alloy shipping metrics and logs to Grafana
+Cloud; dashboards and the two alerts from §6; a GitHub Actions workflow that
+builds and pushes images to GHCR and deploys over SSH; runbook updates.
+
+**Acceptance**
+- [ ] Fresh host to a working HTTPS deployment with one documented command.
+- [ ] A restore from last night's backup is tested.
+- [ ] A rolling deploy mid-run causes no failed runs.
+
+### Later
+
+Stripe billing and self sign-up; scheduled (cron) triggers; `human_task` (M8);
+`foreach` and sub-workflows (M9); OpenTelemetry tracing; per-tenant egress
+allowlists; SSO.
 
 ---
 
@@ -577,6 +880,13 @@ If you want a single sequence to follow without re-reading everything:
 13. Events, SSE, cancellation, metrics, `wfctl`.
 14. Ship. Then `agent`.
 
+**Product order (from 2026-10-10):** finish M2–M5 verification → M10 (entry
+points and API) → M11 (identity and plans) → M12 (vault) → M13 (agents) → M16
+(webhooks) → M18 (UI shell, built alongside each later milestone) → M14
+(integrations) → M15 (exploration agents and MCP) → M17 (assistant) → M19
+(production). Webhooks come early because they are small and make the engine
+usable from other systems before the UI is complete.
+
 Step 7 is the moment the thing becomes real. Everything before it is scaffolding
 and everything after it is a plugin. If you are going to timebox one part of this,
 make sure it is not steps 8–9 — the resolver and the lease are where correctness
@@ -617,3 +927,19 @@ production.
 - [ ] A 30-day `sleep` holds one row, zero goroutines (asserted, not assumed).
 - [ ] `?dry_run=true` wired into CI as a workflow lint.
 - [ ] Runbook §7 written, and every `wfctl` command in it actually exists.
+
+---
+
+## 11. Hosting options (2026 prices; verify before committing)
+
+| Option | Shape | ~Monthly | Notes |
+|---|---|---|---|
+| A. Existing droplet | Add Caddy, API, worker and Postgres containers | $0 extra | Fine for a private beta; competes with the other service for CPU and memory |
+| **B. New small droplet (recommended start)** | $12 droplet (2 GB), Compose stack, self-hosted Postgres, nightly `pg_dump` to R2 or Spaces | ~$12 | Isolated and cheap; add worker replicas or a worker-only droplet to scale |
+| C. Droplet + DO Managed Postgres | $6–12 droplet + $15 managed PG | ~$21–27 | Managed backups and failover; move here when there are paying customers |
+| D. Droplet + Neon | Serverless Postgres | ~$19+ | Polling workers keep compute awake 24/7; the free tier runs out mid-month |
+| E. Fly.io + any Postgres | API ~$2, worker ~$3 | ~$5 + PG | Good app tier; Postgres is billed separately |
+| F. Hetzner CX23 | 2 vCPU / 4 GB, same Compose stack | ~€4–6 | Best value; adds a second provider |
+
+Observability for every option: Grafana Cloud free tier (10k metric series,
+50 GB logs and traces per month, 14-day retention).
