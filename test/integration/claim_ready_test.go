@@ -16,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/kartikey/workflow_service/internal/db"
 	"github.com/kartikey/workflow_service/internal/store/gen"
 	"github.com/kartikey/workflow_service/migrations"
-	"github.com/kartikey/workflow_service/pkg/migrate"
 )
 
 const (
@@ -178,7 +178,7 @@ func newEmptyPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
 func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 
-	if _, err := migrate.Up(ctx, pool, migrations.Files); err != nil {
+	if _, err := db.Migrate(ctx, pool, migrations.Files); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 

@@ -30,12 +30,14 @@ create index runs_workflow_created_ix on runs (workflow_id, created_at desc, id 
 create index re_run_ix on run_events (run_id, seq);
 
 -- I7: a published version is immutable.
+-- +goose StatementBegin
 create function workflow_versions_immutable() returns trigger
 language plpgsql as $$
 begin
   raise exception 'workflow_versions rows are immutable';
 end;
 $$;
+-- +goose StatementEnd
 
 create trigger wfv_immutable
   before update on workflow_versions

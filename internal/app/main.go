@@ -1,0 +1,32 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/kartikey/workflow_service/internal/config"
+)
+
+// Main is the body of every service binary: it loads configuration, owns OS
+// signals and returns the exit status. mode "" reads APP_MODE.
+func Main(name, mode string) int {
+	cfg, err := config.LoadConfigMode(mode)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: load configuration: %v\n", name, err)
+		return 1
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// Restore normal signal handling when graceful shutdown begins, so a second
+	// interrupt can terminate a process whose dependencies fail to drain.
+	unregister := context.AfterFunc(ctx, stop)
+	defer unregister()
+	if err := Run(ctx, *cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", name, err)
+		return 1
+	}
+	return 0
+}

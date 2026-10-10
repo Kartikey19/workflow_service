@@ -14,12 +14,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/kartikey/workflow_service/internal/config"
 	"github.com/kartikey/workflow_service/internal/engine"
 	"github.com/kartikey/workflow_service/internal/executor"
 	"github.com/kartikey/workflow_service/internal/flow"
 	"github.com/kartikey/workflow_service/internal/spec"
 	"github.com/kartikey/workflow_service/internal/store/gen"
-	"github.com/kartikey/workflow_service/pkg/config"
 )
 
 const dispatchWorkflow = `

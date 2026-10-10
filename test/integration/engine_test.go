@@ -16,12 +16,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/kartikey/workflow_service/internal/config"
 	"github.com/kartikey/workflow_service/internal/engine"
 	"github.com/kartikey/workflow_service/internal/executor"
 	"github.com/kartikey/workflow_service/internal/executors/core"
 	"github.com/kartikey/workflow_service/internal/flow"
 	"github.com/kartikey/workflow_service/internal/workflows"
-	"github.com/kartikey/workflow_service/pkg/config"
 )
 
 // scripted runs a per-node behaviour so engine tests can fail, hang or count.

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/kartikey/workflow_service/internal/app"
-	"github.com/kartikey/workflow_service/pkg/config"
+	"github.com/kartikey/workflow_service/internal/config"
 )
 
 func TestApplicationReadinessAndShutdown(t *testing.T) {

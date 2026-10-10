@@ -130,22 +130,37 @@ func validConfig() Config {
 	}
 }
 
-func TestAPIModeDoesNotRequireWorkerSettings(t *testing.T) {
-	setValidEnvironment(t)
-	t.Setenv("APP_MODE", "api")
-	for _, key := range []string{"WORKER_ID", "WORKER_CONCURRENCY", "WORKER_BATCH_SIZE", "WORKER_POLL_INTERVAL", "WORKER_LEASE_TTL"} {
+func TestLoadConfigDefaultsAndDedicatedMode(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, key := range []string{"APP_ENV", "APP_MODE", "HTTP_ADDRESS", "SERVICE_NAME", "BUILD_VERSION", "LOG_LEVEL",
+		"LOG_ADD_SOURCE", "DB_MAX_CONNS", "DB_MIN_CONNS", "DB_CONNECT_TIMEOUT", "WORKER_ID", "WORKER_CONCURRENCY",
+		"WORKER_BATCH_SIZE", "WORKER_POLL_INTERVAL", "WORKER_LEASE_TTL", "SHUTDOWN_GRACE"} {
 		t.Setenv(key, "")
+		os.Unsetenv(key)
 	}
-	if _, err := LoadConfig(); err != nil {
+	t.Setenv("DATABASE_URL", "postgres://localhost/workflow")
+	got, err := LoadConfigMode("worker")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if got.App.Mode != "worker" || got.App.Environment != "development" || got.Worker.Concurrency != 32 ||
+		got.Worker.LeaseTTL != time.Minute || got.Database.MaxConns != 10 || got.Worker.MaxNodesPerRun != 1000 {
+		t.Fatalf("defaults = %+v", got)
+	}
+	if !strings.Contains(got.Worker.ID, "-") {
+		t.Fatalf("WORKER_ID default = %q, want hostname plus suffix", got.Worker.ID)
+	}
+	other, err := LoadConfigMode("worker")
+	if err != nil || other.Worker.ID == got.Worker.ID {
+		t.Fatalf("two replicas share WORKER_ID %q", got.Worker.ID)
 	}
 }
-func TestWorkerModeDoesNotRequireHTTPAddress(t *testing.T) {
-	setValidEnvironment(t)
-	t.Setenv("APP_MODE", "worker")
-	t.Setenv("HTTP_ADDRESS", "")
-	if _, err := LoadConfig(); err != nil {
-		t.Fatal(err)
+
+func TestLoadConfigRequiresDatabaseURL(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("DATABASE_URL", "")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("LoadConfig() = %v, want missing DATABASE_URL", err)
 	}
 }
 

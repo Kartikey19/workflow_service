@@ -17,8 +17,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/kartikey/workflow_service/internal/db"
 	"github.com/kartikey/workflow_service/migrations"
-	"github.com/kartikey/workflow_service/pkg/migrate"
 )
 
 func TestMigrationsConcurrentAndRepeat(t *testing.T) {
@@ -29,7 +29,7 @@ func TestMigrationsConcurrentAndRepeat(t *testing.T) {
 	counts := make(chan int, 2)
 	for range 2 {
 		wg.Go(func() {
-			n, err := migrate.Up(ctx, pool, migrations.Files)
+			n, err := db.Migrate(ctx, pool, migrations.Files)
 			if err != nil {
 				t.Errorf("migrate: %v", err)
 				return
@@ -46,7 +46,7 @@ func TestMigrationsConcurrentAndRepeat(t *testing.T) {
 	if want := embeddedMigrationCount(t); total != want {
 		t.Fatalf("applied %d migrations, want %d", total, want)
 	}
-	if n, err := migrate.Up(ctx, pool, migrations.Files); err != nil || n != 0 {
+	if n, err := db.Migrate(ctx, pool, migrations.Files); err != nil || n != 0 {
 		t.Fatalf("repeat = %d, %v", n, err)
 	}
 	var tables int
@@ -55,52 +55,38 @@ func TestMigrationsConcurrentAndRepeat(t *testing.T) {
 	}
 }
 
-func TestMigrationsRejectChangedMissingAndOlderFiles(t *testing.T) {
+func TestMigrationsRejectMissingOlderFiles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := newIsolatedPool(t, ctx)
-	files := fstest.MapFS{}
-	names, _ := fs.Glob(migrations.Files, "*.sql")
-	for _, name := range names {
-		data, _ := fs.ReadFile(migrations.Files, name)
-		files[name] = &fstest.MapFile{Data: data}
-	}
-	original := files[names[0]]
-	files[names[0]] = &fstest.MapFile{Data: append(append([]byte{}, original.Data...), []byte("\n-- changed\n")...)}
-	if _, err := migrate.Up(ctx, pool, files); err == nil || !strings.Contains(err.Error(), "has changed") {
-		t.Fatalf("changed migration: %v", err)
-	}
-	delete(files, names[0])
-	if _, err := migrate.Up(ctx, pool, files); err == nil || !strings.Contains(err.Error(), "missing") {
-		t.Fatalf("missing migration: %v", err)
-	}
-	files[names[0]] = original
-	// Simulate an incomplete ledger; a historical gap must not be backfilled.
-	if _, err := pool.Exec(ctx, "delete from schema_migrations where version = 1"); err != nil {
+	// Simulate a version that was never applied but is older than the latest:
+	// goose refuses to backfill a historical gap instead of guessing.
+	if _, err := pool.Exec(ctx, "delete from goose_db_version where version_id = 1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := migrate.Up(ctx, pool, files); err == nil || !strings.Contains(err.Error(), "older") {
-		t.Fatalf("older migration: %v", err)
+	if _, err := db.Migrate(ctx, pool, migrations.Files); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("older unapplied migration: %v", err)
 	}
 }
 
-func TestMigrationsRollbackDDLAndLedgerOnFailure(t *testing.T) {
+func TestMigrationsRollBackAFailedMigration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := newEmptyPool(t, ctx)
 	files := fstest.MapFS{
 		"0001_good.sql": {Data: []byte("-- +goose Up\ncreate table rollback_probe(id int);\n-- +goose Down\n")},
-		"0002_bad.sql":  {Data: []byte("-- +goose Up\nselect * from nonexistent_migration_table;\n-- +goose Down\n")},
+		"0002_bad.sql":  {Data: []byte("-- +goose Up\ncreate table half_done(id int);\nselect * from nonexistent_migration_table;\n-- +goose Down\n")},
 	}
-	if _, err := migrate.Up(ctx, pool, files); err == nil {
+	if _, err := db.Migrate(ctx, pool, files); err == nil {
 		t.Fatal("expected migration failure")
 	}
-	var clean bool
-	if err := pool.QueryRow(ctx, "select to_regclass('rollback_probe') is null and to_regclass('schema_migrations') is null").Scan(&clean); err != nil || !clean {
-		t.Fatalf("rollback clean = %v, %v", clean, err)
+	// Each migration is its own transaction: 0001 stays, 0002 left nothing.
+	var good, bad bool
+	if err := pool.QueryRow(ctx, "select to_regclass('rollback_probe') is not null, to_regclass('half_done') is null").Scan(&good, &bad); err != nil || !good || !bad {
+		t.Fatalf("after failure: first applied=%v, second rolled back=%v, %v", good, bad, err)
 	}
-	delete(files, "0002_bad.sql")
-	if n, err := migrate.Up(ctx, pool, files); err != nil || n != 1 {
+	files["0002_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\ncreate table half_done(id int);\n-- +goose Down\n")}
+	if n, err := db.Migrate(ctx, pool, files); err != nil || n != 1 {
 		t.Fatalf("retry = %d, %v", n, err)
 	}
 }

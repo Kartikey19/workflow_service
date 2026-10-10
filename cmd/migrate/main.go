@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kartikey/workflow_service/internal/config"
+	"github.com/kartikey/workflow_service/internal/db"
 	"github.com/kartikey/workflow_service/migrations"
-	"github.com/kartikey/workflow_service/pkg/config"
-	"github.com/kartikey/workflow_service/pkg/migrate"
 )
 
 func main() {
@@ -49,7 +49,7 @@ func run() error {
 		return errors.New("create migration pool")
 	}
 	defer pool.Close()
-	count, err := migrate.Up(ctx, pool, migrations.Files)
+	count, err := db.Migrate(ctx, pool, migrations.Files)
 	if err != nil {
 		return err
 	}

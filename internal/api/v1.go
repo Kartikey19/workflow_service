@@ -232,4 +232,3 @@ func rawJSON(data []byte) json.RawMessage {
 	}
 	return json.RawMessage(data)
 }
-

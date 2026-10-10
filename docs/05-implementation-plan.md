@@ -90,24 +90,21 @@ The engine (M0–M9) is the core. The product built around it must let people:
 ```
 workflow_service/
   go.mod                        // module github.com/kartikey/workflow_service
-  main.go                       // config, signals, exit status (APP_MODE=api today)
   Makefile
   .github/workflows/ci.yml       // checks with a PostgreSQL 16 service
 
-  cmd/
+  cmd/                          // one directory per binary; main.go stays tiny
+    workflowd/main.go           // APP_MODE=api|worker|all (all = local dev)
     api/main.go                 // HTTP API + UI                   (M10)
     worker/main.go              // claim loop, dispatcher, sweeper (M10)
-    migrate/main.go             // forward-only embedded SQL migrations
+    migrate/main.go             // forward-only embedded SQL migrations (goose)
     wfctl/main.go               // CLI: publish, lint, run, tail  (M6)
 
-  pkg/
-    config/       config.go             // environment loading and validation
-    logger/       logger.go             // process logger construction
-    db/           db.go                 // pgxpool connection construction
-    migrate/      migrate.go            // transactional migration runner
-
   internal/
-    app/          app.go                // composition and resource lifetime
+    app/          app.go main.go        // composition root, signals, exit status
+    config/       config.go             // env struct tags (caarlos0/env) + .env
+    logger/       logger.go             // zap JSON logger construction
+    db/           db.go migrate.go      // pgxpool construction, goose migrations
     spec/         doc.go
                   document.go           // the YAML structs
                   compile.go            // decode → normalise → validate → graph → cel
@@ -135,6 +132,7 @@ workflow_service/
                   // recompute, cancel, signal, wake sleeps, deadlines
     workflows/    publish.go            // compile → hash → version max+1
     ids/          ids.go                // UUIDv7, node idempotency keys
+    jsonschema/   jsonschema.go         // JSON Schema subset: wait payloads, agent output
     netguard/     netguard.go           // SSRF-safe dialer and HTTP client
     obs/          metrics.go            // Prometheus registry
     auth/         // users, orgs, sessions, API keys, invites, roles  (M11)
@@ -144,36 +142,36 @@ workflow_service/
     connections/  // integration credentials, OAuth flows             (M14)
     mcpclient/    // MCP over HTTP: initialize, tools/list, call      (M15)
     assistant/    // requirements → YAML generation loop              (M17)
-  web/            // React + Vite SPA, embedded into the API binary   (M18)
-  deploy/         // Dockerfile, compose, Caddyfile, Alloy, backups   (M19)
 
     engine/       worker.go  claim.go   dispatch.go
-                  resolve.go lease.go   retry.go   sweep.go
+                  lease.go   retry.go   sweep.go
 
     store/        queries/*.sql         // sqlc source of truth
                   gen/                  // sqlc output — never hand-edited
                   store.go              // workflow persistence interfaces + InTx
 
-    api/          server.go  routes.go
-                  workflows.go  runs.go  signals.go  ops.go
+    api/          server.go  v1.go
+                  workflows.go  runs.go  signals.go  events.go
                   problem/              // RFC 7807
 
-    events/       writer.go             // seq allocation, typed payloads
-    obs/          metrics.go trace.go
-
-  migrations/     0001_workflows.sql … 0006_blobs.sql
+  web/            // React + Vite SPA, embedded into the API binary   (M18)
+  deploy/         // Dockerfile, compose, Caddyfile, Alloy, backups   (M19)
+  migrations/     0001_workflows.sql …  // embedded, goose format
   docs/           00-overview.md … 05-implementation-plan.md
   test/
     integration/  // DATABASE_URL + isolated schemas, //go:build integration
     golden/       // workflow YAML fixtures + expected compiled specs
 ```
 
-**Package boundary.** Put common infrastructure in `pkg/`: configuration,
-logging, database connectivity, and other packages that can be reused without
-depending on workflow-domain code. Keep workflow-specific implementation in
-`internal/`; it may depend on `pkg/`, but `pkg/` must never depend on
-`internal/`. `internal/app` is the composition root and wires those packages
-together; `main.go` owns configuration loading, signals, and exit status.
+**Layout (restructured 2026-10-10).** This follows the standard Go application
+layout: every binary is a directory under `cmd/` whose `main.go` only calls
+`internal/app.Main`, and all other code is under `internal/`, because this
+module is an application and nothing in it is meant to be imported by other
+modules. The former `pkg/` packages (config, logger, db, migrate) moved to
+`internal/`. Well-known libraries replace hand-written infrastructure:
+`caarlos0/env` reads configuration from struct tags, `joho/godotenv` loads
+`.env`, and `pressly/goose` applies migrations. `internal/app` is the
+composition root and wires packages together.
 
 **Dependency direction is strictly one-way:**
 
@@ -539,7 +537,7 @@ logs or events.
 
 ### M10 — Entry points, API surface, scaling (3–4 days)
 
-Build: `cmd/api` and `cmd/worker` (the root `main.go` keeps `APP_MODE=all` for
+Build: `cmd/api` and `cmd/worker` (`cmd/workflowd` keeps `APP_MODE=all` for
 local development); `WORKER_ID` defaults to hostname plus a random suffix so
 `docker compose up --scale worker=N` works; worker `/metrics` and `/healthz` on
 `WORKER_METRICS_ADDRESS`. API: RFC 7807 errors; `POST /v1/workflows` (YAML or

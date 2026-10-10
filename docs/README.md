@@ -59,25 +59,27 @@ working directory. Existing environment variables take precedence; a missing
 root:
 
 ```sh
-go run .
-# Or apply database migrations:
-make migrate
+make migrate                 # apply migrations (goose, embedded SQL)
+go run ./cmd/workflowd       # API and worker in one process (APP_MODE=all)
+go run ./cmd/api             # or run them separately
+go run ./cmd/worker
 ```
 
-`make migrate` runs `go run ./cmd/migrate`. SQL is embedded in the binary, so
-there is no runtime dependency on the migrations directory. It applies only Up
-sections, records versions and full-file checksums in `schema_migrations`, and
-prints how many migrations were applied. Repeating it applies zero migrations.
-All pending changes commit together; failure rolls back DDL and ledger entries.
-Concurrent runners serialize using a transaction advisory lock. The command
-has a two-minute deadline and supports cancellation with SIGINT/SIGTERM.
+Only `DATABASE_URL` is required; every other setting has a default (see
+`internal/config/config.go`, where each field's `env` tag names its variable).
 
-Migrations are forward-only: add a new numbered SQL file with the existing
-`-- +goose Up` and `-- +goose Down` markers. The runner never executes Down SQL.
-Keep statements transactional; Goose procedural directives are not supported.
-Do not edit applied files. Changed/missing applied files and historical gaps
-are rejected. Existing tables without this runner's compatible migration ledger
-are not automatically adopted; inspect the existing migration history first.
+`make migrate` runs `go run ./cmd/migrate`, which applies pending migrations
+with goose. SQL is embedded in the binary. Versions are recorded in
+`goose_db_version`; a PostgreSQL session advisory lock serialises concurrent
+runners; each migration runs in its own transaction; an unapplied migration
+older than the latest applied one is rejected. The service never runs Down SQL.
+Databases migrated by the earlier hand-written runner (`schema_migrations`)
+are not adopted automatically: recreate a local database, or insert the
+applied versions into `goose_db_version` once.
+
+Migrations are forward-only: add a new numbered SQL file with `-- +goose Up`
+and `-- +goose Down` markers, wrapping dollar-quoted function bodies in
+`-- +goose StatementBegin` / `-- +goose StatementEnd`. Do not edit applied files.
 
 For integration tests, export `DATABASE_URL` (or source your trusted `.env` with
 `set -a; source .env; set +a`) and run `make test-integration`.
@@ -97,11 +99,12 @@ will run on pushes and pull requests once this project is in a GitHub repository
 
 ## Application lifecycle
 
-Set `APP_MODE=api` in `.env` and start the currently implemented API with `go run .`. API mode does not require `WORKER_*` settings. `worker` and `all`
-are recognized configuration modes but startup rejects them until M2 implements
-the worker. `SHUTDOWN_GRACE` belongs to application configuration.
+`cmd/workflowd` reads `APP_MODE` (`api`, `worker` or `all`); `cmd/api` and
+`cmd/worker` fix the mode. Worker IDs default to the hostname plus a random
+suffix, so `docker compose up --scale worker=N` works. A worker serves
+`/metrics` and `/healthz` on `WORKER_METRICS_ADDRESS` when it is set.
 
-`main.go` owns environment loading, OS signals, and exit status. `internal/app.Run`
+`internal/app.Main` owns environment loading, OS signals, and exit status. `internal/app.Run`
 accepts a context and concrete configuration, constructs the logger, reserves the
 HTTP address, opens PostgreSQL, and constructs the API. It reports the actual bound
 address only after dependencies are ready. Startup failures release resources.
@@ -112,6 +115,6 @@ expires, it closes connections and reports the timeout. There is no custom handl
 or waiting after forced closure; handlers should honor request cancellation. A second signal restores normal
 process termination behavior. PostgreSQL is closed after the API has stopped.
 
-One serving goroutine currently needs only an owned result channel. Introduce
-`errgroup` when workers and the sweeper add independently running components.
+In `all` mode the API and the worker run side by side; the first to fail stops
+the other, and both drain on shutdown (the worker releases its leases).
 `make check` includes `go mod tidy -diff` to enforce reproducible module metadata.
