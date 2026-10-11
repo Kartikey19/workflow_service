@@ -34,7 +34,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      mongo:
+        image: mongo:8
+        env:
+          MONGO_INITDB_ROOT_USERNAME: workflow
+          MONGO_INITDB_ROOT_PASSWORD: workflow_test
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
+      MONGO_URL: mongodb://workflow:workflow_test@127.0.0.1:27017/?authSource=admin
       DATABASE_URL: postgres://workflow:workflow_test@localhost:5432/workflow_test?sslmode=disable
       MYSQL_URL: root:workflow_test@tcp(127.0.0.1:3306)/workflow_test
     steps:
@@ -56,7 +69,7 @@ jobs:
         run: |
           make migrate
           make migrate
-      - name: Lint workflows (POST /v1/workflows?dry_run=true)
+      - name: Lint workflows (POST /be/v1/workflows?dry_run=true)
         run: make lint-workflows
       - run: go test -race ./...
       - run: go test -race -count=1 -tags=integration ./test/integration

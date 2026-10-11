@@ -1,3 +1,4 @@
+import { connectorActions } from "./connectors";
 import { useState } from "react";
 import { api, enc, type RecordData } from "./api";
 import {
@@ -42,7 +43,8 @@ export function Connections({ admin }: { admin: boolean }) {
       )}
       <div className="toolbar">
         <p className="muted">
-          Connect services once. Credentials stay in your vault.
+          Configure databases and services once. Reuse their actions in
+          workflows and agents. Credentials stay in your vault.
         </p>
         {admin && (
           <button
@@ -52,7 +54,7 @@ export function Connections({ admin }: { admin: boolean }) {
               edit(null);
             }}
           >
-            Add connection
+            Add connector
           </button>
         )}
       </div>
@@ -78,6 +80,15 @@ export function Connections({ admin }: { admin: boolean }) {
                 c.base_url ||
                 "Credentials encrypted"}
             </small>
+            {!c.provider && (
+              <div className="connector-actions">
+                {connectorActions(kinds.data?.items, c.kind).map((action) => (
+                  <small key={action.name}>
+                    {action.title} · {action.read_only ? "Read only" : "Writes"}
+                  </small>
+                ))}
+              </div>
+            )}
             <div className="row">
               {admin && (
                 <>
@@ -96,9 +107,9 @@ export function Connections({ admin }: { admin: boolean }) {
                     Test connection
                   </AsyncButton>
                   {!c.provider &&
-                    !["gmail", "gdrive", "dropbox", "onedrive"].includes(
-                      c.kind,
-                    ) && (
+                    !kinds.data?.items.find(
+                      (k: RecordData) => k.kind === c.kind,
+                    )?.oauth && (
                       <button
                         onClick={() => {
                           edit(c);
@@ -150,7 +161,7 @@ export function Connections({ admin }: { admin: boolean }) {
       {form && admin && (
         <section className="panel">
           <div className="row spread">
-            <h2>{editing ? `Edit ${editing.name}` : "Add connection"}</h2>
+            <h2>{editing ? `Edit ${editing.name}` : "Add connector"}</h2>
             <button onClick={() => setForm(false)}>Close</button>
           </div>
           <Field label="Integration">
@@ -513,7 +524,7 @@ export function Team({ admin, selfID }: { admin: boolean; selfID: string }) {
           value={{
             accept_url:
               created.accept_url ||
-              `${location.origin}/accept-invite?token=${created.token}`,
+              `${location.origin}/ui/accept-invite?token=${created.token}`,
           }}
           close={() => setCreated(null)}
         />

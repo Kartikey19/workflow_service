@@ -109,13 +109,13 @@ def main():
                         raise RuntimeError("local HTTPS readiness failed")
                     time.sleep(1)
             assert b'<div id="root">' in request("/")
-            request("/v1/auth/login", {"email": "local@example.com", "password": admin_password})
+            request("/be/v1/auth/login", {"email": "local@example.com", "password": admin_password})
             source = f"apiVersion: workflow/v1\nname: deployment-test\nnodes:\n  - id: fetch\n    type: http\n    timeout: 40s\n    config:\n      method: GET\n      url: http://host.docker.internal:{upstream_port}/slow\noutputs:\n  response: '${{nodes.fetch.output.body}}'\n"
-            request("/v1/workflows", {"yaml": source})
-            request("/v1/secrets/RESTORE_TEST", {"value": "a sealed test value"}, "PUT")
-            hook = request("/v1/triggers", {"name": "restore-test", "workflow": "deployment-test", "signed": True})
-            key = request("/v1/api-keys", {"name": "restore-check", "role": "admin"})["token"]
-            run_id = request("/v1/runs", {"workflow": "deployment-test", "input": {}})["id"]
+            request("/be/v1/workflows", {"yaml": source})
+            request("/be/v1/secrets/RESTORE_TEST", {"value": "a sealed test value"}, "PUT")
+            hook = request("/be/v1/triggers", {"name": "restore-test", "workflow": "deployment-test", "signed": True})
+            key = request("/be/v1/api-keys", {"name": "restore-check", "role": "admin"})["token"]
+            run_id = request("/be/v1/runs", {"workflow": "deployment-test", "input": {}})["id"]
             assert called.wait(15), "worker never started the HTTP node"
             readiness_errors = []
             stop_probe = threading.Event()
@@ -134,7 +134,7 @@ def main():
                 # Ensure a node is actively running when the worker is replaced,
                 # rather than relying on it still being active after API checks.
                 called.clear()
-                run_id = request("/v1/runs", {"workflow": "deployment-test", "input": {}})["id"]
+                run_id = request("/be/v1/runs", {"workflow": "deployment-test", "input": {}})["id"]
                 assert called.wait(15)
                 run("--profile", "deploy", "up", "-d", "--no-deps", "--wait", "worker_next")
                 run("up", "-d", "--no-deps", "--wait", "--force-recreate", "worker")
@@ -145,13 +145,13 @@ def main():
             assert not readiness_errors, "HTTPS readiness interrupted during API replacement"
             deadline = time.monotonic() + 45
             while True:
-                status = request(f"/v1/runs/{run_id}")["status"]
+                status = request(f"/be/v1/runs/{run_id}")["status"]
                 if status == "succeeded":
                     break
                 assert status not in ["failed", "cancelled", "timed_out"], "mid-deploy run failed"
                 assert time.monotonic() < deadline
                 time.sleep(.5)
-            outcomes = request("/v1/runs")["items"]
+            outcomes = request("/be/v1/runs")["items"]
             assert all(r["status"] == "succeeded" for r in outcomes), "some deployment runs did not succeed"
             print("Creating a backup and restoring it into a separate empty database…", flush=True)
             run("--profile", "backups", "build", "backup")
@@ -181,7 +181,7 @@ def main():
                     if time.monotonic() > deadline:
                         raise RuntimeError("restored API readiness failed")
                     time.sleep(.5)
-            assert request("/v1/workflows", headers={"Authorization": "Bearer " + key}, origin=restored_base)["items"][0]["name"] == "deployment-test"
+            assert request("/be/v1/workflows", headers={"Authorization": "Bearer " + key}, origin=restored_base)["items"][0]["name"] == "deployment-test"
             # HMAC verification decrypts the signing secret from the restored DB.
             body = json.dumps({}).encode()
             signature = hmac.new(hook["signing_secret"].encode(), body, hashlib.sha256).hexdigest()

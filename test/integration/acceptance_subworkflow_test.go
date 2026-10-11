@@ -501,7 +501,7 @@ nodes:
 
 	c := apiClient{t: t, base: h.apiServer(nil), tenant: h.tenant}
 	for _, key := range []string{"task:abc", "subworkflow:abc"} {
-		if status, body := c.json("POST", "/v1/signals", map[string]any{"key": key}); status != 400 {
+		if status, body := c.json("POST", "/be/v1/signals", map[string]any{"key": key}); status != 400 {
 			t.Fatalf("signal %q = %d %v, want 400", key, status, body)
 		}
 	}

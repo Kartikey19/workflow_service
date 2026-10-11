@@ -263,7 +263,7 @@ func withCloud(f *fakeCloud) func(*config.Config) {
 // redirect to the callback, returning the callback's Location.
 func (f *fakeCloud) connect(t *testing.T, s *stack, owner *person, kind, name string) string {
 	t.Helper()
-	started := owner.mustOK("POST", "/v1/connections/oauth/start", map[string]any{"kind": kind, "name": name}, 200)
+	started := owner.mustOK("POST", "/be/v1/connections/oauth/start", map[string]any{"kind": kind, "name": name}, 200)
 	authorize, err := url.Parse(started["authorize_url"].(string))
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func (f *fakeCloud) connect(t *testing.T, s *stack, owner *person, kind, name st
 	f.challenge = query.Get("code_challenge")
 	f.mu.Unlock()
 	anon := newPerson(t, s.base)
-	status, _, header := anon.do("GET", "/v1/oauth/callback?code=auth-code-1&state="+url.QueryEscape(query.Get("state")), nil)
+	status, _, header := anon.do("GET", "/be/v1/oauth/callback?code=auth-code-1&state="+url.QueryEscape(query.Get("state")), nil)
 	if status != http.StatusFound {
 		t.Fatalf("callback = %d", status)
 	}
@@ -297,33 +297,33 @@ func TestOAuthConnectFlow(t *testing.T) {
 	// A provider the operator has not configured is not offered.
 	plain := newStack(t, ctx)
 	plainOwner := plain.owner(t, "No OAuth Co")
-	_, kinds := plainOwner.call("GET", "/v1/integrations", nil)
+	_, kinds := plainOwner.call("GET", "/be/v1/integrations", nil)
 	for _, k := range kinds["items"].([]any) {
 		if k.(map[string]any)["oauth"] == true {
 			t.Fatalf("an unconfigured OAuth kind is offered: %v", k)
 		}
 	}
-	if status, _ := plainOwner.call("POST", "/v1/connections/oauth/start", map[string]any{"kind": "gmail", "name": "g"}); status != 400 {
+	if status, _ := plainOwner.call("POST", "/be/v1/connections/oauth/start", map[string]any{"kind": "gmail", "name": "g"}); status != 400 {
 		t.Fatalf("starting an unconfigured kind = %d, want 400", status)
 	}
 
-	_, kinds = owner.call("GET", "/v1/integrations", nil)
+	_, kinds = owner.call("GET", "/be/v1/integrations", nil)
 	offered := []string{}
 	for _, k := range kinds["items"].([]any) {
 		offered = append(offered, k.(map[string]any)["kind"].(string))
 	}
-	if strings.Join(offered, ",") != "smtp,resend,gmail,gdrive,dropbox,onedrive,postgres,mysql,mcp" {
+	if strings.Join(offered, ",") != "smtp,resend,gmail,gdrive,gdocs,gsheets,gcalendar,dropbox,onedrive,postgres,mysql,mongo,slack,notion,mcp" {
 		t.Fatalf("offered kinds = %v", offered)
 	}
 	// OAuth kinds cannot be created with pasted credentials.
-	if status, _ := owner.call("POST", "/v1/connections", map[string]any{"name": "pasted", "kind": "gmail", "secret": map[string]any{"access_token": "x"}}); status != 400 {
+	if status, _ := owner.call("POST", "/be/v1/connections", map[string]any{"name": "pasted", "kind": "gmail", "secret": map[string]any{"access_token": "x"}}); status != 400 {
 		t.Fatalf("creating an OAuth kind directly = %d, want 400", status)
 	}
 
-	started := owner.mustOK("POST", "/v1/connections/oauth/start", map[string]any{"kind": "gmail", "name": "my-gmail"}, 200)
+	started := owner.mustOK("POST", "/be/v1/connections/oauth/start", map[string]any{"kind": "gmail", "name": "my-gmail"}, 200)
 	authorize, _ := url.Parse(started["authorize_url"].(string))
 	q := authorize.Query()
-	if authorize.Path != "/google/auth" || q.Get("client_id") != "google-client" || q.Get("redirect_uri") != "http://app.test/v1/oauth/callback" ||
+	if authorize.Path != "/google/auth" || q.Get("client_id") != "google-client" || q.Get("redirect_uri") != "http://app.test/be/v1/oauth/callback" ||
 		q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || q.Get("access_type") != "offline" || q.Get("state") == "" ||
 		!strings.Contains(q.Get("scope"), "gmail.send") || strings.Contains(q.Get("scope"), "drive") {
 		t.Fatalf("authorize URL = %s", started["authorize_url"])
@@ -331,58 +331,58 @@ func TestOAuthConnectFlow(t *testing.T) {
 	cloud.challenge = q.Get("code_challenge")
 
 	anon := newPerson(t, s.base)
-	callback := "/v1/oauth/callback?code=auth-code-1&state=" + url.QueryEscape(q.Get("state"))
+	callback := "/be/v1/oauth/callback?code=auth-code-1&state=" + url.QueryEscape(q.Get("state"))
 	status, _, header := anon.do("GET", callback, nil)
-	if status != http.StatusFound || header.Get("Location") != "http://app.test/connections?connected=my-gmail" {
+	if status != http.StatusFound || header.Get("Location") != "http://app.test/ui/connectors?connected=my-gmail" {
 		t.Fatalf("callback = %d %s", status, header.Get("Location"))
 	}
-	got := owner.mustOK("GET", "/v1/connections/my-gmail", nil, 200)
+	got := owner.mustOK("GET", "/be/v1/connections/my-gmail", nil, 200)
 	if got["kind"] != "gmail" || got["account"] != "agent@example.com" || got["expires_at"] == nil || got["config"].(map[string]any)["account"] != "agent@example.com" {
 		t.Fatalf("connection = %v", got)
 	}
 	if strings.Contains(toJSON(got), "access-") || strings.Contains(toJSON(got), "refresh") {
 		t.Fatalf("a token leaked into the connection view: %v", got)
 	}
-	owner.mustOK("POST", "/v1/connections/my-gmail/test", nil, 200)
+	owner.mustOK("POST", "/be/v1/connections/my-gmail/test", nil, 200)
 
 	// The state is single use; unknown and tampered states and provider errors
 	// land back on the UI with a message and create nothing.
 	for name, path := range map[string]string{
 		"replayed":       callback,
-		"unknown state":  "/v1/oauth/callback?code=auth-code-1&state=forged",
-		"provider error": "/v1/oauth/callback?error=access_denied&error_description=user+said+no&state=" + url.QueryEscape(q.Get("state")),
+		"unknown state":  "/be/v1/oauth/callback?code=auth-code-1&state=forged",
+		"provider error": "/be/v1/oauth/callback?error=access_denied&error_description=user+said+no&state=" + url.QueryEscape(q.Get("state")),
 	} {
 		_, _, header := anon.do("GET", path, nil)
 		location, _ := url.Parse(header.Get("Location"))
-		if location.Path != "/connections" || location.Query().Get("error") == "" || location.Query().Get("connected") != "" {
+		if location.Path != "/ui/connectors" || location.Query().Get("error") == "" || location.Query().Get("connected") != "" {
 			t.Errorf("%s: Location = %s", name, header.Get("Location"))
 		}
 	}
 	// A wrong code (so the token exchange fails) creates nothing.
-	started = owner.mustOK("POST", "/v1/connections/oauth/start", map[string]any{"kind": "dropbox", "name": "my-dropbox"}, 200)
+	started = owner.mustOK("POST", "/be/v1/connections/oauth/start", map[string]any{"kind": "dropbox", "name": "my-dropbox"}, 200)
 	authorize, _ = url.Parse(started["authorize_url"].(string))
 	cloud.challenge = "not-the-challenge"
-	_, _, header = anon.do("GET", "/v1/oauth/callback?code=auth-code-1&state="+url.QueryEscape(authorize.Query().Get("state")), nil)
+	_, _, header = anon.do("GET", "/be/v1/oauth/callback?code=auth-code-1&state="+url.QueryEscape(authorize.Query().Get("state")), nil)
 	if location, _ := url.Parse(header.Get("Location")); location.Query().Get("error") == "" {
 		t.Fatalf("a failed token exchange should come back as an error: %s", header.Get("Location"))
 	}
-	if status, _ := owner.call("GET", "/v1/connections/my-dropbox", nil); status != 404 {
+	if status, _ := owner.call("GET", "/be/v1/connections/my-dropbox", nil); status != 404 {
 		t.Fatalf("a failed sign-in created a connection: %d", status)
 	}
 
 	// Another organization cannot use the name or see the connection.
 	other := s.owner(t, "Other OAuth Co")
-	if status, _ := other.call("GET", "/v1/connections/my-gmail", nil); status != 404 {
+	if status, _ := other.call("GET", "/be/v1/connections/my-gmail", nil); status != 404 {
 		t.Fatalf("another organization reads the connection: %d", status)
 	}
 	// Reconnecting the same name replaces its tokens; another kind cannot take the name.
-	if status, body := owner.call("POST", "/v1/connections/oauth/start", map[string]any{"kind": "dropbox", "name": "my-gmail"}); status != 409 {
+	if status, body := owner.call("POST", "/be/v1/connections/oauth/start", map[string]any{"kind": "dropbox", "name": "my-gmail"}); status != 409 {
 		t.Fatalf("reusing a name for another kind = %d %v, want 409", status, body)
 	}
 	if location := cloud.connect(t, s, owner, "gmail", "my-gmail"); !strings.Contains(location, "connected=my-gmail") {
 		t.Fatalf("reconnect: %s", location)
 	}
-	if _, list := owner.call("GET", "/v1/connections", nil); len(list["items"].([]any)) != 1 {
+	if _, list := owner.call("GET", "/be/v1/connections", nil); len(list["items"].([]any)) != 1 {
 		t.Fatalf("reconnecting must not create a second connection: %v", list)
 	}
 }
@@ -466,7 +466,7 @@ func TestOAuthTokenRefresh(t *testing.T) {
 		}
 	}
 	cloud.mu.Unlock()
-	got := owner.mustOK("GET", "/v1/connections/my-gmail", nil, 200)
+	got := owner.mustOK("GET", "/be/v1/connections/my-gmail", nil, 200)
 	if expires, _ := time.Parse(time.RFC3339, got["expires_at"].(string)); time.Until(expires) < 30*time.Minute {
 		t.Fatalf("the refreshed token expiry was not stored: %v", got["expires_at"])
 	}

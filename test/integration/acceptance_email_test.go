@@ -181,7 +181,7 @@ func publishWorkflow(t *testing.T, p *person, name, nodeConfig string) {
 
 func runToEnd(t *testing.T, p *person, workflow string) (string, map[string]any) {
 	t.Helper()
-	_, started := p.call("POST", "/v1/runs", map[string]any{"workflow": workflow})
+	_, started := p.call("POST", "/be/v1/runs", map[string]any{"workflow": workflow})
 	run := p.waitRun(started["id"].(string))
 	return started["id"].(string), run
 }
@@ -193,7 +193,7 @@ func TestConnectionsAPI(t *testing.T) {
 	resend := startResend(t)
 	s := newStack(t, ctx, func(c *config.Config) { c.Services.ResendBaseURL = resend.URL })
 	owner := s.owner(t, "Conn Co")
-	_, inv := owner.call("POST", "/v1/invites", map[string]any{"email": "ed@example.com", "role": "editor"})
+	_, inv := owner.call("POST", "/be/v1/invites", map[string]any{"email": "ed@example.com", "role": "editor"})
 	editor := newPerson(t, s.base)
 	accept(t, editor, inv["token"].(string), "editor-long-password", "Ed")
 	sink := startSMTPSink(t, "mailer", "sink-password-1")
@@ -204,34 +204,34 @@ func TestConnectionsAPI(t *testing.T) {
 			"secret": map[string]any{"password": password}}
 	}
 	// A bad password fails the test, says why without echoing it, and saves nothing.
-	status, body := owner.call("POST", "/v1/connections", smtp("team-smtp", "wrong-password-1"))
+	status, body := owner.call("POST", "/be/v1/connections", smtp("team-smtp", "wrong-password-1"))
 	if status != 422 || body["code"] != "connection_test_failed" || strings.Contains(toJSON(body), "wrong-password-1") {
 		t.Fatalf("a bad password = %d %v", status, body)
 	}
-	if _, list := owner.call("GET", "/v1/connections", nil); len(list["items"].([]any)) != 0 {
+	if _, list := owner.call("GET", "/be/v1/connections", nil); len(list["items"].([]any)) != 0 {
 		t.Fatalf("a connection that failed its test was saved: %v", list)
 	}
-	created := owner.mustOK("POST", "/v1/connections", smtp("team-smtp", "sink-password-1"), 201)
+	created := owner.mustOK("POST", "/be/v1/connections", smtp("team-smtp", "sink-password-1"), 201)
 	if created["kind"] != "smtp" || created["secret_hint"] != "…d-1" && created["secret_hint"] != "…rd-1" || strings.Contains(toJSON(created), "sink-password-1") {
 		t.Fatalf("created = %v", created)
 	}
 	if created["config"].(map[string]any)["from"] != "Ops <ops@example.com>" {
 		t.Fatalf("config = %v", created["config"])
 	}
-	if status, _ := owner.call("POST", "/v1/connections", smtp("team-smtp", "sink-password-1")); status != 409 {
+	if status, _ := owner.call("POST", "/be/v1/connections", smtp("team-smtp", "sink-password-1")); status != 409 {
 		t.Fatalf("a duplicate name = %d, want 409", status)
 	}
-	owner.mustOK("POST", "/v1/connections/team-smtp/test", nil, 200)
+	owner.mustOK("POST", "/be/v1/connections/team-smtp/test", nil, 200)
 
 	// Credentials are write-only; editors can see connections but not manage them.
-	_, got := editor.call("GET", "/v1/connections/team-smtp", nil)
+	_, got := editor.call("GET", "/be/v1/connections/team-smtp", nil)
 	if strings.Contains(toJSON(got), "sink-password-1") || got["name"] != "team-smtp" {
 		t.Fatalf("an editor reads %v", got)
 	}
-	if status, _ := editor.call("POST", "/v1/connections", smtp("by-editor", "sink-password-1")); status != 403 {
+	if status, _ := editor.call("POST", "/be/v1/connections", smtp("by-editor", "sink-password-1")); status != 403 {
 		t.Fatalf("an editor creating a connection = %d, want 403", status)
 	}
-	if status, _ := editor.call("DELETE", "/v1/connections/team-smtp", nil); status != 403 {
+	if status, _ := editor.call("DELETE", "/be/v1/connections/team-smtp", nil); status != 403 {
 		t.Fatalf("an editor deleting a connection = %d, want 403", status)
 	}
 
@@ -239,16 +239,16 @@ func TestConnectionsAPI(t *testing.T) {
 	update := smtp("ignored", "")
 	delete(update, "secret")
 	update["config"].(map[string]any)["from"] = "Alerts <alerts@example.com>"
-	updated := owner.mustOK("PUT", "/v1/connections/team-smtp", update, 200)
+	updated := owner.mustOK("PUT", "/be/v1/connections/team-smtp", update, 200)
 	if updated["config"].(map[string]any)["from"] != "Alerts <alerts@example.com>" || updated["secret_hint"] == nil {
 		t.Fatalf("keeping the password: %v", updated)
 	}
 	sink.pass = "rotated-password-9"
-	if status, _ := owner.call("PUT", "/v1/connections/team-smtp", update); status != 422 {
+	if status, _ := owner.call("PUT", "/be/v1/connections/team-smtp", update); status != 422 {
 		t.Fatalf("the old password no longer works, so the update must fail its test: %d", status)
 	}
 	withNew := smtp("x", "rotated-password-9")
-	if status, _ := owner.call("PUT", "/v1/connections/team-smtp", withNew); status != 200 {
+	if status, _ := owner.call("PUT", "/be/v1/connections/team-smtp", withNew); status != 200 {
 		t.Fatalf("updating with the new password = %d", status)
 	}
 
@@ -268,7 +268,7 @@ func TestConnectionsAPI(t *testing.T) {
 		b := smtp("candidate", "rotated-password-9")
 		b["skip_test"] = true
 		mutate(b)
-		if status, resp := owner.call("POST", "/v1/connections", b); status != 400 {
+		if status, resp := owner.call("POST", "/be/v1/connections", b); status != 400 {
 			t.Errorf("%s: status %d %v, want 400", name, status, resp)
 		}
 	}
@@ -276,30 +276,30 @@ func TestConnectionsAPI(t *testing.T) {
 	resendBody := func(key string) map[string]any {
 		return map[string]any{"name": "resend-" + key[:3], "kind": "resend", "config": map[string]any{"from": "ops@example.com"}, "secret": map[string]any{"api_key": key}}
 	}
-	if status, body := owner.call("POST", "/v1/connections/test", resendBody("re_bad_key_000000")); status != 422 || !strings.Contains(body["detail"].(string), "rejected the API key") {
+	if status, body := owner.call("POST", "/be/v1/connections/test", resendBody("re_bad_key_000000")); status != 422 || !strings.Contains(body["detail"].(string), "rejected the API key") {
 		t.Fatalf("a bad Resend key = %d %v", status, body)
 	}
-	owner.mustOK("POST", "/v1/connections/test", resendBody("restricted-sending-key"), 200)
-	owner.mustOK("POST", "/v1/connections", resendBody("re_good_key_123456"), 201)
+	owner.mustOK("POST", "/be/v1/connections/test", resendBody("restricted-sending-key"), 200)
+	owner.mustOK("POST", "/be/v1/connections", resendBody("re_good_key_123456"), 201)
 
 	// The editor's view of what can be created.
-	_, kinds := editor.call("GET", "/v1/integrations", nil)
+	_, kinds := editor.call("GET", "/be/v1/integrations", nil)
 	got2 := []string{}
 	for _, k := range kinds["items"].([]any) {
 		got2 = append(got2, k.(map[string]any)["kind"].(string))
 	}
-	if strings.Join(got2, ",") != "smtp,resend,postgres,mysql,mcp" {
+	if strings.Join(got2, ",") != "smtp,resend,postgres,mysql,mongo,slack,notion,mcp" {
 		t.Fatalf("available kinds = %v", got2)
 	}
-	if status, _ := owner.call("DELETE", "/v1/connections/team-smtp", nil); status != 204 {
+	if status, _ := owner.call("DELETE", "/be/v1/connections/team-smtp", nil); status != 204 {
 		t.Fatalf("delete = %d", status)
 	}
-	if status, _ := owner.call("GET", "/v1/connections/team-smtp", nil); status != 404 {
+	if status, _ := owner.call("GET", "/be/v1/connections/team-smtp", nil); status != 404 {
 		t.Fatalf("after delete = %d, want 404", status)
 	}
 	// Another organization sees none of it.
 	other := s.owner(t, "Elsewhere Co")
-	if _, list := other.call("GET", "/v1/connections", nil); len(list["items"].([]any)) != 0 {
+	if _, list := other.call("GET", "/be/v1/connections", nil); len(list["items"].([]any)) != 0 {
 		t.Fatalf("another organization lists %v", list)
 	}
 }
@@ -312,7 +312,7 @@ func TestEmailSendOverSMTPWithAConnection(t *testing.T) {
 	s := newStack(t, ctx)
 	owner := s.owner(t, "Mail Co")
 	sink := startSMTPSink(t, "mailer", "sink-password-1")
-	owner.mustOK("POST", "/v1/connections", map[string]any{"name": "team-smtp", "kind": "smtp",
+	owner.mustOK("POST", "/be/v1/connections", map[string]any{"name": "team-smtp", "kind": "smtp",
 		"config": map[string]any{"host": "127.0.0.1", "port": sink.port(), "tls": "none", "username": "mailer", "from": "Ops <ops@example.com>"},
 		"secret": map[string]any{"password": "sink-password-1"}}, 201)
 
@@ -354,7 +354,7 @@ func TestEmailSendFailureClassification(t *testing.T) {
 	owner := s.owner(t, "Fail Mail Co")
 	sink := startSMTPSink(t, "mailer", "sink-password-1")
 	conn := func(name string, password string) {
-		owner.mustOK("POST", "/v1/connections", map[string]any{"name": name, "kind": "smtp", "skip_test": true,
+		owner.mustOK("POST", "/be/v1/connections", map[string]any{"name": name, "kind": "smtp", "skip_test": true,
 			"config": map[string]any{"host": "127.0.0.1", "port": sink.port(), "tls": "none", "username": "mailer", "from": "ops@example.com"},
 			"secret": map[string]any{"password": password}}, 201)
 	}
@@ -400,9 +400,9 @@ func TestEmailSendOverResend(t *testing.T) {
 	resend.failures = 1
 	s := newStack(t, ctx, func(c *config.Config) { c.Services.ResendBaseURL = resend.URL })
 	owner := s.owner(t, "Resend Co")
-	owner.mustOK("POST", "/v1/connections", map[string]any{"name": "resend-main", "kind": "resend",
+	owner.mustOK("POST", "/be/v1/connections", map[string]any{"name": "resend-main", "kind": "resend",
 		"config": map[string]any{"from": "Ops <ops@example.com>"}, "secret": map[string]any{"api_key": "re_good_key_123456"}}, 201)
-	owner.mustOK("PUT", "/v1/secrets/RESEND_KEY", map[string]any{"value": "re_good_key_123456"}, 200)
+	owner.mustOK("PUT", "/be/v1/secrets/RESEND_KEY", map[string]any{"value": "re_good_key_123456"}, 200)
 
 	publishWorkflow(t, owner, "via-connection", `{connection: resend-main, to: a@example.com, subject: hi, text: body}`)
 	publishWorkflow(t, owner, "via-inline", `{resend: {api_key: "${secrets.RESEND_KEY}"}, from: bot@example.com, to: [a@example.com, b@example.com], subject: hi, html: "<b>b</b>"}`)

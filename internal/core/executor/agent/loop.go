@@ -101,7 +101,7 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 		return plan{}, executor.Retryable("agent_lookup", err)
 	}
 	for _, name := range def.Tools {
-		if _, ok := e.tools.Get(name); !ok && !IsMCPReference(name) {
+		if _, ok := e.tools.Get(name); !ok && !IsDynamicReference(name) {
 			return plan{}, executor.Permanent("bad_config", fmt.Errorf("agent %q uses tool %q, which is not available", def.Name, name))
 		}
 	}
@@ -235,6 +235,7 @@ func runTool(ctx context.Context, registry *Tools, call Call, allowed []string, 
 		result.ToolContent = fmt.Sprintf("tool %q is not available", use.ToolName)
 		return result
 	}
+	call.ToolCallID = use.ToolUseID
 	output, err := tool.Call(ctx, call, use.ToolInput)
 	text := string(output)
 	if err != nil {

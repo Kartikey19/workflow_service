@@ -108,7 +108,7 @@ func (p *person) call(method, path string, body any, headers ...string) (int, ma
 
 func (p *person) login(email, password string) (int, map[string]any) {
 	p.t.Helper()
-	return p.call("POST", "/v1/auth/login", map[string]any{"email": email, "password": password})
+	return p.call("POST", "/be/v1/auth/login", map[string]any{"email": email, "password": password})
 }
 
 func (p *person) mustLogin(email, password string) {
@@ -120,7 +120,7 @@ func (p *person) mustLogin(email, password string) {
 
 func (p *person) orgID() string {
 	p.t.Helper()
-	status, me := p.call("GET", "/v1/auth/me", nil)
+	status, me := p.call("GET", "/be/v1/auth/me", nil)
 	if status != 200 {
 		p.t.Fatalf("me = %d %v", status, me)
 	}
@@ -130,7 +130,7 @@ func (p *person) orgID() string {
 // invite has admin invite email to a new organization and returns the token.
 func inviteToOrg(t *testing.T, admin *person, email, org string) string {
 	t.Helper()
-	status, body := admin.call("POST", "/v1/admin/invites", map[string]any{"email": email, "organization_name": org})
+	status, body := admin.call("POST", "/be/v1/admin/invites", map[string]any{"email": email, "organization_name": org})
 	if status != 201 {
 		t.Fatalf("platform invite = %d %v", status, body)
 	}
@@ -139,7 +139,7 @@ func inviteToOrg(t *testing.T, admin *person, email, org string) string {
 
 func accept(t *testing.T, p *person, token, password, name string) (int, map[string]any) {
 	t.Helper()
-	return p.call("POST", "/v1/auth/accept-invite", map[string]any{"token": token, "password": password, "name": name})
+	return p.call("POST", "/be/v1/auth/accept-invite", map[string]any{"token": token, "password": password, "name": name})
 }
 
 const planWorkflow = `
@@ -160,7 +160,7 @@ func workflowSource(name string, steps int) string {
 
 func (p *person) publish(source string) (int, map[string]any) {
 	p.t.Helper()
-	req, _ := http.NewRequest("POST", p.base+"/v1/workflows", strings.NewReader(source))
+	req, _ := http.NewRequest("POST", p.base+"/be/v1/workflows", strings.NewReader(source))
 	req.Header.Set("Content-Type", "application/x-yaml")
 	if p.bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+p.bearer)
@@ -191,13 +191,13 @@ func TestIdentityInviteAcceptLoginSwitch(t *testing.T) {
 	}
 	root := newPerson(t, base)
 	root.mustLogin("root@example.com", adminPassword)
-	if _, me := root.call("GET", "/v1/auth/me", nil); me["user"].(map[string]any)["platform_admin"] != true {
+	if _, me := root.call("GET", "/be/v1/auth/me", nil); me["user"].(map[string]any)["platform_admin"] != true {
 		t.Fatalf("bootstrap user is not a platform admin: %v", me)
 	}
 
 	token := inviteToOrg(t, root, "Alice@Example.com", "Acme Inc")
 	anon := newPerson(t, base)
-	status, preview := anon.call("GET", "/v1/auth/invite?token="+token, nil)
+	status, preview := anon.call("GET", "/be/v1/auth/invite?token="+token, nil)
 	if status != 200 || preview["email"] != "alice@example.com" || preview["organization_name"] != "Acme Inc" || preview["has_account"] != false {
 		t.Fatalf("preview = %d %v", status, preview)
 	}
@@ -205,7 +205,7 @@ func TestIdentityInviteAcceptLoginSwitch(t *testing.T) {
 	if status, body := accept(t, alice, token, "short", "Alice"); status != 400 {
 		t.Fatalf("a short password = %d %v, want 400", status, body)
 	}
-	status, body, header := alice.do("POST", "/v1/auth/accept-invite", map[string]any{"token": token, "password": "alice-long-password", "name": "Alice"})
+	status, body, header := alice.do("POST", "/be/v1/auth/accept-invite", map[string]any{"token": token, "password": "alice-long-password", "name": "Alice"})
 	if status != 201 || body["organization"].(map[string]any)["role"] != "owner" || body["organization"].(map[string]any)["name"] != "Acme Inc" {
 		t.Fatalf("accept = %d %v", status, body)
 	}
@@ -219,20 +219,20 @@ func TestIdentityInviteAcceptLoginSwitch(t *testing.T) {
 	if status, body := accept(t, newPerson(t, base), token, "alice-long-password", "Alice"); status != 410 {
 		t.Fatalf("reusing an invite = %d %v, want 410", status, body)
 	}
-	if status, _ := anon.call("GET", "/v1/auth/invite?token=nope", nil); status != 410 {
+	if status, _ := anon.call("GET", "/be/v1/auth/invite?token=nope", nil); status != 410 {
 		t.Fatalf("an unknown invite token = %d, want 410", status)
 	}
 
 	// Alice (owner) invites Bob as editor; Bob accepts.
-	status, inv := alice.call("POST", "/v1/invites", map[string]any{"email": "bob@example.com", "role": "editor"})
-	if status != 201 || !strings.HasPrefix(inv["accept_url"].(string), "http://app.test/accept-invite?token=") {
+	status, inv := alice.call("POST", "/be/v1/invites", map[string]any{"email": "bob@example.com", "role": "editor"})
+	if status != 201 || !strings.HasPrefix(inv["accept_url"].(string), "http://app.test/ui/accept-invite?token=") {
 		t.Fatalf("invite = %d %v", status, inv)
 	}
 	bob := newPerson(t, base)
 	if status, body := accept(t, bob, inv["token"].(string), "bob-long-password", "Bob"); status != 201 || body["organization"].(map[string]any)["role"] != "editor" {
 		t.Fatalf("bob accepts = %d %v", status, body)
 	}
-	if _, list := alice.call("GET", "/v1/invites", nil); len(list["items"].([]any)) != 0 {
+	if _, list := alice.call("GET", "/be/v1/invites", nil); len(list["items"].([]any)) != 0 {
 		t.Fatalf("accepted invites must not stay pending: %v", list)
 	}
 	acme := alice.orgID()
@@ -248,22 +248,22 @@ func TestIdentityInviteAcceptLoginSwitch(t *testing.T) {
 	}
 	bob2 := newPerson(t, base)
 	bob2.mustLogin("bob@example.com", "bob-long-password")
-	_, me := bob2.call("GET", "/v1/auth/me", nil)
+	_, me := bob2.call("GET", "/be/v1/auth/me", nil)
 	orgs := me["organizations"].([]any)
 	if len(orgs) != 2 {
 		t.Fatalf("bob's organizations = %v, want 2", orgs)
 	}
-	if status, body := bob2.call("POST", "/v1/auth/switch-org", map[string]any{"organization_id": acme}); status != 200 || body["organization"].(map[string]any)["role"] != "editor" {
+	if status, body := bob2.call("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": acme}); status != 200 || body["organization"].(map[string]any)["role"] != "editor" {
 		t.Fatalf("switch = %d %v", status, body)
 	}
 	if got := bob2.orgID(); got != acme {
 		t.Fatalf("current organization = %s, want %s", got, acme)
 	}
-	_, members := bob2.call("GET", "/v1/members", nil)
+	_, members := bob2.call("GET", "/be/v1/members", nil)
 	if len(members["items"].([]any)) != 2 {
 		t.Fatalf("Acme members = %v, want alice and bob", members)
 	}
-	if status, _ := bob2.call("POST", "/v1/auth/switch-org", map[string]any{"organization_id": "00000000-0000-7000-8000-000000000009"}); status != 404 {
+	if status, _ := bob2.call("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": "00000000-0000-7000-8000-000000000009"}); status != 404 {
 		t.Fatalf("switching to a foreign organization = %d, want 404", status)
 	}
 }
@@ -283,12 +283,12 @@ func TestIdentityRolesKeysAndRevocation(t *testing.T) {
 	owner := newPerson(t, base)
 	accept(t, owner, inviteToOrg(t, root, "owner@example.com", "Roles Co"), "owner-long-password", "Owner")
 	orgID := owner.orgID()
-	if status, body := root.call("PUT", "/v1/admin/organizations/"+orgID+"/plan", map[string]any{"plan": "pro"}); status != 200 {
+	if status, body := root.call("PUT", "/be/v1/admin/organizations/"+orgID+"/plan", map[string]any{"plan": "pro"}); status != 200 {
 		t.Fatalf("set plan = %d %v", status, body)
 	}
 
 	join := func(role, email string) *person {
-		_, inv := owner.call("POST", "/v1/invites", map[string]any{"email": email, "role": role})
+		_, inv := owner.call("POST", "/be/v1/invites", map[string]any{"email": email, "role": role})
 		p := newPerson(t, base)
 		if status, body := accept(t, p, inv["token"].(string), "member-long-password", role); status != 201 {
 			t.Fatalf("%s joins = %d %v", role, status, body)
@@ -300,33 +300,33 @@ func TestIdentityRolesKeysAndRevocation(t *testing.T) {
 	if status, _ := viewer.publish(workflowSource("w1", 1)); status != 403 {
 		t.Fatalf("a viewer publishing = %d, want 403", status)
 	}
-	if status, _ := viewer.call("POST", "/v1/runs", map[string]any{"workflow": "w1"}); status != 403 {
+	if status, _ := viewer.call("POST", "/be/v1/runs", map[string]any{"workflow": "w1"}); status != 403 {
 		t.Fatalf("a viewer starting a run = %d, want 403", status)
 	}
-	if status, _ := viewer.call("GET", "/v1/workflows", nil); status != 200 {
+	if status, _ := viewer.call("GET", "/be/v1/workflows", nil); status != 200 {
 		t.Fatalf("a viewer listing workflows = %d, want 200", status)
 	}
 	if status, body := editor.publish(workflowSource("w1", 1)); status != 201 {
 		t.Fatalf("an editor publishing = %d %v", status, body)
 	}
-	if status, _ := editor.call("POST", "/v1/runs", map[string]any{"workflow": "w1"}); status != 201 {
+	if status, _ := editor.call("POST", "/be/v1/runs", map[string]any{"workflow": "w1"}); status != 201 {
 		t.Fatalf("an editor starting a run = %d", status)
 	}
-	if status, _ := editor.call("GET", "/v1/api-keys", nil); status != 403 {
+	if status, _ := editor.call("GET", "/be/v1/api-keys", nil); status != 403 {
 		t.Fatalf("an editor listing API keys = %d, want 403", status)
 	}
-	if status, _ := editor.call("POST", "/v1/invites", map[string]any{"email": "x@example.com"}); status != 403 {
+	if status, _ := editor.call("POST", "/be/v1/invites", map[string]any{"email": "x@example.com"}); status != 403 {
 		t.Fatalf("an editor inviting = %d, want 403", status)
 	}
-	if status, _ := editor.call("GET", "/v1/admin/organizations", nil); status != 403 {
+	if status, _ := editor.call("GET", "/be/v1/admin/organizations", nil); status != 403 {
 		t.Fatalf("a non-platform-admin listing organizations = %d, want 403", status)
 	}
 
 	// Role ceilings: an admin cannot mint owners or touch the owner.
-	if status, _ := admin.call("POST", "/v1/invites", map[string]any{"email": "z@example.com", "role": "owner"}); status != 403 {
+	if status, _ := admin.call("POST", "/be/v1/invites", map[string]any{"email": "z@example.com", "role": "owner"}); status != 403 {
 		t.Fatalf("an admin inviting an owner = %d, want 403", status)
 	}
-	_, members := owner.call("GET", "/v1/members", nil)
+	_, members := owner.call("GET", "/be/v1/members", nil)
 	var ownerID, editorID string
 	for _, m := range members["items"].([]any) {
 		switch m.(map[string]any)["email"] {
@@ -336,24 +336,24 @@ func TestIdentityRolesKeysAndRevocation(t *testing.T) {
 			editorID = m.(map[string]any)["user_id"].(string)
 		}
 	}
-	if status, _ := admin.call("PATCH", "/v1/members/"+ownerID, map[string]any{"role": "viewer"}); status != 403 {
+	if status, _ := admin.call("PATCH", "/be/v1/members/"+ownerID, map[string]any{"role": "viewer"}); status != 403 {
 		t.Fatalf("an admin demoting the owner = %d, want 403", status)
 	}
-	if status, _ := admin.call("DELETE", "/v1/members/"+ownerID, nil); status != 403 {
+	if status, _ := admin.call("DELETE", "/be/v1/members/"+ownerID, nil); status != 403 {
 		t.Fatalf("an admin removing the owner = %d, want 403", status)
 	}
-	if status, body := owner.call("PATCH", "/v1/members/"+ownerID, map[string]any{"role": "admin"}); status != 409 {
+	if status, body := owner.call("PATCH", "/be/v1/members/"+ownerID, map[string]any{"role": "admin"}); status != 409 {
 		t.Fatalf("demoting the last owner = %d %v, want 409", status, body)
 	}
-	if status, body := owner.call("DELETE", "/v1/members/"+ownerID, nil); status != 409 {
+	if status, body := owner.call("DELETE", "/be/v1/members/"+ownerID, nil); status != 409 {
 		t.Fatalf("the last owner leaving = %d %v, want 409", status, body)
 	}
 
 	// API keys: bearer auth works, is bounded by the creator's role, never owner.
-	if status, _ := admin.call("POST", "/v1/api-keys", map[string]any{"name": "root-key", "role": "owner"}); status != 400 {
+	if status, _ := admin.call("POST", "/be/v1/api-keys", map[string]any{"name": "root-key", "role": "owner"}); status != 400 {
 		t.Fatalf("an owner key = %d, want 400", status)
 	}
-	status, key := admin.call("POST", "/v1/api-keys", map[string]any{"name": "ci", "role": "editor"})
+	status, key := admin.call("POST", "/be/v1/api-keys", map[string]any{"name": "ci", "role": "editor"})
 	if status != 201 || !strings.HasPrefix(key["token"].(string), "wfk_") {
 		t.Fatalf("create key = %d %v", status, key)
 	}
@@ -362,40 +362,40 @@ func TestIdentityRolesKeysAndRevocation(t *testing.T) {
 	if status, body := ci.publish(workflowSource("by-key", 1)); status != 201 {
 		t.Fatalf("publish with a key = %d %v", status, body)
 	}
-	if status, _ := ci.call("GET", "/v1/api-keys", nil); status != 403 {
+	if status, _ := ci.call("GET", "/be/v1/api-keys", nil); status != 403 {
 		t.Fatalf("an editor key managing keys = %d, want 403", status)
 	}
-	if _, list := admin.call("GET", "/v1/api-keys", nil); strings.Contains(toJSON(list), key["token"].(string)) {
+	if _, list := admin.call("GET", "/be/v1/api-keys", nil); strings.Contains(toJSON(list), key["token"].(string)) {
 		t.Fatalf("the key list leaks the token: %v", list)
 	}
-	if status, _ := admin.call("DELETE", "/v1/api-keys/"+key["id"].(string), nil); status != 204 {
+	if status, _ := admin.call("DELETE", "/be/v1/api-keys/"+key["id"].(string), nil); status != 204 {
 		t.Fatalf("revoke = %d", status)
 	}
-	if status, _ := ci.call("GET", "/v1/workflows", nil); status != 401 {
+	if status, _ := ci.call("GET", "/be/v1/workflows", nil); status != 401 {
 		t.Fatalf("a revoked key = %d, want 401", status)
 	}
 	bad := newPerson(t, base)
 	bad.bearer = "wfk_not-a-real-key"
-	if status, _ := bad.call("GET", "/v1/workflows", nil); status != 401 {
+	if status, _ := bad.call("GET", "/be/v1/workflows", nil); status != 401 {
 		t.Fatalf("an unknown key = %d, want 401", status)
 	}
 
 	// Removing a member ends their access at once, even with a live session.
-	if status, _ := editor.call("GET", "/v1/workflows", nil); status != 200 {
+	if status, _ := editor.call("GET", "/be/v1/workflows", nil); status != 200 {
 		t.Fatalf("editor before removal = %d", status)
 	}
-	if status, _ := admin.call("DELETE", "/v1/members/"+editorID, nil); status != 204 {
+	if status, _ := admin.call("DELETE", "/be/v1/members/"+editorID, nil); status != 204 {
 		t.Fatalf("remove member = %d", status)
 	}
-	if status, _ := editor.call("GET", "/v1/workflows", nil); status != 401 {
+	if status, _ := editor.call("GET", "/be/v1/workflows", nil); status != 401 {
 		t.Fatalf("a removed member = %d, want 401", status)
 	}
 
 	// Logging out ends the session.
-	if status, _ := viewer.call("POST", "/v1/auth/logout", nil); status != 204 {
+	if status, _ := viewer.call("POST", "/be/v1/auth/logout", nil); status != 204 {
 		t.Fatalf("logout = %d", status)
 	}
-	if status, _ := viewer.call("GET", "/v1/workflows", nil); status != 401 {
+	if status, _ := viewer.call("GET", "/be/v1/workflows", nil); status != 401 {
 		t.Fatalf("after logout = %d, want 401", status)
 	}
 }
@@ -417,14 +417,14 @@ func TestIdentityRejectsCrossOriginAndDevHeader(t *testing.T) {
 	root := newPerson(t, base)
 	root.mustLogin("root@example.com", adminPassword)
 	host := strings.TrimPrefix(base, "http://")
-	if status, _ := root.call("POST", "/v1/auth/switch-org", map[string]any{"organization_id": root.orgID()}, "Origin", "http://evil.example"); status != 401 {
+	if status, _ := root.call("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": root.orgID()}, "Origin", "http://evil.example"); status != 401 {
 		t.Fatalf("a cross-origin POST with a session = %d, want 401", status)
 	}
-	if status, _ := root.call("POST", "/v1/auth/switch-org", map[string]any{"organization_id": root.orgID()}, "Origin", "http://"+host); status != 200 {
+	if status, _ := root.call("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": root.orgID()}, "Origin", "http://"+host); status != 200 {
 		t.Fatalf("a same-origin POST = %d, want 200", status)
 	}
 	anon := newPerson(t, base)
-	if status, _ := anon.call("GET", "/v1/workflows", nil, "X-Tenant-ID", uidString(h.tenant)); status != 401 {
+	if status, _ := anon.call("GET", "/be/v1/workflows", nil, "X-Tenant-ID", uidString(h.tenant)); status != 401 {
 		t.Fatalf("the development header on an identity-only server = %d, want 401", status)
 	}
 }
@@ -482,27 +482,27 @@ func TestIdentityPlanLimits(t *testing.T) {
 	}
 
 	for i := 0; i < 20; i++ {
-		if status, body := owner.call("POST", "/v1/runs", map[string]any{"workflow": "one"}); status != 201 {
+		if status, body := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "one"}); status != 201 {
 			t.Fatalf("run %d = %d %v", i+1, status, body)
 		}
 	}
-	status, body := owner.call("POST", "/v1/runs", map[string]any{"workflow": "one"})
+	status, body := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "one"})
 	if status != 402 || !strings.Contains(toJSON(body), "runs per month") {
 		t.Fatalf("the 21st run = %d %v, want 402", status, body)
 	}
-	_, usage := owner.call("GET", "/v1/usage", nil)
+	_, usage := owner.call("GET", "/be/v1/usage", nil)
 	if usage["plan"].(map[string]any)["id"] != "free" || usage["usage"].(map[string]any)["runs_this_month"] != float64(20) || usage["usage"].(map[string]any)["workflows"] != float64(1) {
 		t.Fatalf("usage = %v", usage)
 	}
 
 	// Upgrading lifts the limit.
-	if status, _ := root.call("PUT", "/v1/admin/organizations/"+owner.orgID()+"/plan", map[string]any{"plan": "pro"}); status != 200 {
+	if status, _ := root.call("PUT", "/be/v1/admin/organizations/"+owner.orgID()+"/plan", map[string]any{"plan": "pro"}); status != 200 {
 		t.Fatal("could not move the organization to pro")
 	}
-	if status, body := owner.call("POST", "/v1/runs", map[string]any{"workflow": "one"}); status != 201 {
+	if status, body := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "one"}); status != 201 {
 		t.Fatalf("a run after upgrading = %d %v", status, body)
 	}
-	if status, _ := root.call("PUT", "/v1/admin/organizations/"+owner.orgID()+"/plan", map[string]any{"plan": "nope"}); status != 400 {
+	if status, _ := root.call("PUT", "/be/v1/admin/organizations/"+owner.orgID()+"/plan", map[string]any{"plan": "nope"}); status != 400 {
 		t.Fatalf("an unknown plan = %d, want 400", status)
 	}
 }
@@ -524,7 +524,7 @@ func TestIdentityRunAllowanceHoldsUnderConcurrency(t *testing.T) {
 
 	// A replayed idempotent start costs one run, not two.
 	for i := 0; i < 3; i++ {
-		if status, _ := owner.call("POST", "/v1/runs", map[string]any{"workflow": "burst"}, "Idempotency-Key", "same"); status != 201 && status != 200 {
+		if status, _ := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "burst"}, "Idempotency-Key", "same"); status != 201 && status != 200 {
 			t.Fatalf("idempotent start %d = %d", i, status)
 		}
 	}
@@ -534,7 +534,7 @@ func TestIdentityRunAllowanceHoldsUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			status, _ := owner.call("POST", "/v1/runs", map[string]any{"workflow": "burst"})
+			status, _ := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "burst"})
 			switch status {
 			case 201:
 				created.Add(1)
@@ -563,22 +563,22 @@ func TestIdentityTenantIsolationWithKeys(t *testing.T) {
 	accept(t, a, inviteToOrg(t, root, "a@example.com", "Org A"), "a-long-password-1", "A")
 	accept(t, b, inviteToOrg(t, root, "b@example.com", "Org B"), "b-long-password-1", "B")
 	a.publish(workflowSource("secret", 1))
-	_, run := a.call("POST", "/v1/runs", map[string]any{"workflow": "secret"})
+	_, run := a.call("POST", "/be/v1/runs", map[string]any{"workflow": "secret"})
 
-	_, k := b.call("POST", "/v1/api-keys", map[string]any{"name": "b-key", "role": "admin"})
+	_, k := b.call("POST", "/be/v1/api-keys", map[string]any{"name": "b-key", "role": "admin"})
 	bk := newPerson(t, base)
 	bk.bearer = k["token"].(string)
-	if status, _ := bk.call("GET", "/v1/runs/"+run["id"].(string), nil); status != 404 {
+	if status, _ := bk.call("GET", "/be/v1/runs/"+run["id"].(string), nil); status != 404 {
 		t.Fatalf("org B's key reading org A's run = %d, want 404", status)
 	}
-	if status, _ := bk.call("GET", "/v1/workflows/secret", nil); status != 404 {
+	if status, _ := bk.call("GET", "/be/v1/workflows/secret", nil); status != 404 {
 		t.Fatalf("org B's key reading org A's workflow = %d, want 404", status)
 	}
-	_, list := bk.call("GET", "/v1/runs", nil)
+	_, list := bk.call("GET", "/be/v1/runs", nil)
 	if len(list["items"].([]any)) != 0 {
 		t.Fatalf("org B lists %v", list)
 	}
-	if status, _ := bk.call("POST", "/v1/runs/"+run["id"].(string)+"/cancel", nil); status != 404 {
+	if status, _ := bk.call("POST", "/be/v1/runs/"+run["id"].(string)+"/cancel", nil); status != 404 {
 		t.Fatalf("org B's key cancelling org A's run = %d, want 404", status)
 	}
 }

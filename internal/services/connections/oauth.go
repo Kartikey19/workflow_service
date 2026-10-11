@@ -49,11 +49,16 @@ func (s *Service) oauthProviders() map[string]oauthProvider {
 			// offline + consent make Google return a refresh token every time.
 			extraAuth: url.Values{"access_type": {"offline"}, "prompt": {"consent"}},
 			scopes: map[string][]string{
-				KindGmail:  {"https://www.googleapis.com/auth/gmail.send", "openid", "email"},
-				KindGDrive: {"https://www.googleapis.com/auth/drive.file", "openid", "email"},
+				KindGmail:     {"https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly", "openid", "email"},
+				KindGDrive:    {"https://www.googleapis.com/auth/drive.file", "openid", "email"},
+				KindGDocs:     {"https://www.googleapis.com/auth/documents", "openid", "email"},
+				KindGSheets:   {"https://www.googleapis.com/auth/spreadsheets", "openid", "email"},
+				KindGCalendar: {"https://www.googleapis.com/auth/calendar.events", "openid", "email"},
 			},
 		}
-		out[KindGmail], out[KindGDrive] = google, google
+		for _, kind := range []string{KindGmail, KindGDrive, KindGDocs, KindGSheets, KindGCalendar} {
+			out[kind] = google
+		}
 	}
 	if s.opts.Dropbox.ClientID != "" {
 		out[KindDropbox] = oauthProvider{
@@ -73,7 +78,7 @@ func (s *Service) oauthProviders() map[string]oauthProvider {
 
 // oauthKinds registers the OAuth kinds whose provider the operator configured.
 func (s *Service) oauthKinds() map[string]kind {
-	titles := map[string]string{KindGmail: "Gmail", KindGDrive: "Google Drive", KindDropbox: "Dropbox", KindOneDrive: "OneDrive"}
+	titles := map[string]string{KindGmail: "Gmail", KindGDrive: "Google Drive", KindGDocs: "Google Docs", KindGSheets: "Google Sheets", KindGCalendar: "Google Calendar", KindDropbox: "Dropbox", KindOneDrive: "OneDrive"}
 	out := map[string]kind{}
 	for name := range s.oauthProviders() {
 		name := name
@@ -90,7 +95,7 @@ func (s *Service) oauthKinds() map[string]kind {
 }
 
 func (s *Service) redirectURI() string {
-	return strings.TrimRight(s.opts.PublicURL, "/") + "/v1/oauth/callback"
+	return strings.TrimRight(s.opts.PublicURL, "/") + "/be/v1/oauth/callback"
 }
 
 func randomToken(n int) (string, error) {
@@ -217,7 +222,7 @@ func (s *Service) accountOf(ctx context.Context, kindName, accessToken string) (
 		pick           func(map[string]any) string
 	)
 	switch kindName {
-	case KindGmail, KindGDrive:
+	case KindGmail, KindGDrive, KindGDocs, KindGSheets, KindGCalendar:
 		method, target = http.MethodGet, s.endpoint("google_userinfo")
 		pick = func(m map[string]any) string { v, _ := m["email"].(string); return v }
 	case KindDropbox:

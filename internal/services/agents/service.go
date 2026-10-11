@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -169,6 +171,18 @@ func (s *Service) validate(ctx context.Context, orgID pgtype.UUID, in *Input) (p
 		}
 	}
 	for _, ref := range in.Tools {
+
+		if name, action, ok := agent.ConnectorReference(ref); ok {
+			a, _ := connectors.LookupAction(action)
+			row, err := s.q.GetConnection(ctx, gen.GetConnectionParams{OrgID: orgID, Name: name})
+			if errors.Is(err, pgx.ErrNoRows) || err == nil && !slices.Contains(a.Kinds, row.Kind) {
+				return pgtype.UUID{}, exception.BadRequest("connector tool reference must name a matching connector in this organization")
+			}
+			if err != nil {
+				return pgtype.UUID{}, fmt.Errorf("load connector: %w", err)
+			}
+			continue
+		}
 		if !agent.IsMCPReference(ref) {
 			continue
 		}

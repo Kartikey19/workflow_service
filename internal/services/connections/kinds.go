@@ -10,15 +10,21 @@ import (
 
 // Connection kinds.
 const (
-	KindSMTP     = "smtp"
-	KindResend   = "resend"
-	KindGmail    = "gmail"
-	KindGDrive   = "gdrive"
-	KindDropbox  = "dropbox"
-	KindOneDrive = "onedrive"
-	KindPostgres = "postgres"
-	KindMySQL    = "mysql"
-	KindMCP      = "mcp"
+	KindSMTP      = "smtp"
+	KindResend    = "resend"
+	KindGmail     = "gmail"
+	KindGDrive    = "gdrive"
+	KindGDocs     = "gdocs"
+	KindGSheets   = "gsheets"
+	KindGCalendar = "gcalendar"
+	KindDropbox   = "dropbox"
+	KindOneDrive  = "onedrive"
+	KindPostgres  = "postgres"
+	KindMySQL     = "mysql"
+	KindMCP       = "mcp"
+	KindMongo     = "mongo"
+	KindSlack     = "slack"
+	KindNotion    = "notion"
 )
 
 // Field describes one setting of a kind, for validation and for the editor.
@@ -56,6 +62,9 @@ type kind struct {
 func (s *Service) kinds() map[string]kind {
 	registry := map[string]kind{
 		KindMCP:      mcpKind(),
+		KindMongo:    mongoKind(),
+		KindSlack:    tokenKind(KindSlack, "Slack"),
+		KindNotion:   tokenKind(KindNotion, "Notion"),
 		KindSMTP:     smtpKind(),
 		KindResend:   resendKind(),
 		KindPostgres: databaseKind(KindPostgres, "PostgreSQL database", 5432),
@@ -70,7 +79,7 @@ func (s *Service) kinds() map[string]kind {
 // Kinds lists the kinds this installation offers.
 func (s *Service) Kinds() []KindInfo {
 	out := make([]KindInfo, 0, len(s.registry))
-	for _, name := range []string{KindSMTP, KindResend, KindGmail, KindGDrive, KindDropbox, KindOneDrive, KindPostgres, KindMySQL, KindMCP} {
+	for _, name := range []string{KindSMTP, KindResend, KindGmail, KindGDrive, KindGDocs, KindGSheets, KindGCalendar, KindDropbox, KindOneDrive, KindPostgres, KindMySQL, KindMongo, KindSlack, KindNotion, KindMCP} {
 		if k, ok := s.registry[name]; ok {
 			out = append(out, k.info)
 		}

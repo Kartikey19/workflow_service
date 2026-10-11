@@ -92,9 +92,9 @@ type AuthConfig struct {
 }
 
 // VaultConfig configures secret encryption. Without a master key the vault is
-// off and /v1/secrets answers 501. To rotate: set the new key as VAULT_MASTER_KEY
+// off and /be/v1/secrets answers 501. To rotate: set the new key as VAULT_MASTER_KEY
 // with a higher VAULT_KEY_VERSION, list the previous key in VAULT_OLD_KEYS, restart,
-// POST /v1/admin/vault/rotate, and remove the old key once nothing uses it.
+// POST /be/v1/admin/vault/rotate, and remove the old key once nothing uses it.
 type VaultConfig struct {
 	MasterKey  string `env:"VAULT_MASTER_KEY"`                 // 32 bytes, base64
 	KeyVersion int    `env:"VAULT_KEY_VERSION" envDefault:"1"` // version of VAULT_MASTER_KEY

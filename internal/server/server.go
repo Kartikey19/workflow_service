@@ -92,7 +92,14 @@ func New(cfg Config, readiness ReadinessChecker, logger *zap.Logger) (*Server, e
 			return nil, err
 		}
 		api.NewHandler(cfg.API, server.events, server.closing, logger).Register(router{server, mux})
-		mux.Handle("/", web.Handler())
+		mux.Handle("/ui/", web.Handler())
+		mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			target := "/ui/"
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+		})
 	}
 
 	server.httpServer = &http.Server{

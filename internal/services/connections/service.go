@@ -181,7 +181,7 @@ func (s *Service) validate(in *Input) (kind, error) {
 		in.Secret = map[string]string{}
 	}
 	if k.info.OAuth {
-		return kind{}, exception.BadRequest(fmt.Sprintf("%s connections are created by signing in with the provider: POST /v1/connections/oauth/start", in.Kind))
+		return kind{}, exception.BadRequest(fmt.Sprintf("%s connections are created by signing in with the provider: POST /be/v1/connections/oauth/start", in.Kind))
 	}
 	if err := k.check(in.Config, in.Secret); err != nil {
 		return kind{}, exception.BadRequest(err.Error())
@@ -292,14 +292,7 @@ func (s *Service) List(ctx context.Context, orgID pgtype.UUID) ([]Connection, er
 	}
 	out := make([]Connection, 0, len(rows))
 	for _, row := range rows {
-		c := Connection{
-			ID: row.ID, Name: row.Name, Kind: row.Kind, Config: decodeConfig(row.Config), Hint: row.SecretHint.String,
-			Account: row.Account.String, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, CreatedBy: row.CreatedBy.String,
-		}
-		if row.TokenExpiresAt.Valid {
-			t := row.TokenExpiresAt.Time
-			c.ExpiresAt = &t
-		}
+		c := view(gen.Connection{ID: row.ID, Name: row.Name, Kind: row.Kind, Config: row.Config, SecretHint: row.SecretHint, Account: row.Account, TokenExpiresAt: row.TokenExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, CreatedBy: row.CreatedBy})
 		out = append(out, c)
 	}
 	return out, nil

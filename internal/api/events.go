@@ -21,7 +21,7 @@ import (
 // the correctness guarantee, as in the claim loop (04 §3.5).
 const ssePoll = 2 * time.Second
 
-// runEvents is GET /v1/runs/{id}/events (04 §3.5). seq is gap-free (I6), so a
+// runEvents is GET /be/v1/runs/{id}/events (04 §3.5). seq is gap-free (I6), so a
 // consumer polling ?after=<last seq> misses nothing. With Accept:
 // text/event-stream it replays everything after `after`, then follows until
 // the run is terminal and fully delivered.

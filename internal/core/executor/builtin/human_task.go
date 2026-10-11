@@ -23,7 +23,7 @@ func (HumanTask) Type() string { return "human_task" }
 func (HumanTask) Describe() executor.Description {
 	return executor.Description{
 		Title: "Human task", Category: "control",
-		Description: "Creates a task in a queue and pauses until a person completes it (POST /v1/tasks/{id}/complete). " +
+		Description: "Creates a task in a queue and pauses until a person completes it (POST /be/v1/tasks/{id}/complete). " +
 			"If the SLA passes first, on_timeout routes the run to an escalation node. Output is the completion payload.",
 		Example: `- id: nurse_review
   type: human_task

@@ -347,7 +347,7 @@ outputs: {oks: '${nodes.done.output}'}
 	deadline := time.Now().Add(10 * time.Second)
 	var items []any
 	for {
-		_, body := c.json("GET", "/v1/tasks?status=open&queue=rn-review", nil, as("nina")...)
+		_, body := c.json("GET", "/be/v1/tasks?status=open&queue=rn-review", nil, as("nina")...)
 		if items, _ = body["items"].([]any); len(items) == 3 {
 			break
 		}
@@ -362,7 +362,7 @@ outputs: {oks: '${nodes.done.output}'}
 		if payload["patient"] == nil || payload["position"] == nil {
 			t.Fatalf("task payload = %v", payload)
 		}
-		status, body := c.json("POST", "/v1/tasks/"+task["id"].(string)+"/complete", map[string]any{"payload": map[string]any{"ok": payload["patient"]}}, as("nina")...)
+		status, body := c.json("POST", "/be/v1/tasks/"+task["id"].(string)+"/complete", map[string]any{"payload": map[string]any{"ok": payload["patient"]}}, as("nina")...)
 		if status != 200 {
 			t.Fatalf("complete = %d %v", status, body)
 		}

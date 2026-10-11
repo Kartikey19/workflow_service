@@ -126,6 +126,9 @@ func (b base) do(ctx context.Context, req *http.Request, what string) ([]byte, e
 	if err != nil {
 		return nil, executor.Retryable("upstream_read", fmt.Errorf("read the response from %s", what))
 	}
+	if len(data) > maxResponse {
+		return nil, executor.Permanent("response_too_large", errors.New("provider response exceeds 1 MiB; use a smaller page"))
+	}
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return data, nil
 	}

@@ -20,7 +20,7 @@ type createRunRequest struct {
 	CorrelationID string         `json:"correlation_id"`
 }
 
-// createRun is POST /v1/runs (04 §3.1): 201 for a new run, 200 when the
+// createRun is POST /be/v1/runs (04 §3.1): 201 for a new run, 200 when the
 // Idempotency-Key already exists, 409 when it was used with another body.
 func (h *Handler) createRun(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req createRunRequest
@@ -73,7 +73,7 @@ func (h *Handler) loadRun(r *http.Request, p auth.Principal) (gen.GetRunDetailRo
 	return h.services.Runs.Get(r.Context(), p.TenantID, id)
 }
 
-// getRun is GET /v1/runs/{id} (04 §3.2) with a progress summary over the latest
+// getRun is GET /be/v1/runs/{id} (04 §3.2) with a progress summary over the latest
 // attempt of every node; total is the spec's node count, an upper bound.
 func (h *Handler) getRun(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	row, err := h.loadRun(r, p)
@@ -94,7 +94,7 @@ func (h *Handler) getRun(w http.ResponseWriter, r *http.Request, p auth.Principa
 	httpx.WriteJSON(w, http.StatusOK, view)
 }
 
-// listRuns is GET /v1/runs (04 §3.3), keyset paginated, never offset.
+// listRuns is GET /be/v1/runs (04 §3.3), keyset paginated, never offset.
 func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	limit, err := queryLimit(r, 50, 200)
 	if err != nil {
@@ -145,7 +145,7 @@ func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, p auth.Princi
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next": next})
 }
 
-// listRunNodes is GET /v1/runs/{id}/nodes (04 §3.4): every attempt, in order.
+// listRunNodes is GET /be/v1/runs/{id}/nodes (04 §3.4): every attempt, in order.
 func (h *Handler) listRunNodes(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	id, err := runID(r)
 	if err != nil {
@@ -176,7 +176,7 @@ func (h *Handler) listRunNodes(w http.ResponseWriter, r *http.Request, p auth.Pr
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// cancelRun is POST /v1/runs/{id}/cancel (04 §3.6): 202, because running nodes
+// cancelRun is POST /be/v1/runs/{id}/cancel (04 §3.6): 202, because running nodes
 // stop cooperatively at their next heartbeat.
 func (h *Handler) cancelRun(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req struct {
@@ -203,7 +203,7 @@ func (h *Handler) cancelRun(w http.ResponseWriter, r *http.Request, p auth.Princ
 	})
 }
 
-// retryRun is POST /v1/runs/{id}/retry (04 §3.7): a new run of the same version
+// retryRun is POST /be/v1/runs/{id}/retry (04 §3.7): a new run of the same version
 // and input with parent_run_id set; deliberately not a resume.
 func (h *Handler) retryRun(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	id, err := runID(r)

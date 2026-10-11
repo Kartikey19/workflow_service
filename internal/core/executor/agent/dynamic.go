@@ -30,7 +30,7 @@ func (e *Executor) resolveTools(ctx context.Context, tenant uuid.UUID, refs []st
 			return nil, nil, func() {}, fmt.Errorf("duplicate tool reference %q", ref)
 		}
 		seen[ref] = true
-		if IsMCPReference(ref) {
+		if IsDynamicReference(ref) {
 			remote = append(remote, ref)
 			continue
 		}
@@ -43,9 +43,15 @@ func (e *Executor) resolveTools(ctx context.Context, tenant uuid.UUID, refs []st
 	cleanup := func() {}
 	if len(remote) > 0 {
 		if e.dynamic == nil {
-			return nil, nil, cleanup, errors.New("MCP tools are unavailable on this worker")
+			return nil, nil, cleanup, errors.New("connector tools are unavailable on this worker")
 		}
-		if len(remote) > 8 {
+		mcpCount := 0
+		for _, ref := range remote {
+			if IsMCPReference(ref) {
+				mcpCount++
+			}
+		}
+		if mcpCount > 8 {
 			return nil, nil, cleanup, errors.New("at most 8 MCP servers per agent")
 		}
 		tools, closeTools, err := e.dynamic.Resolve(ctx, tenant, remote)
@@ -76,6 +82,9 @@ func validateDatabaseTools(names []string, connection string) error {
 }
 
 func validateReferences(names []string) error {
+	if len(names) > 64 {
+		return errors.New("at most 64 tool references per agent")
+	}
 	seen := map[string]bool{}
 	remote := 0
 	for _, name := range names {

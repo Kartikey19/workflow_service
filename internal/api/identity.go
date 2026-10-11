@@ -14,28 +14,28 @@ import (
 )
 
 func (h *Handler) registerIdentity(r Router) {
-	r.HandlePublic("POST /v1/auth/login", h.login)
-	r.HandlePublic("GET /v1/auth/invite", h.previewInvite)
-	r.HandlePublic("POST /v1/auth/accept-invite", h.acceptInvite)
-	r.Handle("POST /v1/auth/logout", auth.RoleViewer, h.logout)
-	r.Handle("GET /v1/auth/me", auth.RoleViewer, h.me)
-	r.Handle("POST /v1/auth/switch-org", auth.RoleViewer, h.switchOrg)
+	r.HandlePublic("POST /be/v1/auth/login", h.login)
+	r.HandlePublic("GET /be/v1/auth/invite", h.previewInvite)
+	r.HandlePublic("POST /be/v1/auth/accept-invite", h.acceptInvite)
+	r.Handle("POST /be/v1/auth/logout", auth.RoleViewer, h.logout)
+	r.Handle("GET /be/v1/auth/me", auth.RoleViewer, h.me)
+	r.Handle("POST /be/v1/auth/switch-org", auth.RoleViewer, h.switchOrg)
 
-	r.Handle("GET /v1/members", auth.RoleViewer, h.listMembers)
-	r.Handle("PATCH /v1/members/{user_id}", auth.RoleAdmin, h.updateMember)
-	r.Handle("DELETE /v1/members/{user_id}", auth.RoleViewer, h.removeMember) // anyone may leave
-	r.Handle("POST /v1/invites", auth.RoleAdmin, h.createInvite)
-	r.Handle("GET /v1/invites", auth.RoleAdmin, h.listInvites)
-	r.Handle("DELETE /v1/invites/{id}", auth.RoleAdmin, h.revokeInvite)
-	r.Handle("POST /v1/api-keys", auth.RoleAdmin, h.createAPIKey)
-	r.Handle("GET /v1/api-keys", auth.RoleAdmin, h.listAPIKeys)
-	r.Handle("DELETE /v1/api-keys/{id}", auth.RoleAdmin, h.revokeAPIKey)
-	r.Handle("GET /v1/usage", auth.RoleViewer, h.usage)
-	r.Handle("GET /v1/plans", auth.RoleViewer, h.listPlans)
+	r.Handle("GET /be/v1/members", auth.RoleViewer, h.listMembers)
+	r.Handle("PATCH /be/v1/members/{user_id}", auth.RoleAdmin, h.updateMember)
+	r.Handle("DELETE /be/v1/members/{user_id}", auth.RoleViewer, h.removeMember) // anyone may leave
+	r.Handle("POST /be/v1/invites", auth.RoleAdmin, h.createInvite)
+	r.Handle("GET /be/v1/invites", auth.RoleAdmin, h.listInvites)
+	r.Handle("DELETE /be/v1/invites/{id}", auth.RoleAdmin, h.revokeInvite)
+	r.Handle("POST /be/v1/api-keys", auth.RoleAdmin, h.createAPIKey)
+	r.Handle("GET /be/v1/api-keys", auth.RoleAdmin, h.listAPIKeys)
+	r.Handle("DELETE /be/v1/api-keys/{id}", auth.RoleAdmin, h.revokeAPIKey)
+	r.Handle("GET /be/v1/usage", auth.RoleViewer, h.usage)
+	r.Handle("GET /be/v1/plans", auth.RoleViewer, h.listPlans)
 
-	r.HandleAdmin("POST /v1/admin/invites", h.platformInvite)
-	r.HandleAdmin("GET /v1/admin/organizations", h.listOrganizations)
-	r.HandleAdmin("PUT /v1/admin/organizations/{id}/plan", h.setOrganizationPlan)
+	r.HandleAdmin("POST /be/v1/admin/invites", h.platformInvite)
+	r.HandleAdmin("GET /be/v1/admin/organizations", h.listOrganizations)
+	r.HandleAdmin("PUT /be/v1/admin/organizations/{id}/plan", h.setOrganizationPlan)
 }
 
 func userView(u identity.User) map[string]any {
@@ -69,7 +69,7 @@ func (h *Handler) writeSession(w http.ResponseWriter, status int, session identi
 	})
 }
 
-// login is POST /v1/auth/login: sets the session cookie.
+// login is POST /be/v1/auth/login: sets the session cookie.
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
@@ -145,13 +145,13 @@ func (h *Handler) inviteView(i identity.Invite, token string) map[string]any {
 		// Shown once: the token is not stored, only its hash.
 		view["token"] = token
 		if h.services.PublicURL != "" {
-			view["accept_url"] = strings.TrimRight(h.services.PublicURL, "/") + "/accept-invite?token=" + token
+			view["accept_url"] = strings.TrimRight(h.services.PublicURL, "/") + "/ui/accept-invite?token=" + token
 		}
 	}
 	return view
 }
 
-// previewInvite is GET /v1/auth/invite?token=: what the accept page shows.
+// previewInvite is GET /be/v1/auth/invite?token=: what the accept page shows.
 func (h *Handler) previewInvite(w http.ResponseWriter, r *http.Request) {
 	invite, hasAccount, err := h.services.Identity.PreviewInvite(r.Context(), r.URL.Query().Get("token"))
 	if err != nil {
@@ -163,7 +163,7 @@ func (h *Handler) previewInvite(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, view)
 }
 
-// acceptInvite is POST /v1/auth/accept-invite: creates the account (or checks
+// acceptInvite is POST /be/v1/auth/accept-invite: creates the account (or checks
 // the existing account's password), joins the organization and signs in.
 func (h *Handler) acceptInvite(w http.ResponseWriter, r *http.Request) {
 	var req struct {

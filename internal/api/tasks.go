@@ -37,7 +37,7 @@ func taskActor(p auth.Principal) tasks.Actor {
 	return tasks.Actor{Name: p.Actor(), Admin: p.Can(auth.RoleAdmin)}
 }
 
-// listTasks is GET /v1/tasks (04 §4.2): the worklist, keyset paginated, with
+// listTasks is GET /be/v1/tasks (04 §4.2): the worklist, keyset paginated, with
 // ?queue=, ?status=, ?assignee= and ?mine=true (tasks claimed by the caller).
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	limit, err := queryLimit(r, 50, 200)
@@ -113,7 +113,7 @@ func (h *Handler) taskTransition(w http.ResponseWriter, r *http.Request, p auth.
 	httpx.WriteJSON(w, http.StatusOK, taskView(task))
 }
 
-// completeTask is POST /v1/tasks/{id}/complete (04 §4.2): sugar over the signal
+// completeTask is POST /be/v1/tasks/{id}/complete (04 §4.2): sugar over the signal
 // that the task's wait is parked on. The body is {"payload": ...}; the payload
 // becomes the node's output.
 func (h *Handler) completeTask(w http.ResponseWriter, r *http.Request, p auth.Principal) {

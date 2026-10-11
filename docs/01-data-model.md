@@ -60,7 +60,7 @@ create unique index workflows_tenant_name_uq on workflows (tenant_id, name);
 ```
 
 `name` is the stable public identifier used by API callers
-(`POST /v1/runs {"workflow": "order-fulfilment"}`). Constrain the format at the
+(`POST /be/v1/runs {"workflow": "order-fulfilment"}`). Constrain the format at the
 DB level — you will otherwise get names with spaces and emoji in them, and they
 will end up in URLs.
 
@@ -93,7 +93,7 @@ under a newer compiler. `spec` is the normalised graph the engine reads: default
 filled in, `needs` edges resolved to indices, retry policies materialised,
 expressions pre-parsed and cached. **The runtime never parses YAML.**
 
-**`spec_hash`** lets `POST /v1/workflows` be idempotent: if the incoming YAML
+**`spec_hash`** lets `POST /be/v1/workflows` be idempotent: if the incoming YAML
 compiles to a spec identical to the current latest version, return that version
 instead of creating v(n+1). Without this, a CI pipeline that deploys on every
 commit generates a new version per commit forever.
@@ -658,7 +658,7 @@ nodes:
     needs: [await_pickup]
 ```
 
-**t0 — `POST /v1/runs`.** One transaction inserts the run and the *root nodes
+**t0 — `POST /be/v1/runs`.** One transaction inserts the run and the *root nodes
 only*. Nodes are created lazily as their dependencies resolve; pre-creating the
 whole graph is impossible once M9 adds dynamic fan-out, so never start doing it.
 
@@ -728,7 +728,7 @@ zero connections, zero memory. It can sit here for 45 minutes or, in the
 healthcare workflow, for 30 days. Nothing in the process needs to remember it
 exists. Every worker can be restarted, redeployed, or replaced.
 
-**t0+12m — courier webhook: `POST /v1/signals {key:"order.picked_up:ORD-88213"}`.**
+**t0+12m — courier webhook: `POST /be/v1/signals {key:"order.picked_up:ORD-88213"}`.**
 Single transaction (§6.7):
 
 ```
@@ -790,8 +790,8 @@ nodes:
 ```
 
 `nurse_review` is `wait_event` with a nicer name: the executor registers a wait
-keyed `task:${run.id}:nurse_review`, and `POST /v1/tasks/{id}/complete` is sugar
-over `POST /v1/signals`. Same table, same delivery path, same timeout mechanism.
+keyed `task:${run.id}:nurse_review`, and `POST /be/v1/tasks/{id}/complete` is sugar
+over `POST /be/v1/signals`. Same table, same delivery path, same timeout mechanism.
 
 `wait_30d` is the whole point of the design:
 

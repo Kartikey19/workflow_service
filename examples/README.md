@@ -32,7 +32,7 @@ Select **Workflow API** and press F5; this configuration uses API mode and port
 From the project root, validate without saving:
 
 ```sh
-curl -i -X POST 'http://127.0.0.1:8081/v1/workflows?dry_run=true' \
+curl -i -X POST 'http://127.0.0.1:8081/be/v1/workflows?dry_run=true' \
   -H 'Content-Type: application/x-yaml' \
   --data-binary @examples/support-ticket.yaml
 ```
@@ -40,7 +40,7 @@ curl -i -X POST 'http://127.0.0.1:8081/v1/workflows?dry_run=true' \
 Publish a saved version once persistence is implemented:
 
 ```sh
-curl -i -X POST 'http://127.0.0.1:8081/v1/workflows' \
+curl -i -X POST 'http://127.0.0.1:8081/be/v1/workflows' \
   -H 'Content-Type: application/x-yaml' \
   --data-binary @examples/support-ticket.yaml
 ```
@@ -51,7 +51,7 @@ imported, choose **Body → raw**, paste the YAML, and keep the YAML content-typ
 After the run API, worker, and HTTP executor exist, trigger with:
 
 ```sh
-curl -i -X POST 'http://127.0.0.1:8081/v1/runs' \
+curl -i -X POST 'http://127.0.0.1:8081/be/v1/runs' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: support-REQ-1001' \
   --data '{"workflow":"support-ticket","input":{"request_id":"REQ-1001","customer_email":"customer@example.com","subject":"Payment failed","priority":"high"}}'

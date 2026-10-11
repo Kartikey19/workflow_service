@@ -13,8 +13,6 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
 	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
-	"github.com/kartikey/workflow_service/internal/core/executor/database"
-	"github.com/kartikey/workflow_service/internal/core/executor/email"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	mcpexec "github.com/kartikey/workflow_service/internal/core/executor/mcp"
 	"github.com/kartikey/workflow_service/internal/services/agents"
@@ -100,7 +98,8 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 		Microsoft:       connections.OAuthApp{ClientID: cfg.Services.MicrosoftClientID, ClientSecret: cfg.Services.MicrosoftClientSecret},
 		MicrosoftTenant: cfg.Services.MicrosoftTenant,
 	})
-	tools, err := agent.NewTools(append([]agent.Tool{agent.CurrentTime{}, agent.NewHTTPRequest(policy)}, agent.DatabaseTools(connectionSvc, policy)...)...)
+	catalog := connectors.NewCatalog(connectionSvc, policy, endpoints, cfg.Services.ResendBaseURL)
+	tools, err := agent.NewTools(append([]agent.Tool{agent.CurrentTime{}, agent.NewHTTPRequest(policy)}, agent.DatabaseToolsWithCatalog(catalog)...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,18 +113,13 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	})
 	agentSvc := agents.NewService(pool, tools)
 	mcpExecutor := mcpexec.New(connectionSvc, policy)
-	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, tools, agentSvc).WithDynamicTools(mcpExecutor)
+	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, tools, agentSvc).WithDynamicTools(agent.NewConnectorTools(catalog, connectionSvc, mcpExecutor))
 	agentSvc.Attach(agentExecutor)
 
-	emailExecutor := email.New(connectionSvc, policy, cfg.Services.ResendBaseURL)
-	appNodes := []executor.Executor{
-		connectors.NewGmail(connectionSvc, policy, endpoints), connectors.NewGDrive(connectionSvc, policy, endpoints),
-		connectors.NewDropbox(connectionSvc, policy, endpoints), connectors.NewOneDrive(connectionSvc, policy, endpoints),
-		mcpExecutor, database.NewQuery(connectionSvc, policy), database.NewInsert(connectionSvc, policy),
-	}
+	appNodes := append(catalog.Nodes(), mcpExecutor)
 
 	registry := executor.NewRegistry()
-	nodes := append(builtin.All(), httpexec.New(policy), agentExecutor, builtin.SubWorkflow{Starter: svc}, emailExecutor)
+	nodes := append(builtin.All(), httpexec.New(policy), agentExecutor, builtin.SubWorkflow{Starter: svc})
 	for _, e := range append(nodes, appNodes...) {
 		if err := registry.Register(e); err != nil {
 			return nil, err

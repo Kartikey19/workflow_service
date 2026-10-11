@@ -37,7 +37,7 @@ func eachDatabase(t *testing.T, run func(t *testing.T, s *stack, owner *person, 
 			owner := s.owner(t, "DB Co "+b.name)
 			tb := b.setup(t)
 			conn := b.name + "-warehouse"
-			created := owner.mustOK("POST", "/v1/connections", dbConnection(conn, b), 201)
+			created := owner.mustOK("POST", "/be/v1/connections", dbConnection(conn, b), 201)
 			if _, ok := created["secret"]; ok || strings.Contains(toJSON(created), `"password"`) {
 				t.Fatalf("the connection view exposes the secret: %v", created)
 			}
@@ -58,7 +58,7 @@ func TestDatabaseQueryNode(t *testing.T) {
 			}
 		}
 		publish("q-params", "db.query", fmt.Sprintf(`{connection: %s, sql: "select id, name, score from %s where id = %s and name = %s", params: ['${input.id}', first]}`, conn, tb.events, p1, p2))
-		_, started := owner.call("POST", "/v1/runs", map[string]any{"workflow": "q-params", "input": map[string]any{"id": 1}})
+		_, started := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "q-params", "input": map[string]any{"id": 1}})
 		run := owner.waitRun(started["id"].(string))
 		if run["status"] != "succeeded" {
 			t.Fatalf("run = %v", run)
@@ -78,7 +78,7 @@ func TestDatabaseQueryNode(t *testing.T) {
 
 		// The row cap truncates, and fail_on_truncate turns that into a failure.
 		publish("q-cap", "db.query", fmt.Sprintf(`{connection: %s, sql: "%s", max_rows: 25}`, conn, b.series(500)))
-		_, started = owner.call("POST", "/v1/runs", map[string]any{"workflow": "q-cap"})
+		_, started = owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "q-cap"})
 		owner.waitRun(started["id"].(string))
 		_ = s.h.pool.QueryRow(context.Background(), `select output from node_executions where run_id = $1 and node_id = 'act'`, mustParse(t, started["id"].(string))).Scan(&output)
 		if output["row_count"] != float64(25) || output["truncated"] != true {
@@ -136,7 +136,7 @@ func TestDatabaseQueryRefusesSQLInterpolation(t *testing.T) {
 		if status, body := owner.publish(dbWorkflow("q-param", "db.query", node)); status != 201 {
 			t.Fatalf("publish = %d %v", status, body)
 		}
-		_, started := owner.call("POST", "/v1/runs", map[string]any{"workflow": "q-param", "input": map[string]any{"since": "x'; drop table " + tb.events + "; --"}})
+		_, started := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "q-param", "input": map[string]any{"since": "x'; drop table " + tb.events + "; --"}})
 		if run := owner.waitRun(started["id"].(string)); run["status"] != "succeeded" {
 			t.Fatalf("run = %v", run)
 		}
@@ -174,7 +174,7 @@ func TestDatabaseInsertNode(t *testing.T) {
 		}
 
 		publish("ins-row", fmt.Sprintf(`{connection: %s, table: %s, row: {id: '${input.id}', name: "ünï ${input.since}", score: 4.5, active: true}}`, conn, tb.events))
-		_, started := owner.call("POST", "/v1/runs", map[string]any{"workflow": "ins-row", "input": map[string]any{"id": 7, "since": "x"}})
+		_, started := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "ins-row", "input": map[string]any{"id": 7, "since": "x"}})
 		if run := owner.waitRun(started["id"].(string)); run["status"] != "succeeded" {
 			t.Fatalf("run = %v", run)
 		}
@@ -226,12 +226,12 @@ func TestDatabaseConnectionFailures(t *testing.T) {
 	eachDatabase(t, func(t *testing.T, s *stack, owner *person, b backend, tb tables, conn string) {
 		bad := dbConnection("wrong-"+b.name, b)
 		bad["secret"] = map[string]any{"password": "wrong-database-password"}
-		status, body := owner.call("POST", "/v1/connections", bad)
+		status, body := owner.call("POST", "/be/v1/connections", bad)
 		if status != 422 || body["code"] != "connection_test_failed" || strings.Contains(toJSON(body), "wrong-database-password") {
 			t.Fatalf("a wrong password = %d %v", status, body)
 		}
 		bad["skip_test"] = true
-		owner.mustOK("POST", "/v1/connections", bad, 201)
+		owner.mustOK("POST", "/be/v1/connections", bad, 201)
 		if status, _ := owner.publish(dbWorkflow("bad-pass", "db.query", fmt.Sprintf(`{connection: wrong-%s, sql: "select 1"}`, b.name))); status != 201 {
 			t.Fatal("publish")
 		}
@@ -244,7 +244,7 @@ func TestDatabaseConnectionFailures(t *testing.T) {
 			t.Fatalf("the rejected password is stored in %d row(s)", n)
 		}
 		// An unknown connection and a connection of another kind.
-		owner.mustOK("POST", "/v1/connections", map[string]any{"name": "mail", "kind": "smtp", "skip_test": true,
+		owner.mustOK("POST", "/be/v1/connections", map[string]any{"name": "mail", "kind": "smtp", "skip_test": true,
 			"config": map[string]any{"host": "smtp.example.com"}}, 201)
 		for name, connection := range map[string]string{"no-conn": "ghost", "wrong-kind": "mail"} {
 			if status, _ := owner.publish(dbWorkflow(name, "db.query", fmt.Sprintf(`{connection: %s, sql: "select 1"}`, connection))); status != 201 {
@@ -267,13 +267,13 @@ func TestDatabaseConnectorsRespectEgressRules(t *testing.T) {
 	s := newStack(t, ctx, func(c *config.Config) { c.Egress.AllowPrivate = false })
 	owner := s.owner(t, "Egress Co")
 	b := postgresBackend(t)
-	status, body := owner.call("POST", "/v1/connections", dbConnection("blocked", b))
-	if status != 422 || !strings.Contains(body["detail"].(string), "not allowed") {
+	status, body := owner.call("POST", "/be/v1/connections", dbConnection("blocked", b))
+	if status != 422 || !strings.Contains(body["detail"].(string), "egress policy") {
 		t.Fatalf("a loopback database under the default policy = %d %v, want the egress policy to refuse it", status, body)
 	}
 	withSkip := dbConnection("blocked", b)
 	withSkip["skip_test"] = true
-	owner.mustOK("POST", "/v1/connections", withSkip, 201)
+	owner.mustOK("POST", "/be/v1/connections", withSkip, 201)
 	if status, _ := owner.publish(dbWorkflow("egress", "db.query", `{connection: blocked, sql: "select 1"}`)); status != 201 {
 		t.Fatal("publish")
 	}

@@ -28,7 +28,7 @@ func nodeAdminView(result runs.NodeAdminResult) map[string]any {
 	}
 }
 
-// adminRetryNode is POST /v1/admin/node-executions/{id}/retry (04 §5.1).
+// adminRetryNode is POST /be/v1/admin/node-executions/{id}/retry (04 §5.1).
 func (h *Handler) adminRetryNode(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	id, err := nodeExecutionID(r)
 	if err != nil {
@@ -43,7 +43,7 @@ func (h *Handler) adminRetryNode(w http.ResponseWriter, r *http.Request, p auth.
 	httpx.WriteJSON(w, http.StatusOK, nodeAdminView(result))
 }
 
-// adminSkipNode is POST /v1/admin/node-executions/{id}/skip (04 §5.1).
+// adminSkipNode is POST /be/v1/admin/node-executions/{id}/skip (04 §5.1).
 func (h *Handler) adminSkipNode(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	id, err := nodeExecutionID(r)
 	if err != nil {
@@ -58,7 +58,7 @@ func (h *Handler) adminSkipNode(w http.ResponseWriter, r *http.Request, p auth.P
 	httpx.WriteJSON(w, http.StatusOK, nodeAdminView(result))
 }
 
-// adminReleaseLeases is POST /v1/admin/workers/{worker_id}/release-leases.
+// adminReleaseLeases is POST /be/v1/admin/workers/{worker_id}/release-leases.
 func (h *Handler) adminReleaseLeases(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	workerID := strings.TrimSpace(r.PathValue("worker_id"))
 	if workerID == "" {

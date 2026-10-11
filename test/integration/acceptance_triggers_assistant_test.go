@@ -35,7 +35,7 @@ func TestWebhookTriggers(t *testing.T) {
 	if status, resp := owner.publish("apiVersion: workflow/v1\nname: hooked\ninputs:\n  message: {type: string, required: true}\nnodes:\n  - {id: receive, type: transform, config: {value: '${input.message}'}}\n"); status != 201 {
 		t.Fatalf("publish %d %v", status, resp)
 	}
-	hook := owner.mustOK("POST", "/v1/triggers", map[string]any{"name": "incoming", "workflow": "hooked", "signed": true}, 201)
+	hook := owner.mustOK("POST", "/be/v1/triggers", map[string]any{"name": "incoming", "workflow": "hooked", "signed": true}, 201)
 	credential := hook["token"].(string)
 	secret := hook["signing_secret"].(string)
 	path := "/hooks/" + credential
@@ -62,7 +62,7 @@ func TestWebhookTriggers(t *testing.T) {
 	if status, _ := anonymous.call("POST", path, changed, "X-Workflow-Signature", hookSignature(secret, changed), "Idempotency-Key", "event-1"); status != 409 {
 		t.Fatalf("changed replay %d", status)
 	}
-	_, listed := owner.call("GET", "/v1/triggers", nil)
+	_, listed := owner.call("GET", "/be/v1/triggers", nil)
 	if strings.Contains(toJSON(listed), credential) || strings.Contains(toJSON(listed), secret) {
 		t.Fatal("listing exposed credentials")
 	}
@@ -70,17 +70,17 @@ func TestWebhookTriggers(t *testing.T) {
 		t.Fatal("webhook credentials persisted in clear")
 	}
 	other := s.owner(t, "Other hooks")
-	if status, _ := other.call("PATCH", "/v1/triggers/"+hook["id"].(string), map[string]any{"enabled": false}); status != 404 {
+	if status, _ := other.call("PATCH", "/be/v1/triggers/"+hook["id"].(string), map[string]any{"enabled": false}); status != 404 {
 		t.Fatalf("foreign trigger %d", status)
 	}
-	if status, _ := other.call("POST", "/v1/triggers", map[string]any{"name": "foreign", "workflow": "hooked"}); status != 400 {
+	if status, _ := other.call("POST", "/be/v1/triggers", map[string]any{"name": "foreign", "workflow": "hooked"}); status != 400 {
 		t.Fatalf("foreign workflow %d", status)
 	}
-	owner.mustOK("PATCH", "/v1/triggers/"+hook["id"].(string), map[string]any{"enabled": false}, 200)
+	owner.mustOK("PATCH", "/be/v1/triggers/"+hook["id"].(string), map[string]any{"enabled": false}, 200)
 	if status, _ := anonymous.call("POST", path, body, "X-Workflow-Signature", signature); status != 404 {
 		t.Fatalf("disabled trigger %d", status)
 	}
-	owner.mustOK("PATCH", "/v1/triggers/"+hook["id"].(string), map[string]any{"enabled": true}, 200)
+	owner.mustOK("PATCH", "/be/v1/triggers/"+hook["id"].(string), map[string]any{"enabled": true}, 200)
 	// Online master-key rotation covers webhook HMAC keys.
 	currentKey := make([]byte, 32)
 	for i := range currentKey {
@@ -113,7 +113,7 @@ func TestWebhookTriggers(t *testing.T) {
 	if status, _ := anonymous.call("POST", path, body, "X-Workflow-Signature", signature); status != 201 {
 		t.Fatalf("rotated signing key %d", status)
 	}
-	replaced := owner.mustOK("POST", "/v1/triggers/"+hook["id"].(string)+"/rotate-token", nil, 200)
+	replaced := owner.mustOK("POST", "/be/v1/triggers/"+hook["id"].(string)+"/rotate-token", nil, 200)
 	if status, _ := anonymous.call("POST", path, body, "X-Workflow-Signature", signature); status != 404 {
 		t.Fatalf("old token %d", status)
 	}
@@ -121,7 +121,7 @@ func TestWebhookTriggers(t *testing.T) {
 	if status, _ := anonymous.call("POST", path, body, "X-Workflow-Signature", signature); status != 201 {
 		t.Fatalf("new token %d", status)
 	}
-	owner.mustOK("DELETE", "/v1/triggers/"+hook["id"].(string), nil, 204)
+	owner.mustOK("DELETE", "/be/v1/triggers/"+hook["id"].(string), nil, 204)
 	if status, _ := anonymous.call("POST", path, body, "X-Workflow-Signature", signature); status != 404 {
 		t.Fatalf("deleted token %d", status)
 	}
@@ -134,13 +134,13 @@ func TestWebhookEnvelopeAndPlanAllowance(t *testing.T) {
 	if status, resp := owner.publish(source); status != 201 {
 		t.Fatalf("publish %d %v", status, resp)
 	}
-	hook := owner.mustOK("POST", "/v1/triggers", map[string]any{"name": "envelope", "workflow": "envelope", "input_mode": "envelope"}, 201)
+	hook := owner.mustOK("POST", "/be/v1/triggers", map[string]any{"name": "envelope", "workflow": "envelope", "input_mode": "envelope"}, 201)
 	path := "/hooks/" + hook["token"].(string) + "?source=partner"
 	status, run := anonymous.call("POST", path, map[string]any{"hello": "world"}, "Authorization", "Bearer sensitive-value", "X-Event", "created")
 	if status != 201 {
 		t.Fatalf("envelope %d %v", status, run)
 	}
-	detail := owner.mustOK("GET", "/v1/runs/"+run["id"].(string), nil, 200)
+	detail := owner.mustOK("GET", "/be/v1/runs/"+run["id"].(string), nil, 200)
 	input := detail["input"].(map[string]any)
 	if strings.Contains(toJSON(input), "sensitive-value") || !strings.Contains(toJSON(input), "created") || !strings.Contains(toJSON(input), "partner") {
 		t.Fatalf("envelope input %v", input)
@@ -199,12 +199,12 @@ func TestAssistantTenReferencesAndRepair(t *testing.T) {
 		fmt.Fprintf(w, `{"model":"fake-model","choices":[{"finish_reason":"stop","message":{"content":%q}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}`, yaml)
 	}))
 	defer model.Close()
-	owner.mustOK("POST", "/v1/providers", map[string]any{"name": "writer", "provider": "openai_compatible", "base_url": model.URL, "api_key": "never-expose-provider-key"}, 201)
-	owner.mustOK("PUT", "/v1/secrets/EXAMPLE", map[string]any{"value": "never-expose-vault-value"}, 200)
-	owner.mustOK("POST", "/v1/agents", agentBody("helper", "writer"), 201)
+	owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "writer", "provider": "openai_compatible", "base_url": model.URL, "api_key": "never-expose-provider-key"}, 201)
+	owner.mustOK("PUT", "/be/v1/secrets/EXAMPLE", map[string]any{"value": "never-expose-vault-value"}, 200)
+	owner.mustOK("POST", "/be/v1/agents", agentBody("helper", "writer"), 201)
 	prompts := []string{"Draft a greeting", "Transform an input", "Route by priority", "Fetch an HTTP API", "Send an email", "Query a database", "Wait for a human", "Call a subworkflow", "Use an agent", "repair a draft"}
 	for _, prompt := range prompts {
-		draft := owner.mustOK("POST", "/v1/assistant/workflows", map[string]any{"requirements": prompt, "connection": "writer", "model": "fake-model"}, 200)
+		draft := owner.mustOK("POST", "/be/v1/assistant/workflows", map[string]any{"requirements": prompt, "connection": "writer", "model": "fake-model"}, 200)
 		if draft["valid"] != true {
 			t.Fatalf("invalid draft: %v", draft)
 		}
@@ -215,7 +215,7 @@ func TestAssistantTenReferencesAndRepair(t *testing.T) {
 			t.Fatalf("draft did not publish %d %v", status, resp)
 		}
 	}
-	_, bad := owner.call("POST", "/v1/assistant/workflows", map[string]any{"requirements": "never-valid", "connection": "writer", "model": "fake-model"})
+	_, bad := owner.call("POST", "/be/v1/assistant/workflows", map[string]any{"requirements": "never-valid", "connection": "writer", "model": "fake-model"})
 	if bad["valid"] != false || bad["attempts"] != float64(4) {
 		t.Fatalf("repair bound %v", bad)
 	}
@@ -226,7 +226,7 @@ func TestAssistantTenReferencesAndRepair(t *testing.T) {
 		t.Fatal("assistant catalog omitted names or exposed values")
 	}
 	other := s.owner(t, "Other assistant")
-	if status, _ := other.call("POST", "/v1/assistant/workflows", map[string]any{"requirements": "hello", "connection": "writer", "model": "fake-model"}); status != 400 {
+	if status, _ := other.call("POST", "/be/v1/assistant/workflows", map[string]any{"requirements": "hello", "connection": "writer", "model": "fake-model"}); status != 400 {
 		t.Fatalf("foreign provider %d", status)
 	}
 }

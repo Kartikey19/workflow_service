@@ -16,7 +16,7 @@ import (
 	"github.com/kartikey/workflow_service/pkg/uid"
 )
 
-// publishWorkflow is POST /v1/workflows (04 §2.1). The body is the YAML
+// publishWorkflow is POST /be/v1/workflows (04 §2.1). The body is the YAML
 // document; JSON is accepted too, either as the document itself (JSON is YAML)
 // or as {"yaml": "..."} for clients that cannot send a raw body.
 func (h *Handler) publishWorkflow(w http.ResponseWriter, r *http.Request, p auth.Principal) {
@@ -144,7 +144,7 @@ func (h *Handler) getWorkflowVersion(w http.ResponseWriter, r *http.Request, p a
 	httpx.WriteJSON(w, http.StatusOK, view)
 }
 
-// archiveWorkflow is DELETE /v1/workflows/{name} (04 §2.4): new runs are
+// archiveWorkflow is DELETE /be/v1/workflows/{name} (04 §2.4): new runs are
 // rejected with 409, existing runs continue, versions are never deleted.
 func (h *Handler) archiveWorkflow(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	h.setArchived(w, r, p, true)

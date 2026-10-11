@@ -69,19 +69,19 @@ func TestAdminRoutesNeedPlatformAdmin(t *testing.T) {
 	c := apiClient{t: t, base: h.apiServer(nil), tenant: h.tenant}
 	const missing = "00000000-0000-7000-8000-000000000001"
 	for _, path := range []string{
-		"/v1/admin/node-executions/" + missing + "/retry",
-		"/v1/admin/node-executions/" + missing + "/skip",
-		"/v1/admin/workers/w1/release-leases",
+		"/be/v1/admin/node-executions/" + missing + "/retry",
+		"/be/v1/admin/node-executions/" + missing + "/skip",
+		"/be/v1/admin/workers/w1/release-leases",
 	} {
 		// An organization owner is not enough.
 		if status, body := c.json("POST", path, nil); status != 403 {
 			t.Fatalf("%s as owner = %d %v, want 403", path, status, body)
 		}
 	}
-	if status, _ := c.json("POST", "/v1/admin/node-executions/"+missing+"/retry", nil, adminHeaders()...); status != 404 {
+	if status, _ := c.json("POST", "/be/v1/admin/node-executions/"+missing+"/retry", nil, adminHeaders()...); status != 404 {
 		t.Fatalf("retry of an unknown node = %d, want 404", status)
 	}
-	if status, _ := c.json("POST", "/v1/admin/node-executions/not-a-uuid/skip", nil, adminHeaders()...); status != 404 {
+	if status, _ := c.json("POST", "/be/v1/admin/node-executions/not-a-uuid/skip", nil, adminHeaders()...); status != 404 {
 		t.Fatalf("skip of a malformed id = %d, want 404", status)
 	}
 }
@@ -100,7 +100,7 @@ nodes:
 	runID := h.start("retry-me", nil) // no workers yet: a is ready
 	first := h.nodeExecutionID(runID, "a", 1)
 
-	status, body := c.json("POST", "/v1/admin/node-executions/"+first+"/retry", nil, adminHeaders()...)
+	status, body := c.json("POST", "/be/v1/admin/node-executions/"+first+"/retry", nil, adminHeaders()...)
 	if status != 200 || body["attempt"] != float64(2) || body["status"] != "ready" {
 		t.Fatalf("retry = %d %v", status, body)
 	}
@@ -111,7 +111,7 @@ nodes:
 		t.Fatalf("attempt 2 = %s, want ready", got)
 	}
 	// The same node cannot be retried twice: a later attempt exists.
-	if status, body := c.json("POST", "/v1/admin/node-executions/"+first+"/retry", nil, adminHeaders()...); status != 409 {
+	if status, body := c.json("POST", "/be/v1/admin/node-executions/"+first+"/retry", nil, adminHeaders()...); status != 409 {
 		t.Fatalf("second retry = %d %v, want 409", status, body)
 	}
 	if !contains(h.eventTypes(runID), "admin.node_retried") {
@@ -124,7 +124,7 @@ nodes:
 		t.Fatalf("a ran %d times, want exactly the retried attempt", h.script.callCount("a"))
 	}
 	// A finished run cannot be retried node by node.
-	if status, body := c.json("POST", "/v1/admin/node-executions/"+h.nodeExecutionID(runID, "a", 2)+"/retry", nil, adminHeaders()...); status != 409 {
+	if status, body := c.json("POST", "/be/v1/admin/node-executions/"+h.nodeExecutionID(runID, "a", 2)+"/retry", nil, adminHeaders()...); status != 409 {
 		t.Fatalf("retry in a finished run = %d %v, want 409", status, body)
 	}
 	h.checkInvariants(runID)
@@ -145,11 +145,11 @@ nodes:
 	runID := h.start("skip-me", nil)
 	a := h.nodeExecutionID(runID, "a", 1)
 
-	status, body := c.json("POST", "/v1/admin/node-executions/"+a+"/skip", nil, adminHeaders()...)
+	status, body := c.json("POST", "/be/v1/admin/node-executions/"+a+"/skip", nil, adminHeaders()...)
 	if status != 200 || body["status"] != "skipped" {
 		t.Fatalf("skip = %d %v", status, body)
 	}
-	if status, body := c.json("POST", "/v1/admin/node-executions/"+a+"/skip", nil, adminHeaders()...); status != 409 {
+	if status, body := c.json("POST", "/be/v1/admin/node-executions/"+a+"/skip", nil, adminHeaders()...); status != 409 {
 		t.Fatalf("skipping a skipped node = %d %v, want 409", status, body)
 	}
 	if !contains(h.eventTypes(runID), "admin.node_skipped") {
@@ -186,14 +186,14 @@ nodes:
 		 where run_id = $1`, runID); err != nil {
 		t.Fatal(err)
 	}
-	status, body := c.json("POST", "/v1/admin/workers/dead-worker/release-leases", nil, adminHeaders()...)
+	status, body := c.json("POST", "/be/v1/admin/workers/dead-worker/release-leases", nil, adminHeaders()...)
 	if status != 200 || body["released"] != float64(1) {
 		t.Fatalf("release = %d %v", status, body)
 	}
 	if got := h.attemptStatus(runID, "a", 1); got != "ready" {
 		t.Fatalf("a = %s, want ready after release", got)
 	}
-	status, body = c.json("POST", "/v1/admin/workers/dead-worker/release-leases", nil, adminHeaders()...)
+	status, body = c.json("POST", "/be/v1/admin/workers/dead-worker/release-leases", nil, adminHeaders()...)
 	if status != 200 || body["released"] != float64(0) {
 		t.Fatalf("second release = %d %v", status, body)
 	}

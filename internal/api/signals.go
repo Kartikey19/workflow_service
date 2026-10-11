@@ -13,7 +13,7 @@ import (
 	"github.com/kartikey/workflow_service/pkg/uid"
 )
 
-// signal is POST /v1/signals (04 §4.1). A duplicate signal for a fulfilled
+// signal is POST /be/v1/signals (04 §4.1). A duplicate signal for a fulfilled
 // wait returns 200 with the original result; no live waiter is 404 no_waiter;
 // a payload failing the wait's schema is 422.
 func (h *Handler) signal(w http.ResponseWriter, r *http.Request, p auth.Principal) {
@@ -31,7 +31,7 @@ func (h *Handler) signal(w http.ResponseWriter, r *http.Request, p auth.Principa
 	}
 	for _, prefix := range executor.ReservedWaitKeyPrefixes {
 		if strings.HasPrefix(req.Key, prefix) {
-			h.writeError(w, r, exception.BadRequest(fmt.Sprintf("keys starting with %q are reserved; complete tasks through /v1/tasks", prefix)))
+			h.writeError(w, r, exception.BadRequest(fmt.Sprintf("keys starting with %q are reserved; complete tasks through /be/v1/tasks", prefix)))
 			return
 		}
 	}

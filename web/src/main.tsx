@@ -39,7 +39,7 @@ const pages = [
   ["runs", "Runs", Activity],
   ["agents", "Agents", Bot],
   ["tasks", "Human tasks", ListTodo],
-  ["connections", "Connections", Plug],
+  ["connectors", "Connectors", Plug],
   ["vault", "Vault", LockKeyhole],
   ["webhooks", "Webhooks", Webhook],
   ["team", "Team", Users],
@@ -48,7 +48,7 @@ const pages = [
 ] as const;
 function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
   const token =
-    location.pathname === "/accept-invite"
+    location.pathname === "/ui/accept-invite"
       ? new URLSearchParams(location.search).get("token")
       : null;
   const [invite, setInvite] = useState<RecordData | null>(null),
@@ -71,7 +71,7 @@ function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
   return (
     <main className="auth-shell">
       <section className="auth-story">
-        <a className="brand" href="/">
+        <a className="brand" href="/ui/">
           <Workflow />
           <span>workflow</span>
         </a>
@@ -138,7 +138,7 @@ function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
                       password: data.get("password"),
                     },
               );
-              history.replaceState({}, "", "/workflows");
+              history.replaceState({}, "", "/ui/workflows");
               onSession(session);
             }}
           >
@@ -189,7 +189,12 @@ function App() {
   const [session, setSession] = useState<RecordData | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
-    [page, setPage] = useState(location.pathname.slice(1) || "workflows"),
+    [page, setPage] = useState(
+      (location.pathname.slice("/ui/".length) || "workflows").replace(
+        /^connections$/,
+        "connectors",
+      ),
+    ),
     [agentName, setAgentName] = useState(""),
     [runID, setRunID] = useState(""),
     [menu, setMenu] = useState(false);
@@ -207,7 +212,13 @@ function App() {
       .finally(() => {
         if (!abort.signal.aborted) setLoading(false);
       });
-    const pop = () => setPage(location.pathname.slice(1) || "workflows");
+    const pop = () =>
+      setPage(
+        (location.pathname.slice("/ui/".length) || "workflows").replace(
+          /^connections$/,
+          "connectors",
+        ),
+      );
     addEventListener("popstate", pop);
     return () => {
       abort.abort();
@@ -216,7 +227,7 @@ function App() {
   }, []);
   function navigate(page: string) {
     setPage(page);
-    history.pushState({}, "", `/${page}`);
+    history.pushState({}, "", `/ui/${page}`);
     setMenu(false);
   }
   if (loading)
@@ -248,7 +259,7 @@ function App() {
   const visible = pages
     .filter((p) => admin || p[0] !== "api-keys")
     .filter(
-      (p) => editable || !["connections", "vault", "webhooks"].includes(p[0]),
+      (p) => editable || !["connectors", "vault", "webhooks"].includes(p[0]),
     );
   const allowed = visible.some((p) => p[0] === currentPage[0]);
   return (
@@ -263,7 +274,7 @@ function App() {
       <aside className="sidebar">
         <a
           className="brand"
-          href="/workflows"
+          href="/ui/workflows"
           onClick={(e) => {
             e.preventDefault();
             navigate("workflows");
@@ -368,6 +379,7 @@ function App() {
                 key={agentName}
                 editable={editable}
                 agentName={agentName}
+                organizationID={session.organization.id}
                 onRun={(id) => {
                   setRunID(id);
                   navigate("runs");
@@ -383,7 +395,7 @@ function App() {
                   navigate("workflows");
                 }}
               />
-            ) : currentPage[0] === "connections" ? (
+            ) : currentPage[0] === "connectors" ? (
               <Connections admin={admin} />
             ) : currentPage[0] === "vault" ? (
               <Vault admin={admin} />

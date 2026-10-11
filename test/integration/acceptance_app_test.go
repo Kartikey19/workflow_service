@@ -165,7 +165,7 @@ func (s *stack) owner(t *testing.T, org string) *person {
 	if status, body := accept(t, owner, inviteToOrg(t, root, email, org), "owner-long-password", "Owner"); status != 201 {
 		t.Fatalf("accept = %d %v", status, body)
 	}
-	if status, body := root.call("PUT", "/v1/admin/organizations/"+owner.orgID()+"/plan", map[string]any{"plan": "pro"}); status != 200 {
+	if status, body := root.call("PUT", "/be/v1/admin/organizations/"+owner.orgID()+"/plan", map[string]any{"plan": "pro"}); status != 200 {
 		t.Fatalf("plan = %d %v", status, body)
 	}
 	return owner
@@ -184,7 +184,7 @@ func (p *person) waitRun(id string) map[string]any {
 	p.t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		_, run := p.call("GET", "/v1/runs/"+id, nil)
+		_, run := p.call("GET", "/be/v1/runs/"+id, nil)
 		switch run["status"] {
 		case "succeeded", "failed", "cancelled":
 			return run
@@ -225,14 +225,14 @@ func TestAppWiringEndToEnd(t *testing.T) {
 	}))
 	t.Cleanup(echo.Close)
 
-	owner.mustOK("PUT", "/v1/secrets/UPSTREAM_KEY", map[string]any{"value": "upstream-secret-9999"}, 200)
-	conn := owner.mustOK("POST", "/v1/providers", map[string]any{
+	owner.mustOK("PUT", "/be/v1/secrets/UPSTREAM_KEY", map[string]any{"value": "upstream-secret-9999"}, 200)
+	conn := owner.mustOK("POST", "/be/v1/providers", map[string]any{
 		"name": "fake-openai", "provider": "openai_compatible", "base_url": s.fakes.servers["openai_compatible"].URL, "api_key": "compat-key-123456",
 	}, 201)
 	if conn["key_hint"] != "…3456" || strings.Contains(toJSON(conn), "compat-key-123456") {
 		t.Fatalf("connection = %v", conn)
 	}
-	owner.mustOK("POST", "/v1/agents", map[string]any{
+	owner.mustOK("POST", "/be/v1/agents", map[string]any{
 		"name": "summarizer", "connection": "fake-openai", "model": "fake-model", "system_prompt": "Summarize the text.",
 		"input_schema":   map[string]any{"type": "object", "required": []string{"text"}, "properties": map[string]any{"text": map[string]any{"type": "string"}}},
 		"output_schema":  map[string]any{"type": "object", "required": []string{"summary"}, "properties": map[string]any{"summary": map[string]any{"type": "string"}}},
@@ -275,10 +275,10 @@ outputs:
 			t.Fatalf("publish = %d %v", status, body)
 		}
 	}
-	_, started := owner.call("POST", "/v1/runs", map[string]any{"workflow": "pipeline", "input": map[string]any{"n": 21}})
+	_, started := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "pipeline", "input": map[string]any{"n": 21}})
 	run := owner.waitRun(started["id"].(string))
 	if run["status"] != "succeeded" {
-		_, nodes := owner.call("GET", "/v1/runs/"+started["id"].(string)+"/nodes", nil)
+		_, nodes := owner.call("GET", "/be/v1/runs/"+started["id"].(string)+"/nodes", nil)
 		t.Fatalf("run = %v, nodes %v", run, nodes)
 	}
 	runID := mustParse(t, started["id"].(string))
@@ -312,7 +312,7 @@ outputs:
 		t.Fatalf("children = %v", kids)
 	}
 	// The management routes exist behind the same wiring.
-	for _, path := range []string{"/v1/secrets", "/v1/providers", "/v1/agents", "/v1/agent-tools", "/v1/usage", "/v1/members", "/v1/tasks", "/v1/executors"} {
+	for _, path := range []string{"/be/v1/secrets", "/be/v1/providers", "/be/v1/agents", "/be/v1/agent-tools", "/be/v1/usage", "/be/v1/members", "/be/v1/tasks", "/be/v1/executors"} {
 		if status, _ := owner.call("GET", path, nil); status != 200 {
 			t.Errorf("GET %s = %d", path, status)
 		}
@@ -342,15 +342,15 @@ func TestProvidersConnectionTestAndStructuredAgentForEachKind(t *testing.T) {
 		t.Run(tt.provider, func(t *testing.T) {
 			// Bad key: the test fails with a clear message and nothing is saved.
 			bad := map[string]any{"provider": tt.provider, "api_key": "bad-key", "base_url": tt.baseURL}
-			status, body := owner.call("POST", "/v1/providers/test", bad)
+			status, body := owner.call("POST", "/be/v1/providers/test", bad)
 			if status != 422 || body["code"] != "provider_test_failed" || !strings.Contains(body["detail"].(string), "rejected the API key") || strings.Contains(toJSON(body), "bad-key") {
 				t.Fatalf("a bad key = %d %v, want a 422 that does not echo the key", status, body)
 			}
 			bad["name"] = tt.provider + "-bad"
-			if status, _ := owner.call("POST", "/v1/providers", bad); status != 422 {
+			if status, _ := owner.call("POST", "/be/v1/providers", bad); status != 422 {
 				t.Fatalf("saving a connection with a bad key = %d, want 422", status)
 			}
-			_, list := owner.call("GET", "/v1/providers", nil)
+			_, list := owner.call("GET", "/be/v1/providers", nil)
 			for _, item := range list["items"].([]any) {
 				if item.(map[string]any)["name"] == tt.provider+"-bad" {
 					t.Fatal("a connection that failed its test was saved")
@@ -359,7 +359,7 @@ func TestProvidersConnectionTestAndStructuredAgentForEachKind(t *testing.T) {
 
 			// Good key: the test lists models; the connection is saved; keys are write-only.
 			good := map[string]any{"name": tt.provider + "-conn", "provider": tt.provider, "api_key": "good-key-123456", "base_url": tt.baseURL}
-			created := owner.mustOK("POST", "/v1/providers", good, 201)
+			created := owner.mustOK("POST", "/be/v1/providers", good, 201)
 			models := created["models"].([]any)
 			if len(models) != 1 || models[0] != tt.wantModel {
 				t.Fatalf("models = %v", models)
@@ -367,11 +367,11 @@ func TestProvidersConnectionTestAndStructuredAgentForEachKind(t *testing.T) {
 			if strings.Contains(toJSON(created), "good-key-123456") || created["key_hint"] != "…3456" {
 				t.Fatalf("created = %v", created)
 			}
-			owner.mustOK("POST", "/v1/providers/"+created["id"].(string)+"/test", nil, 200)
+			owner.mustOK("POST", "/be/v1/providers/"+created["id"].(string)+"/test", nil, 200)
 
 			// A structured-output stored agent runs in a workflow on that connection.
 			agentName := tt.provider + "-agent"
-			owner.mustOK("POST", "/v1/agents", map[string]any{
+			owner.mustOK("POST", "/be/v1/agents", map[string]any{
 				"name": agentName, "connection": tt.provider + "-conn", "model": tt.model, "system_prompt": "Summarize.",
 				"output_schema":  map[string]any{"type": "object", "required": []string{"summary"}, "properties": map[string]any{"summary": map[string]any{"type": "string"}}},
 				"max_iterations": 1,
@@ -380,7 +380,7 @@ func TestProvidersConnectionTestAndStructuredAgentForEachKind(t *testing.T) {
 			if status, body := owner.publish("apiVersion: workflow/v1\nname: " + wf + "\nnodes:\n  - id: a\n    type: agent\n    config: {agent: " + agentName + ", input: {text: hello}}\noutputs: {summary: '${nodes.a.output.summary}'}\n"); status != 201 {
 				t.Fatalf("publish = %d %v", status, body)
 			}
-			_, started := owner.call("POST", "/v1/runs", map[string]any{"workflow": wf})
+			_, started := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": wf})
 			run := owner.waitRun(started["id"].(string))
 			if run["status"] != "succeeded" {
 				t.Fatalf("run = %v", run)
@@ -393,7 +393,7 @@ func TestProvidersConnectionTestAndStructuredAgentForEachKind(t *testing.T) {
 			}
 
 			// The agent's own test endpoint works too.
-			result := owner.mustOK("POST", "/v1/agents/"+agentName+"/test", map[string]any{"input": map[string]any{"text": "hi"}}, 200)
+			result := owner.mustOK("POST", "/be/v1/agents/"+agentName+"/test", map[string]any{"input": map[string]any{"text": "hi"}}, 200)
 			if result["ok"] != true || result["output"].(map[string]any)["summary"] != "short summary" {
 				t.Fatalf("agent test = %v", result)
 			}

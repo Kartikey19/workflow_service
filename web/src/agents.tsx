@@ -1,3 +1,4 @@
+import { connectorActions, connectorReference } from "./connectors";
 import { useState } from "react";
 import { api, enc, pretty, type RecordData } from "./api";
 import {
@@ -32,7 +33,8 @@ export function Agents({
   const list = useResource("/agents"),
     tools = useResource("/agent-tools"),
     providers = useResource(editable ? "/providers" : null),
-    connections = useResource(editable ? "/connections" : null);
+    connections = useResource(editable ? "/connections" : null),
+    kinds = useResource(editable ? "/integrations" : null);
   const [edit, setEdit] = useState<RecordData | null>(null),
     [test, setTest] = useState<RecordData | null>(null),
     [result, setResult] = useState<RecordData | null>(null),
@@ -244,43 +246,120 @@ export function Agents({
             </details>
             <fieldset>
               <legend>Tools</legend>
-              {tools.data?.items.map((tool: RecordData) => (
-                <label className="check" key={tool.name}>
-                  <input
-                    type="checkbox"
-                    checked={chosenTools.includes(tool.name)}
-                    onChange={(e) =>
-                      setTools((old) =>
-                        e.target.checked
-                          ? [...old, tool.name]
-                          : old.filter((t) => t !== tool.name),
-                      )
-                    }
-                  />
-                  <span>
-                    <strong>{tool.name}</strong>
-                    <small>{tool.description}</small>
-                  </span>
-                </label>
-              ))}
-              <Field
-                label="Database connection"
-                hint="Read-only tools use this database connection."
-              >
-                <select
-                  name="database_connection"
-                  defaultValue={edit.database_connection || ""}
+              <p className="muted">
+                Choose exactly which saved connector actions this agent can use.
+                For analytics, select only read actions.
+              </p>
+              <ResourceState
+                error={connections.error || kinds.error}
+                loading={!connections.data || !kinds.data}
+              />
+              {connections.data?.items
+                .filter((c: RecordData) => c.kind !== "mcp")
+                .map((c: RecordData) => (
+                  <fieldset key={c.name}>
+                    <legend>
+                      {c.name} · {c.kind}
+                    </legend>
+                    {connectorActions(kinds.data?.items, c.kind).map(
+                      (action) => {
+                        const ref = connectorReference(c.name, action.name);
+                        return (
+                          <label className="check" key={ref}>
+                            <input
+                              type="checkbox"
+                              checked={chosenTools.includes(ref)}
+                              onChange={(e) =>
+                                setTools((old) =>
+                                  e.target.checked
+                                    ? [...old, ref]
+                                    : old.filter((t) => t !== ref),
+                                )
+                              }
+                            />
+                            <span>
+                              <strong>{action.title}</strong>
+                              <small>
+                                {action.read_only
+                                  ? "Read only"
+                                  : "Writes to this service"}
+                              </small>
+                            </span>
+                          </label>
+                        );
+                      },
+                    )}
+                  </fieldset>
+                ))}
+              {tools.data?.items
+                .filter(
+                  (tool: RecordData) =>
+                    !["list_tables", "describe_table", "run_query"].includes(
+                      tool.name,
+                    ),
+                )
+                .map((tool: RecordData) => (
+                  <label className="check" key={tool.name}>
+                    <input
+                      type="checkbox"
+                      checked={chosenTools.includes(tool.name)}
+                      onChange={(e) =>
+                        setTools((old) =>
+                          e.target.checked
+                            ? [...old, tool.name]
+                            : old.filter((t) => t !== tool.name),
+                        )
+                      }
+                    />
+                    <span>
+                      <strong>{tool.name}</strong>
+                      <small>{tool.description}</small>
+                    </span>
+                  </label>
+                ))}
+              <details>
+                <summary>Legacy database tool binding</summary>
+                {tools.data?.items
+                  .filter((tool: RecordData) =>
+                    ["list_tables", "describe_table", "run_query"].includes(
+                      tool.name,
+                    ),
+                  )
+                  .map((tool: RecordData) => (
+                    <label className="check" key={tool.name}>
+                      <input
+                        type="checkbox"
+                        checked={chosenTools.includes(tool.name)}
+                        onChange={(e) =>
+                          setTools((old) =>
+                            e.target.checked
+                              ? [...old, tool.name]
+                              : old.filter((t) => t !== tool.name),
+                          )
+                        }
+                      />
+                      {tool.name}
+                    </label>
+                  ))}
+                <Field
+                  label="Database connection"
+                  hint="Read-only tools use this database connection."
                 >
-                  <option value="">None</option>
-                  {connections.data?.items
-                    .filter((c: RecordData) =>
-                      ["postgres", "mysql"].includes(c.kind),
-                    )
-                    .map((c: RecordData) => (
-                      <option key={c.name}>{c.name}</option>
-                    ))}
-                </select>
-              </Field>
+                  <select
+                    name="database_connection"
+                    defaultValue={edit.database_connection || ""}
+                  >
+                    <option value="">None</option>
+                    {connections.data?.items
+                      .filter((c: RecordData) =>
+                        ["postgres", "mysql"].includes(c.kind),
+                      )
+                      .map((c: RecordData) => (
+                        <option key={c.name}>{c.name}</option>
+                      ))}
+                  </select>
+                </Field>
+              </details>
               {connections.data?.items
                 .filter((c: RecordData) => c.kind === "mcp")
                 .map((c: RecordData) => {

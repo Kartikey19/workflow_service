@@ -182,7 +182,7 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 				problems = append(problems, errors.New("tools must be a list of literal tool names"))
 				break
 			}
-			if _, registered := e.tools.Get(name); !registered && !IsMCPReference(name) {
+			if _, registered := e.tools.Get(name); !registered && !IsDynamicReference(name) {
 				problems = append(problems, fmt.Errorf("unknown tool %q (available: %s)", name, toolList(e.tools)))
 			}
 		}
@@ -253,7 +253,7 @@ func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, ma
 		return err
 	}
 	for _, name := range toolNames {
-		if _, ok := tools.Get(name); !ok && !IsMCPReference(name) {
+		if _, ok := tools.Get(name); !ok && !IsDynamicReference(name) {
 			return fmt.Errorf("unknown tool %q", name)
 		}
 	}

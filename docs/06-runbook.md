@@ -18,7 +18,7 @@ go run ./cmd/api
 go run ./cmd/worker
 ```
 
-Open http://localhost:8080 and sign in. The first API process creates the
+Open http://localhost:8080/ui/ and sign in. The first API process creates the
 bootstrap account only on an empty user database. API replicas serialize this
 operation. Remove the bootstrap password from the environment after initial
 setup. Node is needed for frontend changes; the committed embedded bundle lets
@@ -180,8 +180,8 @@ has been validated with its container binary; cloud delivery is unverified.
 
 Generate a new key and increase VAULT_KEY_VERSION. Add the previous
 `version:base64` pair to VAULT_OLD_KEYS on **every API and worker replica** before
-starting rotation. Deploy the full keyring, invoke `POST /v1/admin/vault/rotate`
-using platform-admin authentication, and inspect `GET /v1/admin/vault` until the
+starting rotation. Deploy the full keyring, invoke `POST /be/v1/admin/vault/rotate`
+using platform-admin authentication, and inspect `GET /be/v1/admin/vault` until the
 old-version counts reach zero. Rotation reseals named secrets, LLM provider
 keys, service connection credentials, and webhook signing secrets. Fenced
 updates prevent a concurrent writer from being overwritten.
@@ -210,7 +210,7 @@ historical keys under an agreed retention policy.
 ```sh
 make ui-install ui-check
 npx --prefix web playwright install chromium
-make check                 # uses DATABASE_URL and MYSQL_URL for real tests
+make check                 # uses DATABASE_URL, MYSQL_URL and optional MONGO_URL for real tests
 make ui-browser            # actual UI/API/worker/PostgreSQL stack
 # Disposable containers/volumes and locally issued HTTPS certificate only:
 docker build -f deploy/Dockerfile -t workflow-service:acceptance .

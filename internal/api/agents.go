@@ -11,7 +11,7 @@ import (
 	"github.com/kartikey/workflow_service/pkg/uid"
 )
 
-// agentRequest is the body of POST /v1/agents and PUT /v1/agents/{name}.
+// agentRequest is the body of POST /be/v1/agents and PUT /be/v1/agents/{name}.
 type agentRequest struct {
 	Name               string          `json:"name"`
 	Description        string          `json:"description"`
@@ -99,7 +99,7 @@ func (h *Handler) getAgent(w http.ResponseWriter, r *http.Request, p auth.Princi
 	httpx.WriteJSON(w, http.StatusOK, agentView(found))
 }
 
-// updateAgent is PUT /v1/agents/{name}: replaces the definition and bumps its
+// updateAgent is PUT /be/v1/agents/{name}: replaces the definition and bumps its
 // revision. The name in the path is the identity; a name in the body is ignored.
 func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req agentRequest
@@ -123,7 +123,7 @@ func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request, p auth.Pri
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// testAgent is POST /v1/agents/{name}/test: runs the agent once with the given
+// testAgent is POST /be/v1/agents/{name}/test: runs the agent once with the given
 // input, as a workflow node would. It spends real tokens and reports the cost,
 // but creates no run. A failing agent is a 200 with ok:false so the editor can
 // show why.

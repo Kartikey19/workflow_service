@@ -638,7 +638,7 @@ if isUniqueViolation(err) {
 }
 ```
 
-**Delivery** (`POST /v1/signals`), one transaction (`01 §6.7`), then
+**Delivery** (`POST /be/v1/signals`), one transaction (`01 §6.7`), then
 `resolver.Advance(..., "succeeded")` inside the same tx.
 
 **The early-signal problem.** A courier can plausibly deliver
@@ -817,7 +817,7 @@ just produces three stack traces.
 
 ## 10. Cancellation
 
-`POST /v1/runs/{id}/cancel`, one transaction:
+`POST /be/v1/runs/{id}/cancel`, one transaction:
 
 ```sql
 update runs set status='cancelled', ended_at=now()

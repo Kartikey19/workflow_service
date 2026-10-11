@@ -258,7 +258,7 @@ func TestSeparateAPIAndWorkerProcessesShareLoad(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	c := apiClient{t: t, base: base, tenant: h.tenant}
-	if status, body := c.yaml("/v1/workflows", `
+	if status, body := c.yaml("/be/v1/workflows", `
 apiVersion: workflow/v1
 name: fan
 nodes:
@@ -273,7 +273,7 @@ outputs: {sum: '${nodes.d.output}'}
 	const runs = 40
 	runIDs := make([]pgtype.UUID, 0, runs)
 	for range runs {
-		status, body := c.json(http.MethodPost, "/v1/runs", map[string]any{"workflow": "fan"})
+		status, body := c.json(http.MethodPost, "/be/v1/runs", map[string]any{"workflow": "fan"})
 		if status != http.StatusCreated {
 			t.Fatalf("create run = %d %v", status, body)
 		}

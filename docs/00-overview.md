@@ -105,10 +105,10 @@ and finance will require it; build it in v1 when it is free.
                  ┌──────────────────────────────────────────┐
    YAML ────────▶│  API server  (cmd/api)                   │
    HTTP clients  │                                          │
-   signals ─────▶│  ├─ POST /v1/workflows   → compile+store  │
-                 │  ├─ POST /v1/runs        → create run     │
-                 │  ├─ POST /v1/signals     → fulfil wait    │
-                 │  └─ GET  /v1/runs/:id    → read model     │
+   signals ─────▶│  ├─ POST /be/v1/workflows   → compile+store  │
+                 │  ├─ POST /be/v1/runs        → create run     │
+                 │  ├─ POST /be/v1/signals     → fulfil wait    │
+                 │  └─ GET  /be/v1/runs/:id    → read model     │
                  └────────────────────┬─────────────────────┘
                                       │
                           ┌───────────▼────────────┐

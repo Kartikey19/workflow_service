@@ -6,7 +6,7 @@ test("invite to successful agent workflow, administration, and responsive naviga
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(
-    `/accept-invite?token=${encodeURIComponent(process.env.UI_TEST_INVITE!)}`,
+    `/ui/accept-invite?token=${encodeURIComponent(process.env.UI_TEST_INVITE!)}`,
   );
   await expect(page.getByText("browser@example.com")).toBeVisible();
   await page.getByLabel("Your name").fill("Browser Tester");
@@ -19,10 +19,20 @@ test("invite to successful agent workflow, administration, and responsive naviga
   await expect(
     page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui\/workflows$/);
   await page
     .getByRole("navigation")
     .getByRole("button", { name: "Agents", exact: true })
     .click();
+  await expect(page).toHaveURL(/\/ui\/agents$/);
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "Workflows", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "New agent", exact: true }).click();
   await page.getByLabel("Agent name", { exact: true }).fill("browser-agent");
   await page
@@ -156,7 +166,7 @@ test("invite to successful agent workflow, administration, and responsive naviga
 test("typed agent inputs, provider test-before-save, live YAML validation and version pinning", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/ui/");
   await page.getByLabel("Email", { exact: true }).fill("browserco@example.com");
   await page
     .getByLabel("Password", { exact: true })
@@ -164,10 +174,10 @@ test("typed agent inputs, provider test-before-save, live YAML validation and ve
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page
     .getByRole("navigation")
-    .getByRole("button", { name: "Connections", exact: true })
+    .getByRole("button", { name: "Connectors", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Add connection", exact: true })
+    .getByRole("button", { name: "Add connector", exact: true })
     .click();
   await page.getByLabel("Integration", { exact: true }).selectOption("llm");
   await page
@@ -202,30 +212,24 @@ test("typed agent inputs, provider test-before-save, live YAML validation and ve
     .getByLabel("Instructions", { exact: true })
     .fill("Summarize text as JSON with a summary field.");
   await page.getByText("Schemas and execution limits", { exact: true }).click();
-  await page
-    .getByLabel("Input schema (JSON)", { exact: true })
-    .fill(
-      JSON.stringify({
-        type: "object",
-        required: ["text"],
-        properties: { text: { type: "string" } },
-      }),
-    );
-  await page
-    .getByLabel("Output schema (JSON)", { exact: true })
-    .fill(
-      JSON.stringify({
-        type: "object",
-        required: ["summary"],
-        properties: { summary: { type: "string" } },
-      }),
-    );
+  await page.getByLabel("Input schema (JSON)", { exact: true }).fill(
+    JSON.stringify({
+      type: "object",
+      required: ["text"],
+      properties: { text: { type: "string" } },
+    }),
+  );
+  await page.getByLabel("Output schema (JSON)", { exact: true }).fill(
+    JSON.stringify({
+      type: "object",
+      required: ["summary"],
+      properties: { summary: { type: "string" } },
+    }),
+  );
   await page.getByRole("button", { name: "Save agent", exact: true }).click();
-  const card = page
-    .locator("article")
-    .filter({
-      has: page.getByRole("heading", { name: "typed-agent", exact: true }),
-    });
+  const card = page.locator("article").filter({
+    has: page.getByRole("heading", { name: "typed-agent", exact: true }),
+  });
   await card.getByRole("button", { name: "Test agent", exact: true }).click();
   await page
     .getByLabel("text", { exact: true })
@@ -297,4 +301,127 @@ test("typed agent inputs, provider test-before-save, live YAML validation and ve
   await expect(page.locator(".run-detail .status").first()).toHaveText(
     "succeeded",
   );
+});
+
+test("shared connectors, explicit agent permissions, and visual workflow builder", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/ui/");
+  await page.getByLabel("Email", { exact: true }).fill("browserco@example.com");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("owner-long-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Connectors", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/ui\/connectors$/);
+  for (const name of ["browser-database", "browser-slack", "browser-notion"])
+    await expect(
+      page.getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+  await expect(
+    page.getByText("Query database (read only) · Read only", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Add connector", exact: true })
+    .click();
+  await page.getByLabel("Integration", { exact: true }).selectOption("mongo");
+  await expect(
+    page.getByLabel("Connection URI", { exact: true }),
+  ).toHaveAttribute("type", "password");
+  await expect(page.getByLabel("Encryption", { exact: true })).toHaveValue(
+    "verify-full",
+  );
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Agents", exact: true })
+    .click();
+  await page.getByRole("button", { name: "New agent", exact: true }).click();
+  await page.getByLabel("Agent name", { exact: true }).fill("connector-reader");
+  await page
+    .getByLabel("Provider connection", { exact: true })
+    .selectOption("browser-provider");
+  await page.getByLabel("Model", { exact: true }).fill("fake-model");
+  await page
+    .getByLabel("Instructions", { exact: true })
+    .fill("Analyze the saved database using read actions.");
+  await page
+    .getByLabel("Query database (read only)Read only", { exact: true })
+    .check();
+  await expect(
+    page.getByLabel("Insert database rowsWrites to this service", {
+      exact: true,
+    }),
+  ).not.toBeChecked();
+  await page.getByRole("button", { name: "Save agent", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "connector-reader", exact: true }),
+  ).toBeVisible();
+  const saved = await page.request.get("/be/v1/agents/connector-reader");
+  expect((await saved.json()).tools).toEqual([
+    "connector:browser-database:db.query",
+  ]);
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Workflows", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "New visual workflow", exact: true })
+    .click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("visual-connectors");
+  await page
+    .getByLabel("Saved connector", { exact: true })
+    .selectOption("browser-database");
+  await page
+    .getByLabel("Connector action", { exact: true })
+    .selectOption("db.query");
+  await page.getByRole("button", { name: "Add step", exact: true }).click();
+  await page.getByLabel("sql", { exact: true }).fill("select 7 as n");
+  await page
+    .getByRole("button", { name: "Apply step settings", exact: true })
+    .click();
+  await page.getByLabel("Step type", { exact: true }).selectOption("agent");
+  await page
+    .getByLabel("Saved agent", { exact: true })
+    .selectOption("connector-reader");
+  await page.getByRole("button", { name: "Add step", exact: true }).click();
+  await page
+    .getByLabel("After step", { exact: true })
+    .selectOption("connector_call_2");
+  await page
+    .getByLabel("Agent prompt", { exact: true })
+    .fill("Summarize this query result: ${nodes.connector_call_2.output}");
+  await page
+    .getByRole("button", { name: "Apply step settings", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Valid workflow" }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "/tmp/workflow-connector-builder.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "Publish version", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Run visual-connectors", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "YAML", exact: true }).click();
+  await expect(page.locator(".cm-content")).toContainText(
+    "connection: browser-database",
+  );
+  await expect(page.locator(".cm-content")).toContainText("connector_call_2");
+  await page.getByRole("button", { name: "Start run", exact: true }).click();
+  await expect(page.locator(".run-detail .status").first()).toHaveText(
+    "succeeded",
+  );
+  await expect(page.locator(".run-detail")).toContainText("connector_call_2");
+  expect(errors).toEqual([]);
 });

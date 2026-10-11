@@ -26,7 +26,7 @@ export async function api(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<RecordData> {
-  const response = await fetch(`/v1${path}`, {
+  const response = await fetch(`/be/v1${path}`, {
     method,
     credentials: "same-origin",
     signal,

@@ -49,7 +49,7 @@ func deterministicKey(version int) []byte {
 }
 
 // useVault turns the vault on for this harness: workers decrypt from it and the
-// identity API exposes /v1/secrets.
+// identity API exposes /be/v1/secrets.
 func (h *harness) useVault(ring *vault.Keyring) *vaultsvc.Service {
 	h.t.Helper()
 	svc := vaultsvc.NewService(h.pool, ring, nil)
@@ -253,17 +253,17 @@ func TestVaultAPI(t *testing.T) {
 	root.mustLogin("root@example.com", adminPassword)
 	owner := newPerson(t, base)
 	accept(t, owner, inviteToOrg(t, root, "owner@example.com", "Vault Co"), "owner-long-password", "Owner")
-	_, inv := owner.call("POST", "/v1/invites", map[string]any{"email": "ed@example.com", "role": "editor"})
+	_, inv := owner.call("POST", "/be/v1/invites", map[string]any{"email": "ed@example.com", "role": "editor"})
 	editor := newPerson(t, base)
 	accept(t, editor, inv["token"].(string), "editor-long-password", "Ed")
 
-	if status, body := owner.call("PUT", "/v1/secrets/API_KEY", map[string]any{"value": apiKeyValue}); status != 200 || body["reference"] != "${secrets.API_KEY}" {
+	if status, body := owner.call("PUT", "/be/v1/secrets/API_KEY", map[string]any{"value": apiKeyValue}); status != 200 || body["reference"] != "${secrets.API_KEY}" {
 		t.Fatalf("put = %d %v", status, body)
 	}
-	if status, _ := editor.call("PUT", "/v1/secrets/OTHER_KEY", map[string]any{"value": apiKeyValue}); status != 403 {
+	if status, _ := editor.call("PUT", "/be/v1/secrets/OTHER_KEY", map[string]any{"value": apiKeyValue}); status != 403 {
 		t.Fatalf("an editor writing a secret = %d, want 403", status)
 	}
-	if status, _ := editor.call("DELETE", "/v1/secrets/API_KEY", nil); status != 403 {
+	if status, _ := editor.call("DELETE", "/be/v1/secrets/API_KEY", nil); status != 403 {
 		t.Fatalf("an editor deleting a secret = %d, want 403", status)
 	}
 	for name, body := range map[string]map[string]any{
@@ -271,11 +271,11 @@ func TestVaultAPI(t *testing.T) {
 		"BAD-NAME":  {"value": apiKeyValue},
 		"SHORT_VAL": {"value": "tiny"},
 	} {
-		if status, _ := owner.call("PUT", "/v1/secrets/"+name, body); status != 400 {
+		if status, _ := owner.call("PUT", "/be/v1/secrets/"+name, body); status != 400 {
 			t.Fatalf("PUT %s = %d, want 400", name, status)
 		}
 	}
-	status, list := editor.call("GET", "/v1/secrets", nil)
+	status, list := editor.call("GET", "/be/v1/secrets", nil)
 	if status != 200 || len(list["items"].([]any)) != 1 || list["items"].([]any)[0].(map[string]any)["name"] != "API_KEY" {
 		t.Fatalf("list = %d %v", status, list)
 	}
@@ -285,23 +285,23 @@ func TestVaultAPI(t *testing.T) {
 	// No other organization sees it.
 	stranger := newPerson(t, base)
 	accept(t, stranger, inviteToOrg(t, root, "x@example.com", "Elsewhere"), "stranger-long-password", "X")
-	if _, other := stranger.call("GET", "/v1/secrets", nil); len(other["items"].([]any)) != 0 {
+	if _, other := stranger.call("GET", "/be/v1/secrets", nil); len(other["items"].([]any)) != 0 {
 		t.Fatalf("another organization lists %v", other)
 	}
-	if status, _ := stranger.call("DELETE", "/v1/secrets/API_KEY", nil); status != 404 {
+	if status, _ := stranger.call("DELETE", "/be/v1/secrets/API_KEY", nil); status != 404 {
 		t.Fatalf("another organization deleting the secret = %d, want 404", status)
 	}
-	if status, _ := owner.call("DELETE", "/v1/secrets/API_KEY", nil); status != 204 {
+	if status, _ := owner.call("DELETE", "/be/v1/secrets/API_KEY", nil); status != 204 {
 		t.Fatalf("delete = %d", status)
 	}
-	if status, _ := owner.call("DELETE", "/v1/secrets/API_KEY", nil); status != 404 {
+	if status, _ := owner.call("DELETE", "/be/v1/secrets/API_KEY", nil); status != 404 {
 		t.Fatalf("deleting twice = %d, want 404", status)
 	}
 	// Rotation and status are platform-admin only.
-	if status, _ := owner.call("POST", "/v1/admin/vault/rotate", nil); status != 403 {
+	if status, _ := owner.call("POST", "/be/v1/admin/vault/rotate", nil); status != 403 {
 		t.Fatalf("an owner rotating the vault = %d, want 403", status)
 	}
-	if status, body := root.call("GET", "/v1/admin/vault", nil); status != 200 || body["current_key_version"] != float64(1) {
+	if status, body := root.call("GET", "/be/v1/admin/vault", nil); status != 200 || body["current_key_version"] != float64(1) {
 		t.Fatalf("status = %d %v", status, body)
 	}
 }
@@ -316,7 +316,7 @@ func TestVaultNotConfiguredAnswers501(t *testing.T) {
 	}
 	root := newPerson(t, base)
 	root.mustLogin("root@example.com", adminPassword)
-	for method, path := range map[string]string{"GET": "/v1/secrets", "PUT": "/v1/secrets/API_KEY"} {
+	for method, path := range map[string]string{"GET": "/be/v1/secrets", "PUT": "/be/v1/secrets/API_KEY"} {
 		status, body := root.call(method, path, map[string]any{"value": apiKeyValue})
 		if status != 501 || body["code"] != "vault_not_configured" {
 			t.Fatalf("%s %s = %d %v, want 501 vault_not_configured", method, path, status, body)
@@ -450,7 +450,7 @@ func TestVaultRotationCoversProviderKeysAndConnections(t *testing.T) {
 	}
 	oldProviders := providers.NewService(h.pool, oldRing, policy, nil)
 	if _, _, err := oldProviders.Create(ctx, h.tenant, "t", providers.CreateInput{
-		Name: "compat", Provider: providers.OpenAICompatible, BaseURL: "http://127.0.0.1:1/v1", APIKey: "provider-key-123456", SkipTest: true,
+		Name: "compat", Provider: providers.OpenAICompatible, BaseURL: "http://127.0.0.1:1/be/v1", APIKey: "provider-key-123456", SkipTest: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

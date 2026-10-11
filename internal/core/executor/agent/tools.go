@@ -12,9 +12,10 @@ import (
 // Call identifies the node execution on whose behalf a tool runs, so a tool
 // can scope its work to the tenant and attribute it to a run.
 type Call struct {
-	TenantID uuid.UUID
-	RunID    uuid.UUID
-	NodeID   string
+	TenantID   uuid.UUID
+	RunID      uuid.UUID
+	NodeID     string
+	ToolCallID string
 	// AllowedHosts is the agent's allow-list for tools that reach the network.
 	AllowedHosts       []string
 	DatabaseConnection string

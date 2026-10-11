@@ -5,6 +5,8 @@ human tasks, sub-workflows, fan-out/fan-in, webhooks, and a React web workspace.
 Go 1.27; PostgreSQL 16; Node 24 for frontend builds. The API and workers scale
 independently. No CLI or broker is required.
 
+The frontend lives under `/ui/` and the HTTP API under `/be/v1`.
+
 Start with [the documentation](docs/README.md), [workflow specification](docs/02-workflow-spec.md),
 and [HTTP API](docs/04-api.md). Local setup and deployment packaging are in
 [the operations runbook](docs/06-runbook.md).
@@ -18,13 +20,20 @@ go run ./cmd/api
 go run ./cmd/worker
 ```
 
-Sign in at http://localhost:8080 using the bootstrap account. Connect a model
+Sign in at http://localhost:8080/ui/ using the bootstrap account. Connect a model
 provider, create an agent, and use its form to publish/run a workflow without
-editing YAML. Advanced workflows have a YAML editor, live compiler diagnostics,
-and a dependency graph. The assistant creates reviewable drafts using tenant
+editing YAML. Build on the visual canvas with saved connector and agent steps, editable
+dependencies and action forms. Advanced workflows have a YAML editor with live
+compiler diagnostics. The assistant creates reviewable drafts using tenant
 resources; it never publishes automatically.
 
-Verification uses real PostgreSQL/MySQL and scripted external services:
+The Connectors page configures PostgreSQL, MySQL, MongoDB, Gmail, Drive, Docs,
+Sheets, Calendar, Slack, Notion, email and MCP accounts once. Workflows and agents
+reuse their named connections and the same action implementations. Agents choose
+explicit read/write permissions; analytics agents can use only read actions.
+
+Verification uses real PostgreSQL/MySQL/MongoDB and scripted external services
+(set `MONGO_URL` for MongoDB acceptance; CI supplies it):
 
 ```sh
 make check

@@ -3,7 +3,8 @@ package connections
 import (
 	"context"
 	"fmt"
-	"strings"
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor/database"
 
 	"github.com/kartikey/workflow_service/pkg/dbx"
 )
@@ -76,20 +77,7 @@ func databaseKind(name, title string, defaultPort int) kind {
 // DatabaseSettings turns a stored database connection into a dbx configuration;
 // the connection test and the database nodes share it.
 func DatabaseSettings(kindName string, config map[string]any, secret map[string]string) dbx.Config {
-	cfg := dbx.Config{Kind: kindName, Password: secret["password"], TLS: dbx.TLSVerifyFull}
-	cfg.Host, _ = config["host"].(string)
-	cfg.Database, _ = config["database"].(string)
-	cfg.Username, _ = config["username"].(string)
-	if mode, ok := config["tls"].(string); ok && mode != "" {
-		cfg.TLS = mode
-	}
-	switch port := config["port"].(type) {
-	case int:
-		cfg.Port = port
-	case float64:
-		cfg.Port = int(port)
-	}
-	return cfg
+	return database.Config(executor.Connection{Kind: kindName, Config: config, Secret: secret})
 }
 
 // databaseFailure phrases a driver error for the person testing a connection.
@@ -97,9 +85,5 @@ func databaseFailure(err error) error {
 	if err == nil {
 		return nil
 	}
-	text := err.Error()
-	if len(text) > 300 {
-		text = text[:300]
-	}
-	return fmt.Errorf("%s", strings.TrimSpace(text))
+	return fmt.Errorf("database connection test: %w", err)
 }

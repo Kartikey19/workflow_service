@@ -64,6 +64,15 @@ func scriptedToolLLM(t *testing.T, steps []toolStep) (*httptest.Server, func() [
 		mu.Unlock()
 		if len(results) < len(steps) {
 			step := steps[len(results)]
+			if strings.HasPrefix(step.name, "$connector:") {
+				ref := strings.TrimPrefix(step.name, "$connector:")
+				for _, tool := range request.Tools {
+					if strings.Contains(tool.Function.Description, ref+".") {
+						step.name = tool.Function.Name
+						break
+					}
+				}
+			}
 			if strings.HasPrefix(step.name, "$remote") {
 				wanted := strings.TrimPrefix(step.name, "$remote:")
 				for _, tool := range request.Tools {
@@ -91,20 +100,20 @@ func TestExplorationAgent(t *testing.T) {
 		injected, _ := json.Marshal(map[string]any{"sql": "select count(*) as n from " + tb.events + " where name = " + placeholder(b, 1), "params": []any{"first' OR 1=1 --"}})
 		write, _ := json.Marshal(map[string]any{"sql": "delete from " + tb.events})
 		model, results := scriptedToolLLM(t, []toolStep{{"list_tables", "{}"}, {"describe_table", string(describe)}, {"run_query", string(query)}, {"run_query", string(write)}, {"run_query", string(capped)}, {"run_query", string(injected)}})
-		owner.mustOK("POST", "/v1/providers", map[string]any{"name": "explorer-provider", "provider": "openai_compatible", "base_url": model.URL, "api_key": "llm-test-key"}, 201)
+		owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "explorer-provider", "provider": "openai_compatible", "base_url": model.URL, "api_key": "llm-test-key"}, 201)
 		body := agentBody("explorer", "explorer-provider")
 		body["database_connection"] = conn
 		body["tools"] = []string{"list_tables", "describe_table", "run_query"}
 		body["max_iterations"] = 8
-		created := owner.mustOK("POST", "/v1/agents", body, 201)
+		created := owner.mustOK("POST", "/be/v1/agents", body, 201)
 		if created["database_connection"] != conn {
 			t.Fatalf("missing binding: %v", created)
 		}
-		fetched := owner.mustOK("GET", "/v1/agents/explorer", nil, 200)
+		fetched := owner.mustOK("GET", "/be/v1/agents/explorer", nil, 200)
 		if fetched["database_connection"] != conn {
 			t.Fatalf("lost binding: %v", fetched)
 		}
-		tested := owner.mustOK("POST", "/v1/agents/explorer/test", map[string]any{"input": map[string]any{"question": "How many events are there?"}}, 200)
+		tested := owner.mustOK("POST", "/be/v1/agents/explorer/test", map[string]any{"input": map[string]any{"question": "How many events are there?"}}, 200)
 		if tested["ok"] != true {
 			t.Fatalf("exploration: %v", tested)
 		}
@@ -113,24 +122,24 @@ func TestExplorationAgent(t *testing.T) {
 			t.Fatalf("tool results = %v", got)
 		}
 		// An attempted write did not remove the row.
-		owner.mustOK("POST", "/v1/agents/explorer/test", map[string]any{"input": map[string]any{}}, 200)
+		owner.mustOK("POST", "/be/v1/agents/explorer/test", map[string]any{"input": map[string]any{}}, 200)
 		if !strings.Contains(results()[2], `"n":1`) {
 			t.Fatal("agent changed the database")
 		}
 		bad := agentBody("unbound", "explorer-provider")
 		bad["tools"] = []string{"run_query"}
-		if status, _ := owner.call("POST", "/v1/agents", bad); status != 400 {
+		if status, _ := owner.call("POST", "/be/v1/agents", bad); status != 400 {
 			t.Fatalf("unbound tool status %d", status)
 		}
 		bad["database_connection"] = "missing"
-		if status, _ := owner.call("POST", "/v1/agents", bad); status != 400 {
+		if status, _ := owner.call("POST", "/be/v1/agents", bad); status != 400 {
 			t.Fatalf("unknown DB status %d", status)
 		}
 		other := s.owner(t, "Other exploration org")
 		otherBody := agentBody("steal", "")
 		otherBody["database_connection"] = conn
 		otherBody["tools"] = []string{"run_query"}
-		if status, _ := other.call("POST", "/v1/agents", otherBody); status != 400 {
+		if status, _ := other.call("POST", "/be/v1/agents", otherBody); status != 400 {
 			t.Fatalf("foreign database status %d", status)
 		}
 		// Workflow execution uses the same saved definition and binding.
@@ -171,7 +180,7 @@ func TestMCPConnectionsNodesAndAgents(t *testing.T) {
 			}))
 			defer remote.Close()
 			body := map[string]any{"name": "knowledge", "kind": "mcp", "config": map[string]any{"url": remote.URL, "transport": transport}, "secret": map[string]any{"token": "mcp-test-secret"}}
-			created := owner.mustOK("POST", "/v1/connections", body, 201)
+			created := owner.mustOK("POST", "/be/v1/connections", body, 201)
 			if calls.Load() != 0 {
 				t.Fatal("test-before-save executed a tool")
 			}
@@ -182,7 +191,7 @@ func TestMCPConnectionsNodesAndAgents(t *testing.T) {
 			if status, resp := owner.publish(source); status != 201 {
 				t.Fatalf("publish %d %v", status, resp)
 			}
-			_, started := owner.call("POST", "/v1/runs", map[string]any{"workflow": "remote-call", "input": map[string]any{"since": "hello"}})
+			_, started := owner.call("POST", "/be/v1/runs", map[string]any{"workflow": "remote-call", "input": map[string]any{"since": "hello"}})
 			if run := owner.waitRun(started["id"].(string)); run["status"] != "succeeded" {
 				t.Fatalf("MCP run %v", run)
 			}
@@ -204,18 +213,18 @@ func TestMCPConnectionsNodesAndAgents(t *testing.T) {
 				}
 			}
 			model, results := scriptedToolLLM(t, []toolStep{{"$remote", `{"text":"agent hello"}`}})
-			owner.mustOK("POST", "/v1/providers", map[string]any{"name": "remote-provider", "provider": "openai_compatible", "base_url": model.URL, "api_key": "llm-test-key"}, 201)
+			owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "remote-provider", "provider": "openai_compatible", "base_url": model.URL, "api_key": "llm-test-key"}, 201)
 			agent := agentBody("remote-agent", "remote-provider")
 			agent["tools"] = []string{"mcp:knowledge"}
-			owner.mustOK("POST", "/v1/agents", agent, 201)
-			tested := owner.mustOK("POST", "/v1/agents/remote-agent/test", map[string]any{"input": map[string]any{}}, 200)
+			owner.mustOK("POST", "/be/v1/agents", agent, 201)
+			tested := owner.mustOK("POST", "/be/v1/agents/remote-agent/test", map[string]any{"input": map[string]any{}}, 200)
 			if tested["ok"] != true || len(results()) != 1 || !strings.Contains(results()[0], "agent hello") {
 				t.Fatalf("MCP agent = %v %v", tested, results())
 			}
 			other := s.owner(t, "Other MCP org")
 			bad := agentBody("foreign", "")
 			bad["tools"] = []string{"mcp:knowledge"}
-			if status, _ := other.call("POST", "/v1/agents", bad); status != 400 {
+			if status, _ := other.call("POST", "/be/v1/agents", bad); status != 400 {
 				t.Fatalf("foreign MCP status %d", status)
 			}
 			before := calls.Load()
@@ -241,11 +250,11 @@ func TestMCPEgressGuard(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
 	defer target.Close()
 	body := map[string]any{"name": "blocked", "kind": "mcp", "config": map[string]any{"url": target.URL}}
-	if status, _ := owner.call("POST", "/v1/connections", body); status != 422 || hits.Load() != 0 {
+	if status, _ := owner.call("POST", "/be/v1/connections", body); status != 422 || hits.Load() != 0 {
 		t.Fatalf("egress: status %d hits %d", status, hits.Load())
 	}
 	body["skip_test"] = true
-	owner.mustOK("POST", "/v1/connections", body, 201)
+	owner.mustOK("POST", "/be/v1/connections", body, 201)
 	if status, resp := owner.publish(dbWorkflow("blocked-mcp", "mcp.call", `{connection: blocked, tool: echo}`)); status != 201 {
 		t.Fatalf("publish %d %v", status, resp)
 	}
@@ -265,13 +274,13 @@ func TestMCPPublicAgent(t *testing.T) {
 	}
 	s := newStack(t, context.Background())
 	owner := s.owner(t, "Public MCP")
-	owner.mustOK("POST", "/v1/connections", map[string]any{"name": "public-docs", "kind": "mcp", "config": map[string]any{"url": target}}, 201)
+	owner.mustOK("POST", "/be/v1/connections", map[string]any{"name": "public-docs", "kind": "mcp", "config": map[string]any{"url": target}}, 201)
 	model, results := scriptedToolLLM(t, []toolStep{{"$remote:read_wiki_structure", `{"repoName":"modelcontextprotocol/go-sdk"}`}})
-	owner.mustOK("POST", "/v1/providers", map[string]any{"name": "public-provider", "provider": "openai_compatible", "base_url": model.URL, "api_key": "fake-public-key"}, 201)
+	owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "public-provider", "provider": "openai_compatible", "base_url": model.URL, "api_key": "fake-public-key"}, 201)
 	body := agentBody("public-reader", "public-provider")
 	body["tools"] = []string{"mcp:public-docs"}
-	owner.mustOK("POST", "/v1/agents", body, 201)
-	result := owner.mustOK("POST", "/v1/agents/public-reader/test", map[string]any{"input": map[string]any{"question": "List the public SDK documentation topics."}}, 200)
+	owner.mustOK("POST", "/be/v1/agents", body, 201)
+	result := owner.mustOK("POST", "/be/v1/agents/public-reader/test", map[string]any{"input": map[string]any{"question": "List the public SDK documentation topics."}}, 200)
 	if result["ok"] != true || len(results()) != 1 || !strings.Contains(results()[0], `"content"`) || strings.Contains(results()[0], `"isError":true`) {
 		t.Fatalf("public tool call: %v %v", result, results())
 	}

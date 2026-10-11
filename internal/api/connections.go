@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
 	"github.com/kartikey/workflow_service/internal/services/connections"
 	"github.com/kartikey/workflow_service/pkg/auth"
 	"github.com/kartikey/workflow_service/pkg/exception"
@@ -50,7 +51,7 @@ func (c connectionRequest) input() connections.Input {
 	return connections.Input{Name: c.Name, Kind: c.Kind, Config: c.Config, Secret: c.Secret, SkipTest: c.SkipTest}
 }
 
-// listIntegrations is GET /v1/integrations: the kinds of connection this
+// listIntegrations is GET /be/v1/integrations: the kinds of connection this
 // installation offers and the fields each takes, for the editor.
 func (h *Handler) listIntegrations(w http.ResponseWriter, r *http.Request, _ auth.Principal) {
 	kinds := h.services.Connections.Kinds()
@@ -63,12 +64,12 @@ func (h *Handler) listIntegrations(w http.ResponseWriter, r *http.Request, _ aut
 				"enum": f.Enum, "default": f.Default, "help": f.Help,
 			})
 		}
-		items = append(items, map[string]any{"kind": kind.Kind, "title": kind.Title, "oauth": kind.OAuth, "fields": fields})
+		items = append(items, map[string]any{"kind": kind.Kind, "title": kind.Title, "oauth": kind.OAuth, "fields": fields, "actions": connectors.ActionsFor(kind.Kind)})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// testConnectionInput is POST /v1/connections/test: proves settings and
+// testConnectionInput is POST /be/v1/connections/test: proves settings and
 // credentials work before they are saved. It saves nothing.
 func (h *Handler) testConnectionInput(w http.ResponseWriter, r *http.Request, _ auth.Principal) {
 	var req connectionRequest
@@ -83,7 +84,7 @@ func (h *Handler) testConnectionInput(w http.ResponseWriter, r *http.Request, _ 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// createConnection is POST /v1/connections: tests (unless skip_test) and saves
+// createConnection is POST /be/v1/connections: tests (unless skip_test) and saves
 // only if the test passes.
 func (h *Handler) createConnection(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req connectionRequest
@@ -121,7 +122,7 @@ func (h *Handler) getConnection(w http.ResponseWriter, r *http.Request, p auth.P
 	httpx.WriteJSON(w, http.StatusOK, connectionInfoView(c))
 }
 
-// updateConnection is PUT /v1/connections/{name}: replaces the settings, and the
+// updateConnection is PUT /be/v1/connections/{name}: replaces the settings, and the
 // credentials when a secret is sent. The kind cannot change.
 func (h *Handler) updateConnection(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req connectionRequest
@@ -153,9 +154,9 @@ func (h *Handler) testConnection(w http.ResponseWriter, r *http.Request, p auth.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// startOAuth is POST /v1/connections/oauth/start: {kind, name} → the provider's
+// startOAuth is POST /be/v1/connections/oauth/start: {kind, name} → the provider's
 // authorization URL. The caller sends the user there; the provider redirects to
-// /v1/oauth/callback. Naming an existing connection of the same kind reconnects it.
+// /be/v1/oauth/callback. Naming an existing connection of the same kind reconnects it.
 func (h *Handler) startOAuth(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req struct {
 		Kind string `json:"kind"`
@@ -173,7 +174,7 @@ func (h *Handler) startOAuth(w http.ResponseWriter, r *http.Request, p auth.Prin
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"authorize_url": target})
 }
 
-// oauthCallback is GET /v1/oauth/callback, where the provider redirects the
+// oauthCallback is GET /be/v1/oauth/callback, where the provider redirects the
 // user's browser. It needs no session: the one-time state identifies the
 // organization that started the sign-in. The browser is sent on to the UI's
 // connections page with the outcome in the query string.
@@ -184,7 +185,7 @@ func (h *Handler) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		providerError += ": " + query.Get("error_description")
 	}
 	name, err := h.services.Connections.CompleteOAuth(r.Context(), query.Get("state"), query.Get("code"), providerError)
-	back := strings.TrimRight(h.services.PublicURL, "/") + "/connections"
+	back := strings.TrimRight(h.services.PublicURL, "/") + "/ui/connectors"
 	if err != nil {
 		var ex *exception.Exception
 		message := "sign-in failed"

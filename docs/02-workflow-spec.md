@@ -279,7 +279,7 @@ inline. Stored form:
   type: agent
   needs: [fetch_ticket]
   config:
-    agent: ticket-classifier          # defined under /v1/agents
+    agent: ticket-classifier          # defined under /be/v1/agents
     input: {text: '${nodes.fetch_ticket.output.body.description}'}
     # prompt: optional extra instruction placed before the input
 ```
@@ -339,7 +339,7 @@ run-level `timeout` is far too coarse to bound agent spend.
 Implemented as `wait_event` with key `task:${run.id}:${node.id}` plus a row in a
 `tasks` read-model table for the worklist. `sla` is the wait's timeout (default
 7 days), so `on_timeout` escalates exactly like a `wait_event`. The task is
-completed with `POST /v1/tasks/{id}/complete`, a thin layer over the signals
+completed with `POST /be/v1/tasks/{id}/complete`, a thin layer over the signals
 endpoint, and its payload becomes the node's output. `queue` is required; `form`
 names a form for the UI, `assignee` restricts who may claim or complete, and
 `payload` is shown to whoever works the task. See `04 §4.2`.
@@ -410,7 +410,7 @@ waits for it.
 ```
 
 The child is an ordinary run with `trigger: subworkflow` and `parent_run_id` set
-(`GET /v1/runs?parent_run_id=` lists a run's children). The node's output is
+(`GET /be/v1/runs?parent_run_id=` lists a run's children). The node's output is
 `{run_id, status, output}`, where `output` is the child's `outputs`. If the child
 fails or is cancelled the node fails with `E_SUBWORKFLOW_FAILED` or
 `E_SUBWORKFLOW_CANCELLED` and the child's error attached, so `on_failure`
@@ -432,7 +432,7 @@ Combine with `foreach` for a multi-step body per element:
 `foreach: {items: ...}` on a `workflow` node starts one child per element.
 
 Wait keys starting with `task:` or `subworkflow:` belong to the engine: a
-`wait_event` cannot use them and `POST /v1/signals` rejects them.
+`wait_event` cannot use them and `POST /be/v1/signals` rejects them.
 
 
 ### 4.11 `email.send` (M14)
@@ -526,6 +526,73 @@ Failures: wrong credentials are `db_auth` and a rejected statement is `db_statem
 (both permanent); network trouble, timeouts and deadlocks are `db_transient` (retried);
 an address blocked by the egress policy is `egress_blocked` (permanent). Error messages
 never contain the password.
+
+### 4.13a Shared connector actions
+
+`connector.call` uses the same action executors as agents, with a saved connector
+name, a literal `action`, and an `arguments` object. All credentials are loaded
+from that organization's encrypted connection. Arguments cannot override
+`connection`. Existing direct node types remain available.
+
+```yaml
+- id: read
+  type: connector.call
+  config:
+    connection: warehouse
+    action: db.query
+    arguments: {sql: 'select count(*) as total from orders'}
+- id: notify
+  type: connector.call
+  needs: [read]
+  config:
+    connection: team-slack
+    action: slack.send
+    arguments: {channel: C123, text: 'Order totals: ${nodes.read.output}'}
+```
+
+| Kind | Read actions | Write actions |
+|---|---|---|
+| `postgres`, `mysql` | `db.list_tables`, `db.describe_table`, `db.query` | `db.insert` |
+| `mongo` | `mongo.list_collections`, `mongo.find` | `mongo.insert` |
+| `gmail` | `gmail.search`, `gmail.read` | `gmail.send` |
+| `gdocs` | `gdocs.read` | `gdocs.create`, `gdocs.append` |
+| `gsheets` | `gsheets.read` | `gsheets.append` |
+| `gcalendar` | `gcalendar.list` | `gcalendar.create` |
+| `slack` | `slack.history` | `slack.send` |
+| `notion` | `notion.search`, `notion.read`, `notion.blocks` | `notion.append` |
+| `gdrive`, `dropbox`, `onedrive` | — | Existing upload actions |
+| `smtp`, `resend` | — | `email.send` |
+
+`GET /be/v1/integrations` is the action/schema catalog for the visual builder
+and agent permissions. An agent grants individual actions with
+`tools: ['connector:warehouse:db.query', 'connector:analytics:mongo.find']`.
+SQL agents and workflow nodes share `pkg/dbx`; no separate agent query driver
+exists. Schema inspection is also available as direct workflow nodes.
+
+MongoDB `find` takes `{collection, filter?, projection?, sort?, max_rows?}` using
+MongoDB Extended JSON. It has a 30s operation budget, a default 100-row cap,
+a maximum 1000-row cap and a 1 MiB document output cap; it returns
+`{documents, row_count, truncated}`. `$where`, `$function` and `$accumulator`
+server-side JavaScript are refused. It offers only reads through `find`, with
+no arbitrary MongoDB commands or aggregation write stages. `insert` accepts
+`{collection, documents}` (1–1000 objects, at most 1 MiB). It can partially succeed
+before a server error, and retries can repeat an insert.
+
+Google document reads normalize body/tab content into `{document_id,title,text}`;
+Gmail reads return headers, text and HTML bodies. List/search actions return
+provider pagination tokens/cursors rather than fetching every page. Provider
+HTTP responses are capped at 1 MiB; narrow the page/query if it exceeds the cap.
+Notion `read` returns page metadata; use `blocks` to read paginated content and
+nested blocks. `append` adds one text paragraph of at most 2000 characters.
+Slack history returns paginated messages; sending supports `channel`, `text`
+and optional `thread_ts`.
+
+Grant write actions explicitly. Many provider writes have no guaranteed
+exactly-once behavior; a retry or replay of an agent tool call can repeat a send,
+append or create. Use retries only where repetition is acceptable. Google OAuth
+kinds require configured Google app credentials; previously connected Gmail
+accounts need reconnecting to grant the newly requested read scope. Account
+permission checks still apply after saving a connector.
 
 ### 4.14 Data exploration and `mcp.call` (M15)
 
@@ -962,7 +1029,7 @@ subschemas in their workflow inputs, the complexity belongs in their caller.
 
 ## 8. Publish semantics
 
-`POST /v1/workflows` with a YAML body:
+`POST /be/v1/workflows` with a YAML body:
 
 1. Compile. On any `error` diagnostic → `400` with the full diagnostic list.
 2. `select ... from workflows where tenant_id=$1 and name=$2 for update`

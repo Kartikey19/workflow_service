@@ -1,4 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from "react";
+const Builder = lazy(() =>
+  import("./builder").then((m) => ({ default: m.Builder })),
+);
 const CodeMirror = lazy(() => import("@uiw/react-codemirror"));
 const Graph = lazy(() => import("./graph").then((m) => ({ default: m.Graph })));
 import { yaml as yamlLanguage } from "@codemirror/lang-yaml";
@@ -21,14 +24,17 @@ export function Workflows({
   editable,
   agentName,
   onRun,
+  organizationID,
 }: {
   editable: boolean;
   agentName: string;
   onRun: (id: string) => void;
+  organizationID: string;
 }) {
   const list = useResource("/workflows?include_archived=true"),
     agents = useResource("/agents"),
     providers = useResource(editable ? "/providers" : null);
+  const [editorTab, setEditorTab] = useState("visual");
   const [selected, select] = useState(""),
     [source, setSource] = useState(initial),
     [mode, setMode] = useState(agentName ? "agent" : "list"),
@@ -112,12 +118,26 @@ export function Workflows({
               Create from agent
             </button>
             <button
+              className="primary"
               onClick={() => {
                 select("");
                 setPublished("");
                 setWorkflow(null);
                 setSource(initial);
                 setMode("editor");
+                setEditorTab("visual");
+              }}
+            >
+              New visual workflow
+            </button>
+            <button
+              onClick={() => {
+                select("");
+                setPublished("");
+                setWorkflow(null);
+                setSource(initial);
+                setMode("editor");
+                setEditorTab("yaml");
               }}
             >
               New YAML workflow
@@ -363,19 +383,51 @@ export function Workflows({
                     : "Price unavailable"}
                 </p>
               )}
+              <div
+                className="row"
+                role="tablist"
+                aria-label="Workflow editor mode"
+              >
+                <button
+                  role="tab"
+                  aria-selected={editorTab === "visual"}
+                  onClick={() => setEditorTab("visual")}
+                >
+                  Visual builder
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={editorTab === "yaml"}
+                  onClick={() => setEditorTab("yaml")}
+                >
+                  YAML
+                </button>
+              </div>
               <Suspense fallback={<p>Opening editor…</p>}>
-                <CodeMirror
-                  value={source}
-                  height="330px"
-                  extensions={[yamlLanguage()]}
-                  editable={editable}
-                  onChange={(value) => {
-                    setSource(value);
-                    setPublished("");
-                  }}
-                  basicSetup={{ foldGutter: true }}
-                  aria-label="Workflow YAML"
-                />
+                {editorTab === "visual" ? (
+                  <Builder
+                    organizationID={organizationID}
+                    source={source}
+                    editable={editable}
+                    onChange={(value) => {
+                      setSource(value);
+                      setPublished("");
+                    }}
+                  />
+                ) : (
+                  <CodeMirror
+                    value={source}
+                    height="330px"
+                    extensions={[yamlLanguage()]}
+                    editable={editable}
+                    onChange={(value) => {
+                      setSource(value);
+                      setPublished("");
+                    }}
+                    basicSetup={{ foldGutter: true }}
+                    aria-label="Workflow YAML"
+                  />
+                )}
               </Suspense>
               <div className="validation" role="status">
                 {validating
@@ -419,7 +471,7 @@ export function Workflows({
                 )}
               </div>
               <Suspense fallback={<p>Opening graph…</p>}>
-                <Graph spec={spec} />
+                {editorTab === "yaml" && <Graph spec={spec} />}
               </Suspense>
               {published &&
                 workflow &&

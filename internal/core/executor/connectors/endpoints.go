@@ -1,6 +1,6 @@
 // Package connectors implements the nodes that act on third-party services
-// through a saved connection: gmail.send, gdrive.upload, dropbox.upload and
-// onedrive.upload (02 §4.12). Each takes its credentials from
+// through a saved connection, with one action catalog shared by workflows,
+// agent tools and the editor. Each takes its credentials from
 // executor.Connections; none imports the store.
 package connectors
 
@@ -19,6 +19,11 @@ var defaults = map[string]string{
 	"google_auth":     "https://accounts.google.com/o/oauth2/v2/auth",
 	"google_token":    "https://oauth2.googleapis.com/token",
 	"google_userinfo": "https://openidconnect.googleapis.com/v1/userinfo",
+	"slack_api":       "https://slack.com/api",
+	"notion_api":      "https://api.notion.com",
+	"gdocs_api":       "https://docs.googleapis.com",
+	"gsheets_api":     "https://sheets.googleapis.com",
+	"gcalendar_api":   "https://www.googleapis.com",
 	"gmail_api":       "https://gmail.googleapis.com",
 	"gdrive_api":      "https://www.googleapis.com",
 	"gdrive_upload":   "https://www.googleapis.com",

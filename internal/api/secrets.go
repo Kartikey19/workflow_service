@@ -11,7 +11,7 @@ import (
 	"github.com/kartikey/workflow_service/pkg/httpx"
 )
 
-// listSecrets is GET /v1/secrets: names and metadata only. Values are
+// listSecrets is GET /be/v1/secrets: names and metadata only. Values are
 // write-only, so there is no way to read one back.
 func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	secrets, err := h.services.Vault.List(r.Context(), p.TenantID)
@@ -33,7 +33,7 @@ func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request, p auth.Pri
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// putSecret is PUT /v1/secrets/{name} with {"value": "..."}: creates or replaces.
+// putSecret is PUT /be/v1/secrets/{name} with {"value": "..."}: creates or replaces.
 func (h *Handler) putSecret(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req struct {
 		Value string `json:"value"`
@@ -58,7 +58,7 @@ func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request, p auth.Pr
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// rotateVault is POST /v1/admin/vault/rotate: re-seal every secret under the
+// rotateVault is POST /be/v1/admin/vault/rotate: re-seal every secret under the
 // current master key. Safe to run while serving; run it again until failed is 0.
 func (h *Handler) rotateVault(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	result, err := h.services.Vault.Rotate(r.Context())
@@ -74,7 +74,7 @@ func (h *Handler) rotateVault(w http.ResponseWriter, r *http.Request, p auth.Pri
 	})
 }
 
-// vaultStatus is GET /v1/admin/vault: how many secrets use each key version,
+// vaultStatus is GET /be/v1/admin/vault: how many secrets use each key version,
 // which says when an old key can be removed.
 func (h *Handler) vaultStatus(w http.ResponseWriter, r *http.Request, _ auth.Principal) {
 	versions, err := h.services.Vault.KeyVersions(r.Context())

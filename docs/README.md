@@ -71,12 +71,12 @@ name or family prefix to `{input_per_mtok, output_per_mtok}` that overrides the
 built-in price estimates behind `cost_usd`). Without a key, workflows with agent
 nodes still publish but those nodes fail permanently with `llm_not_configured`.
 
-Organizations add their own provider keys under `/v1/providers` (`04 §4d`); these are
+Organizations add their own provider keys under `/be/v1/providers` (`04 §4d`); these are
 sealed with the vault key, so they need `VAULT_MASTER_KEY`. `OPENAI_BASE_URL` and
 `GEMINI_BASE_URL` let an operator route those providers through a proxy.
 
 OAuth integrations appear only for providers you register an app with, and need
-`PUBLIC_URL` (redirect URI `{PUBLIC_URL}/v1/oauth/callback`): `GOOGLE_CLIENT_ID` and
+`PUBLIC_URL` (redirect URI `{PUBLIC_URL}/be/v1/oauth/callback`): `GOOGLE_CLIENT_ID` and
 `GOOGLE_CLIENT_SECRET` (Gmail and Drive), `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET`,
 `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` and `MICROSOFT_TENANT` (default `common`).
 `INTEGRATION_ENDPOINTS` (a JSON object) overrides provider URLs for a proxy or a test server.

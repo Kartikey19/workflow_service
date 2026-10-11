@@ -74,7 +74,7 @@ func (h *harness) openTaskID(c apiClient, queue string) string {
 	h.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		status, body := c.json("GET", "/v1/tasks?status=open&queue="+queue, nil, as("alice")...)
+		status, body := c.json("GET", "/be/v1/tasks?status=open&queue="+queue, nil, as("alice")...)
 		if items, _ := body["items"].([]any); status == 200 && len(items) > 0 {
 			return items[0].(map[string]any)["id"].(string)
 		}
@@ -96,47 +96,47 @@ func TestHumanTaskWorklistClaimAndComplete(t *testing.T) {
 	runID := h.start("care-review", map[string]any{"patient": "P-1"})
 	id := h.openTaskID(c, "rn-review")
 
-	status, task := c.json("GET", "/v1/tasks/"+id, nil, as("alice")...)
+	status, task := c.json("GET", "/be/v1/tasks/"+id, nil, as("alice")...)
 	if status != 200 || task["status"] != "open" || task["queue"] != "rn-review" || task["form"] != "care_plan_v2" ||
 		task["workflow"] != "care-review" || task["node_id"] != "review" || task["run_id"] != idString(runID) ||
 		task["payload"].(map[string]any)["patient"] != "P-1" || task["due_at"] == nil {
 		t.Fatalf("task = %d %v", status, task)
 	}
-	if status, body := c.json("GET", "/v1/tasks?queue=other", nil, as("alice")...); status != 200 || len(body["items"].([]any)) != 0 {
+	if status, body := c.json("GET", "/be/v1/tasks?queue=other", nil, as("alice")...); status != 200 || len(body["items"].([]any)) != 0 {
 		t.Fatalf("another queue = %d %v", status, body)
 	}
 
 	// Alice claims it; claiming again is a no-op; Bob cannot take or finish it.
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/claim", nil, as("alice")...); status != 200 || body["status"] != "claimed" || body["claimed_by"] != "alice" {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/claim", nil, as("alice")...); status != 200 || body["status"] != "claimed" || body["claimed_by"] != "alice" {
 		t.Fatalf("claim = %d %v", status, body)
 	}
-	if status, _ := c.json("POST", "/v1/tasks/"+id+"/claim", nil, as("alice")...); status != 200 {
+	if status, _ := c.json("POST", "/be/v1/tasks/"+id+"/claim", nil, as("alice")...); status != 200 {
 		t.Fatalf("re-claim by the owner = %d, want 200", status)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/claim", nil, as("bob")...); status != 409 || body["code"] != "task_claimed" {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/claim", nil, as("bob")...); status != 409 || body["code"] != "task_claimed" {
 		t.Fatalf("claim by bob = %d %v", status, body)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": true}}, as("bob")...); status != 409 {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": true}}, as("bob")...); status != 409 {
 		t.Fatalf("complete by bob = %d %v, want 409", status, body)
 	}
-	if status, body := c.json("GET", "/v1/tasks?mine=true", nil, as("alice")...); status != 200 || len(body["items"].([]any)) != 1 {
+	if status, body := c.json("GET", "/be/v1/tasks?mine=true", nil, as("alice")...); status != 200 || len(body["items"].([]any)) != 1 {
 		t.Fatalf("alice's tasks = %d %v", status, body)
 	}
-	if status, _ := c.json("POST", "/v1/tasks/"+id+"/release", nil, as("bob")...); status != 403 {
+	if status, _ := c.json("POST", "/be/v1/tasks/"+id+"/release", nil, as("bob")...); status != 403 {
 		t.Fatalf("release by bob = %d, want 403", status)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/release", nil, as("alice")...); status != 200 || body["status"] != "open" {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/release", nil, as("alice")...); status != 200 || body["status"] != "open" {
 		t.Fatalf("release = %d %v", status, body)
 	}
-	if status, _ := c.json("POST", "/v1/tasks/"+id+"/claim", nil, as("bob")...); status != 200 {
+	if status, _ := c.json("POST", "/be/v1/tasks/"+id+"/claim", nil, as("bob")...); status != 200 {
 		t.Fatalf("claim by bob after release = %d", status)
 	}
 
 	// A viewer cannot act; an admin can finish a task someone else claimed.
-	if status, _ := c.json("POST", "/v1/tasks/"+id+"/complete", nil, as("vera", "X-Role", "viewer")...); status != 403 {
+	if status, _ := c.json("POST", "/be/v1/tasks/"+id+"/complete", nil, as("vera", "X-Role", "viewer")...); status != 403 {
 		t.Fatalf("complete by a viewer = %d, want 403", status)
 	}
-	status, body := c.json("POST", "/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": true}}, as("carol", "X-Role", "admin")...)
+	status, body := c.json("POST", "/be/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": true}}, as("carol", "X-Role", "admin")...)
 	if status != 200 || body["status"] != "completed" || body["run_id"] != idString(runID) {
 		t.Fatalf("complete = %d %v", status, body)
 	}
@@ -149,14 +149,14 @@ func TestHumanTaskWorklistClaimAndComplete(t *testing.T) {
 	if got := h.nodeStatuses(runID); got["escalate"] != "skipped" || got["review"] != "succeeded" {
 		t.Fatalf("nodes = %v", got)
 	}
-	if status, task := c.json("GET", "/v1/tasks/"+id, nil, as("alice")...); status != 200 || task["status"] != "completed" {
+	if status, task := c.json("GET", "/be/v1/tasks/"+id, nil, as("alice")...); status != 200 || task["status"] != "completed" {
 		t.Fatalf("task after completion = %d %v", status, task)
 	}
 	var completedBy string
 	if err := h.pool.QueryRow(ctx, `select completed_by from tasks where id = $1`, id).Scan(&completedBy); err != nil || completedBy != "carol" {
 		t.Fatalf("completed_by = %q, %v", completedBy, err)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/complete", nil, as("carol", "X-Role", "admin")...); status != 409 || body["code"] != "task_closed" {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/complete", nil, as("carol", "X-Role", "admin")...); status != 409 || body["code"] != "task_closed" {
 		t.Fatalf("second completion = %d %v", status, body)
 	}
 	h.checkInvariants(runID)
@@ -174,16 +174,16 @@ func TestHumanTaskAssigneeRules(t *testing.T) {
 	runID := h.start("care-review", map[string]any{"patient": "P-2"})
 	id := h.openTaskID(c, "rn-review")
 
-	if status, body := c.json("GET", "/v1/tasks?assignee=alice", nil, as("bob")...); status != 200 || len(body["items"].([]any)) != 1 {
+	if status, body := c.json("GET", "/be/v1/tasks?assignee=alice", nil, as("bob")...); status != 200 || len(body["items"].([]any)) != 1 {
 		t.Fatalf("assignee filter = %d %v", status, body)
 	}
-	if status, _ := c.json("POST", "/v1/tasks/"+id+"/claim", nil, as("bob")...); status != 403 {
+	if status, _ := c.json("POST", "/be/v1/tasks/"+id+"/claim", nil, as("bob")...); status != 403 {
 		t.Fatalf("claim by a non-assignee = %d, want 403", status)
 	}
-	if status, _ := c.json("POST", "/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": false}}, as("bob")...); status != 403 {
+	if status, _ := c.json("POST", "/be/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": false}}, as("bob")...); status != 403 {
 		t.Fatalf("complete by a non-assignee = %d, want 403", status)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": false}}, as("alice")...); status != 200 {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": false}}, as("alice")...); status != 200 {
 		t.Fatalf("complete by the assignee = %d %v", status, body)
 	}
 	h.waitStatus(runID, 15*time.Second, "succeeded")
@@ -211,10 +211,10 @@ func TestHumanTaskSLAEscalates(t *testing.T) {
 	if nodes["review"] != "failed" || nodes["escalate"] != "succeeded" || nodes["done"] != "skipped" {
 		t.Fatalf("nodes = %v", nodes)
 	}
-	if status, task := c.json("GET", "/v1/tasks/"+id, nil, as("alice")...); status != 200 || task["status"] != "expired" {
+	if status, task := c.json("GET", "/be/v1/tasks/"+id, nil, as("alice")...); status != 200 || task["status"] != "expired" {
 		t.Fatalf("task = %d %v, want expired", status, task)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/complete", nil, as("alice")...); status != 409 || body["code"] != "task_closed" {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/complete", nil, as("alice")...); status != 409 || body["code"] != "task_closed" {
 		t.Fatalf("complete after SLA = %d %v", status, body)
 	}
 	h.checkInvariants(runID)
@@ -233,23 +233,23 @@ func TestHumanTaskCancelledWithRunAndTenantIsolated(t *testing.T) {
 	id := h.openTaskID(c, "rn-review")
 
 	other := apiClient{t: t, base: base, tenant: newUUID(t)}
-	if status, _ := other.json("GET", "/v1/tasks/"+id, nil, as("mallory")...); status != 404 {
+	if status, _ := other.json("GET", "/be/v1/tasks/"+id, nil, as("mallory")...); status != 404 {
 		t.Fatalf("another organization reads the task: %d", status)
 	}
-	if status, body := other.json("GET", "/v1/tasks", nil, as("mallory")...); status != 200 || len(body["items"].([]any)) != 0 {
+	if status, body := other.json("GET", "/be/v1/tasks", nil, as("mallory")...); status != 200 || len(body["items"].([]any)) != 0 {
 		t.Fatalf("another organization lists tasks: %d %v", status, body)
 	}
-	if status, _ := other.json("POST", "/v1/tasks/"+id+"/complete", nil, as("mallory")...); status != 404 {
+	if status, _ := other.json("POST", "/be/v1/tasks/"+id+"/complete", nil, as("mallory")...); status != 404 {
 		t.Fatalf("another organization completes the task: %d", status)
 	}
 
 	if err := h.flow.Cancel(ctx, h.tenant, runID, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if status, task := c.json("GET", "/v1/tasks/"+id, nil, as("alice")...); status != 200 || task["status"] != "cancelled" {
+	if status, task := c.json("GET", "/be/v1/tasks/"+id, nil, as("alice")...); status != 200 || task["status"] != "cancelled" {
 		t.Fatalf("task = %d %v, want cancelled", status, task)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/claim", nil, as("alice")...); status != 409 || body["code"] != "task_closed" {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/claim", nil, as("alice")...); status != 409 || body["code"] != "task_closed" {
 		t.Fatalf("claim of a cancelled task = %d %v", status, body)
 	}
 }
@@ -314,10 +314,10 @@ func TestHealthcareExampleNurseReviewThenOutreach(t *testing.T) {
 	runID := h.start("post-discharge-followup", map[string]any{"patient_id": "P-9", "discharge_at": "2026-10-01"})
 	id := h.openTaskID(c, "rn-review")
 
-	if _, task := c.json("GET", "/v1/tasks/"+id, nil, as("nina")...); task["payload"].(map[string]any)["plan"].(map[string]any)["plan"] != "PLAN-1" {
+	if _, task := c.json("GET", "/be/v1/tasks/"+id, nil, as("nina")...); task["payload"].(map[string]any)["plan"].(map[string]any)["plan"] != "PLAN-1" {
 		t.Fatalf("the task does not carry the care plan: %v", task)
 	}
-	if status, body := c.json("POST", "/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": true}}, as("nina")...); status != 200 {
+	if status, body := c.json("POST", "/be/v1/tasks/"+id+"/complete", map[string]any{"payload": map[string]any{"approved": true}}, as("nina")...); status != 200 {
 		t.Fatalf("complete = %d %v", status, body)
 	}
 	waitNode(t, h, idString(runID), "wait_30d", "waiting")

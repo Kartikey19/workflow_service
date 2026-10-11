@@ -114,7 +114,7 @@ workflow_service/
     app/          app.go dependencies.go main.go // composition root, wiring, signals
     config/       config.go             // env struct tags (caarlos0/env) + .env
     server/       server.go middleware.go // http.Server lifecycle, health, auth middleware
-    api/          handler.go errors.go  // /v1 handlers only: routes, domain→exception map;
+    api/          handler.go errors.go  // /be/v1 handlers only: routes, domain→exception map;
                   workflows.go runs.go signals.go events.go executors.go
                   query.go views.go     // query-string/cursor helpers, JSON views
                   // defines the service interfaces it consumes
@@ -321,8 +321,8 @@ Export `DATABASE_URL` first; see [local development](README.md#local-development
 
 ### M1 — The compiler (4–5 days)
 
-Build: `spec` and `expr` packages end to end. `POST /v1/workflows` with
-`?dry_run`. The diagnostic model. `GET /v1/workflows/...`.
+Build: `spec` and `expr` packages end to end. `POST /be/v1/workflows` with
+`?dry_run`. The diagnostic model. `GET /be/v1/workflows/...`.
 
 **Demo:** publish the delivery workflow from `02 §5.1`; publish a broken one and
 get all six errors in one response.
@@ -381,8 +381,8 @@ get all six errors in one response.
 ### M2 — Engine core (1 week) ← the hard one
 
 Build: `Executor`/registry, `noop` + `transform`, claim loop, lease + heartbeat,
-dispatcher, resolver, run completion, `POST /v1/runs`, `GET /v1/runs/{id}`,
-`GET /v1/runs/{id}/nodes`.
+dispatcher, resolver, run completion, `POST /be/v1/runs`, `GET /be/v1/runs/{id}`,
+`GET /be/v1/runs/{id}/nodes`.
 
 **Demo:** run a 6-node diamond workflow to completion; kill -9 a worker mid-run
 and watch another finish it.
@@ -465,7 +465,7 @@ Build: `branch` executor, `Control.Goto`, skip cascade, `join: any`, `on_failure
 ### M5 — Time and events (4–5 days)
 
 Build: `sleep`, `wait_event`, `run_waits`, the sweeper (all four passes),
-`POST /v1/signals`, run deadlines.
+`POST /be/v1/signals`, run deadlines.
 
 **Demo:** the full `order-fulfilment` workflow, signalled by curl; then the same
 workflow timing out into `reassign_rider`.
@@ -490,8 +490,8 @@ workflow timing out into `reassign_rider`.
 Build: `run_events` writer with gap-free seq, `GET /runs/{id}/events` + SSE,
 cancellation, Prometheus metrics, the admin API (`04 §5.1`), graceful shutdown with lease release.
 
-**Demo:** `POST /v1/runs` for `order-fulfilment`, then
-`curl -N /v1/runs/{id}/events` streaming a live timeline.
+**Demo:** `POST /be/v1/runs` for `order-fulfilment`, then
+`curl -N /be/v1/runs/{id}/events` streaming a live timeline.
 
 **Acceptance**
 - [x] `seq` is gap-free under 8 concurrent workers on one run (I6).
@@ -538,7 +538,7 @@ expired, cancelled), so timeouts and cancelled runs need no extra bookkeeping.
 `executor.WaitSpec` carries an optional `TaskSpec`; the engine writes the task row
 in the same transaction as the wait. `human_task` is a built-in node,
 `internal/services/tasks` is the service (list, get, claim, release, complete over
-the signal path) and `/v1/tasks` the routes (`04 §4.2`). `on_timeout` is now also
+the signal path) and `/be/v1/tasks` the routes (`04 §4.2`). `on_timeout` is now also
 allowed on `human_task`.
 
 **Acceptance**
@@ -581,7 +581,7 @@ by a sweeper pass for missed notifications. Cancelling or ending a parent cancel
 its unfinished children (parent lock first, then child, everywhere); a parent that
 gives up waiting cancels the child it started. Nesting is capped at 5. The wait
 prefixes `task:` and `subworkflow:` are reserved for the engine: `wait_event` and
-`POST /v1/signals` reject them, which also closes a way to bypass task assignee
+`POST /be/v1/signals` reject them, which also closes a way to bypass task assignee
 rules through the signals endpoint.
 
 **Acceptance (sub-workflows)**
@@ -606,10 +606,10 @@ logs or events.
 
 Build: `cmd/api` and `cmd/worker` (run both for local development); `WORKER_ID` defaults to hostname plus a random suffix so
 `docker compose up --scale worker=N` works; worker `/metrics` and `/healthz` on
-`WORKER_METRICS_ADDRESS`. API: RFC 7807 errors; `POST /v1/workflows` (YAML or
-JSON, `?dry_run`), `GET /v1/workflows[/{name}[/versions/{n}]]`, archive;
-`POST /v1/runs`, `GET /v1/runs`, `GET /v1/runs/{id}`, `/nodes`, `/events`
-(polling and SSE), `/cancel`; `POST /v1/signals`; `GET /v1/executors`;
+`WORKER_METRICS_ADDRESS`. API: RFC 7807 errors; `POST /be/v1/workflows` (YAML or
+JSON, `?dry_run`), `GET /be/v1/workflows[/{name}[/versions/{n}]]`, archive;
+`POST /be/v1/runs`, `GET /be/v1/runs`, `GET /be/v1/runs/{id}`, `/nodes`, `/events`
+(polling and SSE), `/cancel`; `POST /be/v1/signals`; `GET /be/v1/executors`;
 `GET /metrics`.
 
 **Control:** `WORKER_CONCURRENCY`, `WORKER_BATCH_SIZE` and the replica count set
@@ -662,7 +662,7 @@ Values are write-only via the API (list returns names only). The worker's
 **Built (2026-10-11).** `pkg/vault` (AES-256-GCM keyring with versions and additional
 authenticated data), migration `0011_secrets.sql`, `internal/services/vault` (put,
 list, delete, per-run decryption as the engine's `SecretSource`, and online
-rotation with compare-and-set row updates), `/v1/secrets` and the rotation admin
+rotation with compare-and-set row updates), `/be/v1/secrets` and the rotation admin
 routes (`04 §4c`). Beyond the plan, the dispatcher also scrubs secret values from a
 node's stored output and error and fails a missing secret by name. Rotation has an
 operating rule: deploy the new key to every process before running it.
@@ -670,7 +670,7 @@ operating rule: deploy the new key to every process before running it.
 ### M13 — LLM providers and agents (1–1.5 weeks)
 
 - `provider_connections(org, provider, name, base_url, encrypted key)`, with
-  `POST /v1/providers/test` that lists models before saving (4.5).
+  `POST /be/v1/providers/test` that lists models before saving (4.5).
 - `agents(org, name, provider_connection, model, system_prompt, input_schema,
   output_schema, tools, max_iterations, temperature, max_tokens)` (4.1–4.3).
 - `agent` node type: `config: {agent: <name>, input: {...}}` (4.4); the tool loop
@@ -689,8 +689,8 @@ operating rule: deploy the new key to every process before running it.
 server) and Gemini, each with a `ListModels` for the connection test; migration
 `0012_providers_agents.sql`; `internal/services/providers` (encrypted keys, test
 before save, a client per named connection, every request through the egress guard)
-and `internal/services/agents` (definitions, validation, test runs); `/v1/providers`
-and `/v1/agents` (`04 §4d`). The `agent` node runs a stored agent
+and `internal/services/agents` (definitions, validation, test runs); `/be/v1/providers`
+and `/be/v1/agents` (`04 §4d`). The `agent` node runs a stored agent
 (`agent: <name>, input: {...}`) as well as the inline form, and a fail-closed
 `http_request` tool joins `current_time`. Connector, database and MCP tools arrive
 with M14 and M15. Acceptance is checked against local fake servers for all four
@@ -730,8 +730,8 @@ callback, lazy refresh with compare-and-set; `0014_oauth_states.sql`) and the
 (`internal/core/executor/connectors`, `02 §4.12`). They are tested against fake Google,
 Dropbox and Microsoft servers; **a manual end-to-end check against real accounts has not
 been done** and needs OAuth apps registered with each provider. Slice 1 is built: the connections framework
-(`0013_connections.sql`, `internal/services/connections`, `/v1/connections` and
-`/v1/integrations`, `04 §4e`), `executor.Connections` and `Request.Redact`, and
+(`0013_connections.sql`, `internal/services/connections`, `/be/v1/connections` and
+`/be/v1/integrations`, `04 §4e`), `executor.Connections` and `Request.Redact`, and
 `email.send` over SMTP and Resend (`pkg/mailer` builds RFC 5322 messages with header
 injection protection and speaks SMTP through the egress guard). Vault rotation now
 re-seals provider keys and connection credentials as well as vault secrets.
@@ -767,6 +767,23 @@ M15_PUBLIC_MCP_URL=https://mcp.deepwiki.com/mcp \
   go test -count=1 -tags=integration ./test/integration -run '^TestMCPPublicAgent$'
 ```
 
+**Shared connector expansion (complete locally).** One action catalog owns
+workflow executors, agent tools and frontend schemas. SQL connection conversion
+and read/query execution were deduplicated; PostgreSQL, MySQL and MongoDB appear
+in the same Connectors section as other services. Added Google Docs, Sheets,
+Calendar, Gmail search/read, Slack and Notion actions. Migration
+`0017_connector_actions.sql` extends the existing connection kind constraint;
+credentials continue to use the existing vault, tenant lookup, testing and
+rotation paths. Google kinds use the existing OAuth state/refresh implementation.
+Slack/Notion use integration tokens with test-before-save. MongoDB uses the
+maintained Go driver, certificate verification by default, guarded dialing,
+bounded reads and no server-side JavaScript. Agent permissions select individual
+read/write actions, so analytics agents can be granted read actions alone.
+Acceptance covers real PostgreSQL/MySQL/MongoDB, scripted Google/Slack/Notion and
+LLM APIs, and the browser's connector-to-agent visual workflow. **Real Google,
+Slack, Notion, MongoDB Atlas and LLM account checks remain pending.** Set
+`MONGO_URL` to include local MongoDB acceptance; CI provisions MongoDB 8.
+
 ### M16 — Webhook triggers (complete locally)
 
 `triggers(org, workflow, kind, token_hash, secret, enabled)`. Calling
@@ -776,8 +793,8 @@ check; the `Idempotency-Key` header is honoured (9). Plan run limits apply.
 
 ### M17 — Workflow assistant (implemented; real-provider acceptance pending)
 
-`POST /v1/assistant/workflows`: requirements text in, YAML out. The prompt
-includes the spec rules, `GET /v1/executors` descriptions, and the organization's
+`POST /be/v1/assistant/workflows`: requirements text in, YAML out. The prompt
+includes the spec rules, `GET /be/v1/executors` descriptions, and the organization's
 agents, connections and secret names (never values). The draft is compiled with
 `?dry_run`, and the diagnostics are fed back to the model for up to three repair
 rounds. It runs on a platform key (`ASSISTANT_PROVIDER`, `ASSISTANT_API_KEY`) or
@@ -789,10 +806,11 @@ the organization's own provider connection.
 
 ### M18 — Web UI (complete locally)
 
-Pages: login and accept invite; workflows (list, YAML editor with live
-validation, DAG graph, versions, run button with an input form); assistant
+Pages: login and accept invite; workflows (list, visual builder with draggable steps, editable dependency edges,
+saved connector/agent selection, action forms, YAML editor with live validation,
+DAG graph, versions, run button with an input form); assistant
 panel; runs (filters, detail with node timeline, inputs/outputs, live events
-over SSE, cancel); agents (create, test, use); connections and integrations
+over SSE, cancel); agents (create, test, use, explicit saved connector action permissions); Connectors and integrations
 (OAuth connect buttons, test); vault; webhooks; members and invites; API keys;
 plan and usage.
 
@@ -987,11 +1005,11 @@ pays for itself the first time someone asks why a run took nine minutes.
 hand-writes UPDATEs against production at 3am:
 
 ```
-POST /v1/runs/{id}/cancel                         -- tenant API, editor role
-POST /v1/admin/node-executions/{id}/retry         -- insert attempt+1 as ready
-POST /v1/admin/node-executions/{id}/skip          -- force-skip a wedged node, then advance
-POST /v1/signals                                  -- tenant API, editor role
-POST /v1/admin/workers/{worker_id}/release-leases -- after a hard crash
+POST /be/v1/runs/{id}/cancel                         -- tenant API, editor role
+POST /be/v1/admin/node-executions/{id}/retry         -- insert attempt+1 as ready
+POST /be/v1/admin/node-executions/{id}/skip          -- force-skip a wedged node, then advance
+POST /be/v1/signals                                  -- tenant API, editor role
+POST /be/v1/admin/workers/{worker_id}/release-leases -- after a hard crash
 ```
 
 ---
@@ -1006,7 +1024,7 @@ If you want a single sequence to follow without re-reading everything:
    everything after it.
 3. `spec` package: structs → decode → normalise → validate → graph. Golden tests.
 4. `expr`: CEL env + the template walker. The 30-case table test.
-5. Wire `POST /v1/workflows` with `?dry_run`. You can now lint YAML in CI.
+5. Wire `POST /be/v1/workflows` with `?dry_run`. You can now lint YAML in CI.
 6. `executor` interface, registry, `noop`, `transform`.
 7. The claim loop and dispatcher, single worker, no retries. Run a linear
    workflow end to end. **This is the first real milestone — everything after it

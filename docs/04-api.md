@@ -4,7 +4,7 @@ Small surface: workflows, runs, signals, tasks and the executor catalogue, plus 
 small admin surface (§5.1). Everything is JSON except workflow
 publishing, which takes YAML.
 
-Base path `/v1`. Auth is out of scope for this document — assume middleware
+Base path `/be/v1`. Auth is out of scope for this document — assume middleware
 resolves a `tenant_id` and puts it on the request context. Every query in the
 store layer takes `tenant_id` explicitly; there is no ambient default.
 
@@ -20,7 +20,7 @@ store layer takes `tenant_id` explicitly; there is no ambient default.
   "title":  "Workflow specification is invalid",
   "status": 400,
   "detail": "3 errors found while compiling the workflow",
-  "instance": "/v1/workflows",
+  "instance": "/be/v1/workflows",
   "errors": [
     {"code":"E_UNKNOWN_NODE","message":"needs references unknown node \"reserv_stock\"",
      "node_id":"assign_rider","path":"nodes[1].needs[0]","line":21},
@@ -44,7 +44,7 @@ Offset pagination over `runs` will be your first slow query in production.
 
 ## 2. Workflows
 
-### 2.1 `POST /v1/workflows` — publish a version
+### 2.1 `POST /be/v1/workflows` — publish a version
 
 ```
 Content-Type: application/x-yaml
@@ -79,18 +79,18 @@ Add `?dry_run=true` to compile and validate without persisting. Wire this into
 CI as a lint step — it is the highest-value 20 lines in the API, because it moves
 workflow bugs from runtime to pull-request time.
 
-### 2.2 `GET /v1/workflows` / `GET /v1/workflows/{name}`
+### 2.2 `GET /be/v1/workflows` / `GET /be/v1/workflows/{name}`
 
 List (keyset paginated) and fetch. The detail response includes the latest
 version's compiled spec and a version summary list — enough to render a graph.
 
-### 2.3 `GET /v1/workflows/{name}/versions/{version}`
+### 2.3 `GET /be/v1/workflows/{name}/versions/{version}`
 
 Returns `yaml_source`, `spec`, `spec_hash`, `created_at`, `created_by`.
 `?format=yaml` returns the raw source with `Content-Type: application/x-yaml`,
 so `curl ... > workflow.yaml` round-trips exactly what was deployed.
 
-### 2.4 `DELETE /v1/workflows/{name}` — archive
+### 2.4 `DELETE /be/v1/workflows/{name}` — archive
 
 Sets `archived_at`. New runs are rejected with **409**; existing runs continue.
 Versions are never deleted (I7).
@@ -99,7 +99,7 @@ Versions are never deleted (I7).
 
 ## 3. Runs
 
-### 3.1 `POST /v1/runs` — start a run
+### 3.1 `POST /be/v1/runs` — start a run
 
 ```json
 {
@@ -144,7 +144,7 @@ Implementation: insert the run row, insert the root nodes as `ready`, emit
 `run.created` + `run.started`, `pg_notify('wf_ready')` — one transaction, and the
 `ON CONFLICT (tenant_id, idempotency_key)` path returns the existing row.
 
-### 3.2 `GET /v1/runs/{id}`
+### 3.2 `GET /be/v1/runs/{id}`
 
 ```json
 {
@@ -164,7 +164,7 @@ Implementation: insert the run row, insert the root nodes as `ready`, emit
 `progress.total` is `len(spec.nodes)` — an upper bound, since branches skip nodes.
 Good enough for a progress bar and free to compute.
 
-### 3.3 `GET /v1/runs` — list
+### 3.3 `GET /be/v1/runs` — list
 
 Filters: `workflow`, `status`, `correlation_id`, `parent_run_id` (the child runs
 of a sub-workflow node), `created_after`, `created_before`. Keyset paginated on `(created_at, id)` descending.
@@ -172,7 +172,7 @@ of a sub-workflow node), `created_after`, `created_before`. Keyset paginated on 
 `?correlation_id=ORD-88213` is the query that gets used most. It is backed by
 `runs_correlation_ix`.
 
-### 3.4 `GET /v1/runs/{id}/nodes`
+### 3.4 `GET /be/v1/runs/{id}/nodes`
 
 Every node execution, ordered by `created_at`. This is the debugging endpoint:
 
@@ -192,10 +192,10 @@ succeeded" is exactly the information someone is looking for when they call this
 
 `?include=input` adds the resolved config that was sent (large; opt-in).
 
-### 3.5 `GET /v1/runs/{id}/events`
+### 3.5 `GET /be/v1/runs/{id}/events`
 
 ```
-GET /v1/runs/{id}/events?after=12&limit=100
+GET /be/v1/runs/{id}/events?after=12&limit=100
 ```
 
 Returns `run_events` in `seq` order. Because `seq` is gap-free (I6), a consumer
@@ -206,7 +206,7 @@ then follow. Implement follow by `LISTEN wf_events_<run_id>` with a slow poll
 fallback — same rule as the claim loop: **NOTIFY is an optimisation, the poll is
 the correctness guarantee.**
 
-### 3.6 `POST /v1/runs/{id}/cancel`
+### 3.6 `POST /be/v1/runs/{id}/cancel`
 
 ```json
 {"reason": "customer cancelled the order"}
@@ -219,7 +219,7 @@ Say so in the response.
 
 **409** if the run is already terminal.
 
-### 3.7 `POST /v1/runs/{id}/retry` (M6, optional)
+### 3.7 `POST /be/v1/runs/{id}/retry` (M6, optional)
 
 Creates a **new run** from the same version and input, with
 `parent_run_id` set. Deliberately not a resume: resuming a failed run means
@@ -231,7 +231,7 @@ derivation gives you the same protection with none of the ambiguity.
 
 ## 4. Signals
 
-### 4.1 `POST /v1/signals`
+### 4.1 `POST /be/v1/signals`
 
 ```json
 {"key": "order.picked_up:ORD-88213", "payload": {"rider":"R-42","at":"2026-08-25T09:26:00Z"}}
@@ -247,7 +247,7 @@ waiting node with `payload` as its output, and advances the DAG — one transact
   prominently, because it is the thing integrators will trip on.
 - **422** if `payload` fails the wait's declared `schema`.
 - **400** if `key` starts with `task:` or `subworkflow:`. Those wait keys belong to
-  the engine; complete a human task through `/v1/tasks` (§4.2), which applies the
+  the engine; complete a human task through `/be/v1/tasks` (§4.2), which applies the
   claim and assignee rules, and sub-workflows complete themselves.
 
 An `Idempotency-Key` header is honoured: a duplicate signal for an
@@ -263,11 +263,11 @@ is the wait's ordinary timeout path.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `GET /v1/tasks` | viewer | the worklist, newest first, keyset paginated (`limit`, `after`); filters `queue`, `status`, `assignee`, and `mine=true` for tasks the caller claimed |
-| `GET /v1/tasks/{id}` | viewer | one task: queue, form, assignee, payload, `due_at`, claim, status |
-| `POST /v1/tasks/{id}/claim` | editor | reserve an open task; claiming your own task again is a no-op |
-| `POST /v1/tasks/{id}/release` | editor | give a claimed task back; only the claimer or an admin |
-| `POST /v1/tasks/{id}/complete` | editor | body `{"payload": ...}`; the payload becomes the node's output and the run advances |
+| `GET /be/v1/tasks` | viewer | the worklist, newest first, keyset paginated (`limit`, `after`); filters `queue`, `status`, `assignee`, and `mine=true` for tasks the caller claimed |
+| `GET /be/v1/tasks/{id}` | viewer | one task: queue, form, assignee, payload, `due_at`, claim, status |
+| `POST /be/v1/tasks/{id}/claim` | editor | reserve an open task; claiming your own task again is a no-op |
+| `POST /be/v1/tasks/{id}/release` | editor | give a claimed task back; only the claimer or an admin |
+| `POST /be/v1/tasks/{id}/complete` | editor | body `{"payload": ...}`; the payload becomes the node's output and the run advances |
 
 `status` is `open`, `claimed`, `completed`, `expired` (the SLA passed) or
 `cancelled` (the run ended). A task with an `assignee` can only be claimed or
@@ -290,22 +290,22 @@ always keeps at least one owner. Sign-up is invite-only.
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `POST /v1/auth/login` | none | `{email, password}` → sets the session cookie; wrong credentials are indistinguishable from unknown emails, and 5 failures in a row lock the account for 15 minutes (`429 account_locked`) |
-| `GET /v1/auth/invite?token=` | none | preview an invite: email, role, organization, whether the email already has an account |
-| `POST /v1/auth/accept-invite` | none | `{token, password, name}`; creates the account (or, if the email has one, requires its password), joins the organization — created now for a platform invite — and signs in. `410` if the invite is unknown, used or expired |
-| `POST /v1/auth/logout` | session | ends the session |
-| `GET /v1/auth/me` | session | the user, the current organization and every organization they can switch to |
-| `POST /v1/auth/switch-org` | session | `{organization_id}` |
-| `GET /v1/members` | viewer | members of the current organization |
-| `PATCH /v1/members/{user_id}` | admin | `{role}` |
-| `DELETE /v1/members/{user_id}` | viewer | remove a member (admin) or leave (yourself); their sessions stop working at once |
-| `POST /v1/invites` | admin | `{email, role}` → the response carries the invite `token` and `accept_url` **once**; `GET /v1/invites` lists pending ones, `DELETE /v1/invites/{id}` revokes |
-| `POST /v1/api-keys` | admin | `{name, role}` (viewer, editor or admin; at most your own role) → the `token` is shown once; `GET` lists metadata, `DELETE /v1/api-keys/{id}` revokes at once |
-| `GET /v1/usage` | viewer | the plan and current usage |
-| `GET /v1/plans` | viewer | every plan and its limits |
-| `POST /v1/admin/invites` | platform admin | `{email, organization_name}` — invites someone to a new organization they will own |
-| `GET /v1/admin/organizations` | platform admin | organizations with plan, members and runs this month |
-| `PUT /v1/admin/organizations/{id}/plan` | platform admin | `{plan}`; billing is manual until self sign-up opens |
+| `POST /be/v1/auth/login` | none | `{email, password}` → sets the session cookie; wrong credentials are indistinguishable from unknown emails, and 5 failures in a row lock the account for 15 minutes (`429 account_locked`) |
+| `GET /be/v1/auth/invite?token=` | none | preview an invite: email, role, organization, whether the email already has an account |
+| `POST /be/v1/auth/accept-invite` | none | `{token, password, name}`; creates the account (or, if the email has one, requires its password), joins the organization — created now for a platform invite — and signs in. `410` if the invite is unknown, used or expired |
+| `POST /be/v1/auth/logout` | session | ends the session |
+| `GET /be/v1/auth/me` | session | the user, the current organization and every organization they can switch to |
+| `POST /be/v1/auth/switch-org` | session | `{organization_id}` |
+| `GET /be/v1/members` | viewer | members of the current organization |
+| `PATCH /be/v1/members/{user_id}` | admin | `{role}` |
+| `DELETE /be/v1/members/{user_id}` | viewer | remove a member (admin) or leave (yourself); their sessions stop working at once |
+| `POST /be/v1/invites` | admin | `{email, role}` → the response carries the invite `token` and `accept_url` **once**; `GET /be/v1/invites` lists pending ones, `DELETE /be/v1/invites/{id}` revokes |
+| `POST /be/v1/api-keys` | admin | `{name, role}` (viewer, editor or admin; at most your own role) → the `token` is shown once; `GET` lists metadata, `DELETE /be/v1/api-keys/{id}` revokes at once |
+| `GET /be/v1/usage` | viewer | the plan and current usage |
+| `GET /be/v1/plans` | viewer | every plan and its limits |
+| `POST /be/v1/admin/invites` | platform admin | `{email, organization_name}` — invites someone to a new organization they will own |
+| `GET /be/v1/admin/organizations` | platform admin | organizations with plan, members and runs this month |
+| `PUT /be/v1/admin/organizations/{id}/plan` | platform admin | `{plan}`; billing is manual until self sign-up opens |
 
 **Plan limits** are rows in `plans` (a null limit is unlimited) and are enforced at
 publish time (workflows, steps per workflow) and at run creation (runs per calendar
@@ -337,11 +337,11 @@ list shows names only.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `GET /v1/secrets` | editor | names and metadata, plus the `${secrets.NAME}` reference to paste |
-| `PUT /v1/secrets/{name}` | admin | `{"value": "..."}` creates or replaces; takes effect on the next node |
-| `DELETE /v1/secrets/{name}` | admin | workflows that still use it fail with `E_SECRET_MISSING` |
-| `GET /v1/admin/vault` | platform admin | how many secrets use each master-key version |
-| `POST /v1/admin/vault/rotate` | platform admin | re-seal every secret under the current master key |
+| `GET /be/v1/secrets` | editor | names and metadata, plus the `${secrets.NAME}` reference to paste |
+| `PUT /be/v1/secrets/{name}` | admin | `{"value": "..."}` creates or replaces; takes effect on the next node |
+| `DELETE /be/v1/secrets/{name}` | admin | workflows that still use it fail with `E_SECRET_MISSING` |
+| `GET /be/v1/admin/vault` | platform admin | how many secrets use each master-key version |
+| `POST /be/v1/admin/vault/rotate` | platform admin | re-seal every secret under the current master key |
 
 Names are `[A-Z][A-Z0-9_]{0,63}`; values are 8 bytes to 64 KiB (short values could
 not be scrubbed reliably). Without `VAULT_MASTER_KEY` the vault is off and these
@@ -358,9 +358,9 @@ once, permanently, with `E_SECRET_MISSING` and the secret's name.
 **Rotating the master key** needs no downtime: (1) generate a new 32-byte key;
 (2) deploy **every** process (API and workers) with it as `VAULT_MASTER_KEY`, a
 higher `VAULT_KEY_VERSION`, and the previous key in `VAULT_OLD_KEYS=<version>:<key>`;
-(3) only then `POST /v1/admin/vault/rotate` (repeat until `failed` is 0; it is
+(3) only then `POST /be/v1/admin/vault/rotate` (repeat until `failed` is 0; it is
 safe while serving, and each row is replaced compare-and-set on its old version);
-(4) when `GET /v1/admin/vault` shows nothing under the old version, remove the old
+(4) when `GET /be/v1/admin/vault` shows nothing under the old version, remove the old
 key. Step 2 must finish first: a process that does not yet hold the new key cannot
 read secrets that were already re-sealed.
 
@@ -377,11 +377,11 @@ goes through the egress guard, since a base URL is chosen by the tenant.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `POST /v1/providers/test` | admin | `{provider, base_url?, api_key}` → `{ok, models}` by listing the models the key can use; saves nothing. A bad key is `422 provider_test_failed` and the message never echoes the key |
-| `POST /v1/providers` | admin | `{name, provider, base_url?, api_key, skip_test?}`; **tests first and saves only if the test passes**; returns the connection and the models found |
-| `GET /v1/providers` | editor | connections, with how many agents use each |
-| `POST /v1/providers/{id}/test` | admin | re-test a saved connection |
-| `DELETE /v1/providers/{id}` | admin | `409 connection_in_use` while an agent uses it |
+| `POST /be/v1/providers/test` | admin | `{provider, base_url?, api_key}` → `{ok, models}` by listing the models the key can use; saves nothing. A bad key is `422 provider_test_failed` and the message never echoes the key |
+| `POST /be/v1/providers` | admin | `{name, provider, base_url?, api_key, skip_test?}`; **tests first and saves only if the test passes**; returns the connection and the models found |
+| `GET /be/v1/providers` | editor | connections, with how many agents use each |
+| `POST /be/v1/providers/{id}/test` | admin | re-test a saved connection |
+| `DELETE /be/v1/providers/{id}` | admin | `409 connection_in_use` while an agent uses it |
 
 **Agents** are named, reusable definitions: which connection and model, the system
 prompt, an `input_schema` and `output_schema` (the JSON Schema subset used by
@@ -392,10 +392,10 @@ which each run's node metrics record.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `GET /v1/agents`, `GET /v1/agents/{name}` | viewer | read |
-| `POST /v1/agents`, `PUT /v1/agents/{name}`, `DELETE /v1/agents/{name}` | editor | manage (the name in the path is the identity) |
-| `POST /v1/agents/{name}/test` | editor | run once with `{input?, prompt?}`; spends real tokens, creates no run; a failing agent is a 200 with `ok: false` and the reason |
-| `GET /v1/agent-tools` | viewer | tools an agent can be given |
+| `GET /be/v1/agents`, `GET /be/v1/agents/{name}` | viewer | read |
+| `POST /be/v1/agents`, `PUT /be/v1/agents/{name}`, `DELETE /be/v1/agents/{name}` | editor | manage (the name in the path is the identity) |
+| `POST /be/v1/agents/{name}/test` | editor | run once with `{input?, prompt?}`; spends real tokens, creates no run; a failing agent is a 200 with `ok: false` and the reason |
+| `GET /be/v1/agent-tools` | viewer | tools an agent can be given |
 
 Use an agent in a workflow with `type: agent, config: {agent: <name>, input: {...}}`
 (`02 §4.6`). The input is checked against `input_schema` and passed to the model as
@@ -413,46 +413,73 @@ name a PostgreSQL/MySQL connection in the same organization. This binding is
 saved with the definition and returned by agent reads. Database tools receive
 no connection name or credentials from the model (see `02 §4.14`).
 
+Saved connector tool references use `connector:<connection-name>:<action>` in
+`tools`, for example `connector:warehouse:db.query` or
+`connector:analytics:mongo.find`. Save-time validation checks the organization's
+connector and its action's accepted kinds. The model receives only action
+arguments; it cannot replace the connection or credentials. Tools have a 30s
+execution budget and a 32 KiB result budget. SQL and MongoDB finds retain valid
+JSON and mark trimmed rows as `truncated`. Grant only actions marked `read_only`
+to exploration agents. There are at most 64 references in one agent definition.
+The older `database_connection` binding remains supported through the same
+executors. The UI lists available actions from `/be/v1/integrations`.
+
 MCP tool references use `"mcp:<connection-name>"` in `tools`. Saving checks that
 each name belongs to this organization and has kind `mcp`; discovery happens
-at execution time. `GET /v1/agent-tools` lists built-ins, including database
+at execution time. `GET /be/v1/agent-tools` lists built-ins, including database
 tools; remote catalogs come from the selected servers. Duplicate tool references
 and more than eight MCP server references are rejected.
 
 ---
 
-## 4e. Connections (M14–M15)
+## 4e. Connectors (M14–M15)
 
 A **connection** is an organization's named link to an external service that
 workflow nodes can use by name: SMTP and Resend for email, OAuth services
-(Gmail, Google Drive, Dropbox, OneDrive), databases and MCP servers. Settings
+(Gmail, Google Drive, Google Docs, Sheets, Calendar, Dropbox, OneDrive),
+PostgreSQL, MySQL, MongoDB, Slack, Notion and MCP servers. Workflows and agents
+reuse the same saved connectors. Settings
 (host, port, default sender) are stored in clear; credentials are sealed with the
 vault master key and are **write-only**: the API shows only a hint (the last four
 characters) and, for OAuth connections, the connected account.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `GET /v1/integrations` | editor | the kinds this installation offers and the fields each takes |
-| `POST /v1/connections/test` | admin | `{kind, config, secret}`: prove settings and credentials work, save nothing |
-| `POST /v1/connections` | admin | `{name, kind, config, secret, skip_test?}`; **tests first and saves only if the test passes** (`422 connection_test_failed`; the message never echoes a credential) |
-| `GET /v1/connections`, `GET /v1/connections/{name}` | editor | settings and hint, never credentials |
-| `PUT /v1/connections/{name}` | admin | replace the settings; send `secret` to replace the credentials, omit it to keep them; the kind cannot change |
-| `POST /v1/connections/{name}/test` | admin | re-test with the stored credentials |
-| `DELETE /v1/connections/{name}` | admin | nodes that still name it fail with `E_CONNECTION_NOT_FOUND` |
+| `GET /be/v1/integrations` | editor | the kinds this installation offers, configuration fields, and `actions: [{name, title, kinds, read_only, input_schema}]` |
+| `POST /be/v1/connections/test` | admin | `{kind, config, secret}`: prove settings and credentials work, save nothing |
+| `POST /be/v1/connections` | admin | `{name, kind, config, secret, skip_test?}`; **tests first and saves only if the test passes** (`422 connection_test_failed`; the message never echoes a credential) |
+| `GET /be/v1/connections`, `GET /be/v1/connections/{name}` | editor | settings and hint, never credentials |
+| `PUT /be/v1/connections/{name}` | admin | replace the settings; send `secret` to replace the credentials, omit it to keep them; the kind cannot change |
+| `POST /be/v1/connections/{name}/test` | admin | re-test with the stored credentials |
+| `DELETE /be/v1/connections/{name}` | admin | nodes that still name it fail with `E_CONNECTION_NOT_FOUND` |
 
-**OAuth connections** (Gmail, Google Drive, Dropbox, OneDrive) are created by signing
-in with the provider, not by pasting credentials, and appear in `GET /v1/integrations`
+**MongoDB** uses `kind: mongo`, `config: {database, tls?}` and
+`secret: {uri}`. The URI supports `mongodb://` and `mongodb+srv://`; keep its
+credentials in `secret`. TLS defaults to `verify-full`; `disable` is an explicit
+option for a trusted local server. URI TLS overrides are rejected. Saving tests
+with a ping through the egress guard. Use a MongoDB user with only the permissions
+required by its granted actions.
+
+**Slack and Notion** use `kind: slack|notion`, empty `config`, and
+`secret: {access_token}`. Save tests Slack `auth.test` or Notion `/v1/users/me`.
+Slack needs `chat:write` for sending and the appropriate channel/group/DM history
+scopes for reads; add the bot to its channels. Notion needs the read/update
+capabilities required by the actions, with pages shared with the integration.
+Notion requests pin API version `2025-09-03`.
+
+**OAuth connections** (Gmail, Google Drive, Google Docs, Sheets, Calendar, Dropbox, OneDrive) are created by signing
+in with the provider, not by pasting credentials, and appear in `GET /be/v1/integrations`
 (with `oauth: true`) only when the operator registered an OAuth app for the provider:
 
-1. `POST /v1/connections/oauth/start` (admin) with `{kind, name}` returns an
+1. `POST /be/v1/connections/oauth/start` (admin) with `{kind, name}` returns an
    `authorize_url`. It carries a one-time `state` bound to your organization and a PKCE
    challenge; send the user's browser there. Naming an existing connection of the same
    kind reconnects it with new tokens (use this when access was revoked).
-2. The provider redirects to `GET /v1/oauth/callback` (register
-   `{PUBLIC_URL}/v1/oauth/callback` with the provider). It needs no session, consumes the
+2. The provider redirects to `GET /be/v1/oauth/callback` (register
+   `{PUBLIC_URL}/be/v1/oauth/callback` with the provider). It needs no session, consumes the
    state (so a replay fails), exchanges the code, looks up the account and stores the
    tokens sealed with the vault key, then redirects the browser to
-   `{PUBLIC_URL}/connections?connected=<name>`, or `?error=<message>` if anything failed.
+   `{PUBLIC_URL}/ui/connectors?connected=<name>`, or `?error=<message>` if anything failed.
 3. Access tokens are refreshed shortly before they expire, once however many nodes need
    it. If the provider no longer honours the refresh token the node fails permanently with
    `E_CONNECTION_REAUTH` and says to reconnect.
@@ -489,9 +516,9 @@ that echoes a rejected password back cannot leak it into a run record.
 | `GET /healthz` | process liveness; no DB call |
 | `GET /readyz` | DB ping + migration version check |
 | `GET /metrics` | Prometheus |
-| `GET /v1/executors` | registered node types + their config JSON Schema |
+| `GET /be/v1/executors` | registered node types + their config JSON Schema |
 
-`GET /v1/executors` is what lets an editor or docs page stay in sync with the
+`GET /be/v1/executors` is what lets an editor or docs page stay in sync with the
 binary. It costs nothing — you already have the registry.
 
 ### 5.1 Admin API (operators only)
@@ -507,9 +534,9 @@ the development authenticator, `X-Platform-Admin: true` grants the flag.
 
 | Endpoint | Effect |
 |---|---|
-| `POST /v1/admin/node-executions/{id}/retry` | cancel a live attempt (fencing its worker) and insert attempt+1 as `ready`; a failed attempt in a live run is retried as is. `409` for a finished run or a node that already has a later attempt |
-| `POST /v1/admin/node-executions/{id}/skip` | force-skip a ready, running or waiting node, then advance the run with normal skip semantics. `409` otherwise |
-| `POST /v1/admin/workers/{worker_id}/release-leases` | release a crashed worker's running nodes so rows are reclaimed now rather than at `LeaseTTL`; returns `{released: n}` |
+| `POST /be/v1/admin/node-executions/{id}/retry` | cancel a live attempt (fencing its worker) and insert attempt+1 as `ready`; a failed attempt in a live run is retried as is. `409` for a finished run or a node that already has a later attempt |
+| `POST /be/v1/admin/node-executions/{id}/skip` | force-skip a ready, running or waiting node, then advance the run with normal skip semantics. `409` otherwise |
+| `POST /be/v1/admin/workers/{worker_id}/release-leases` | release a crashed worker's running nodes so rows are reclaimed now rather than at `LeaseTTL`; returns `{released: n}` |
 
 These go through the same fenced SQL as the engine: a zero-row write means the
 node moved on and the call returns `409`, never a forced update. Run
@@ -569,15 +596,15 @@ gRPC entry point.
 
 ## 4f. Webhook triggers
 
-Editors can list `GET /v1/triggers`. Organization admins create
-`POST /v1/triggers` with `{name, workflow, input_mode: "body"|"envelope", signed,
+Editors can list `GET /be/v1/triggers`. Organization admins create
+`POST /be/v1/triggers` with `{name, workflow, input_mode: "body"|"envelope", signed,
 enabled?}`; the workflow must be active and belong to that organization.
 The response includes a one-time token and, when signed, a signing_secret.
 Only the token's SHA-256 is stored; the signing secret is encrypted in the
 versioned vault keyring. Lists return metadata only.
 
-Admins can `PATCH /v1/triggers/{id}` with enabled/input_mode, delete that route,
-and `POST /v1/triggers/{id}/rotate-token`. Rotation returns the new token once
+Admins can `PATCH /be/v1/triggers/{id}` with enabled/input_mode, delete that route,
+and `POST /be/v1/triggers/{id}/rotate-token`. Rotation returns the new token once
 and immediately invalidates the old URL. Foreign-organization IDs return 404.
 
 `POST /hooks/{token}` is public and authenticated by the unguessable token.
@@ -601,7 +628,7 @@ current at the time the first request starts the run.
 
 ## 4g. Workflow assistant
 
-Editors call `POST /v1/assistant/workflows` with
+Editors call `POST /be/v1/assistant/workflows` with
 `{requirements, connection?, model?}`. Requirements are capped at 16,000
 UTF-8 bytes. connection is a tenant provider connection name; when omitted,
 the dedicated platform assistant provider/key is used. model defaults to
@@ -623,9 +650,13 @@ selected provider's billing account.
 
 ## 4h. Embedded web application
 
-The API serves the React/Vite application at `/` and its page paths, including
-`/accept-invite?token=…`. Hashed assets are immutable; HTML is not cached.
-Unknown `/v1` and `/hooks` endpoints remain 404 rather than falling back to HTML.
+The API serves the React/Vite application under `/ui/`, including
+`/ui/workflows` and `/ui/accept-invite?token=…`. `/` redirects to `/ui/`.
+Frontend assets are served under `/ui/assets/`. Hashed assets are immutable;
+HTML is not cached.
+The backend API lives under `/be/v1`; unregistered backend routes and old
+`/v1` routes return 404. Webhook ingress remains at `/hooks/{token}`.
+Health and metrics endpoints remain at `/healthz`, `/readyz` and `/metrics`.
 The browser uses same-origin session cookies and SSE; no credential is stored
 in localStorage. Public authentication mutations also reject mismatched browser
 origins. The worker's health/metrics server does not serve the UI.

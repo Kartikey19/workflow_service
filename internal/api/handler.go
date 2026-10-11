@@ -1,4 +1,4 @@
-// Package api contains the /v1 HTTP handlers. Handlers stay thin: logic lives
+// Package api contains the /be/v1 HTTP handlers. Handlers stay thin: logic lives
 // in flow and workflows so it is reachable from tests and other entry points
 // (04 §6). Server lifecycle, authentication and metrics live in package server.
 package api
@@ -154,7 +154,7 @@ type ExecutorCatalog interface {
 	Descriptions() []executor.Description
 }
 
-// Services are the dependencies of the /v1 API.
+// Services are the dependencies of the /be/v1 API.
 type Services struct {
 	// Pool carries the LISTEN connection behind server-sent events.
 	Pool      *pgxpool.Pool
@@ -168,19 +168,19 @@ type Services struct {
 	CookieSecure bool
 	// PublicURL is the externally visible base URL, used to build invite links.
 	PublicURL string
-	// Vault enables /v1/secrets; nil leaves them unregistered.
+	// Vault enables /be/v1/secrets; nil leaves them unregistered.
 	Vault VaultService
-	// Connections enables /v1/connections and /v1/integrations.
+	// Connections enables /be/v1/connections and /be/v1/integrations.
 	Connections ConnectionService
-	// Providers and Agents enable /v1/providers and /v1/agents.
+	// Providers and Agents enable /be/v1/providers and /be/v1/agents.
 	Providers ProviderService
 	Agents    AgentService
 	// Assistant and Triggers enable draft generation and webhook routes.
 	Assistant AssistantService
 	Triggers  TriggerService
-	// Tasks enables the /v1/tasks routes; nil leaves them unregistered.
+	// Tasks enables the /be/v1/tasks routes; nil leaves them unregistered.
 	Tasks TaskService
-	// Admin enables the /v1/admin routes; nil leaves them unregistered.
+	// Admin enables the /be/v1/admin routes; nil leaves them unregistered.
 	Admin AdminService
 	Auth  auth.Authenticator
 	// Extra registers routes added by later milestones (identity, vault,
@@ -196,7 +196,7 @@ func (s *Services) Validate() error {
 	return nil
 }
 
-// Handler serves the /v1 API.
+// Handler serves the /be/v1 API.
 type Handler struct {
 	services *Services
 	events   *events.Hub
@@ -215,88 +215,88 @@ func NewHandler(services *Services, hub *events.Hub, closing <-chan struct{}, lo
 	return &Handler{services: services, events: hub, logger: logger, closing: closing}
 }
 
-// Register mounts every /v1 route on r.
+// Register mounts every /be/v1 route on r.
 func (h *Handler) Register(r Router) {
-	r.Handle("POST /v1/workflows", auth.RoleEditor, h.publishWorkflow)
-	r.Handle("GET /v1/workflows", auth.RoleViewer, h.listWorkflows)
-	r.Handle("GET /v1/workflows/{name}", auth.RoleViewer, h.getWorkflow)
-	r.Handle("GET /v1/workflows/{name}/versions/{version}", auth.RoleViewer, h.getWorkflowVersion)
-	r.Handle("DELETE /v1/workflows/{name}", auth.RoleEditor, h.archiveWorkflow)
-	r.Handle("POST /v1/workflows/{name}/restore", auth.RoleEditor, h.restoreWorkflow)
+	r.Handle("POST /be/v1/workflows", auth.RoleEditor, h.publishWorkflow)
+	r.Handle("GET /be/v1/workflows", auth.RoleViewer, h.listWorkflows)
+	r.Handle("GET /be/v1/workflows/{name}", auth.RoleViewer, h.getWorkflow)
+	r.Handle("GET /be/v1/workflows/{name}/versions/{version}", auth.RoleViewer, h.getWorkflowVersion)
+	r.Handle("DELETE /be/v1/workflows/{name}", auth.RoleEditor, h.archiveWorkflow)
+	r.Handle("POST /be/v1/workflows/{name}/restore", auth.RoleEditor, h.restoreWorkflow)
 
-	r.Handle("POST /v1/runs", auth.RoleEditor, h.createRun)
-	r.Handle("GET /v1/runs", auth.RoleViewer, h.listRuns)
-	r.Handle("GET /v1/runs/{id}", auth.RoleViewer, h.getRun)
-	r.Handle("GET /v1/runs/{id}/nodes", auth.RoleViewer, h.listRunNodes)
-	r.Handle("GET /v1/runs/{id}/events", auth.RoleViewer, h.runEvents)
-	r.Handle("POST /v1/runs/{id}/cancel", auth.RoleEditor, h.cancelRun)
-	r.Handle("POST /v1/runs/{id}/retry", auth.RoleEditor, h.retryRun)
+	r.Handle("POST /be/v1/runs", auth.RoleEditor, h.createRun)
+	r.Handle("GET /be/v1/runs", auth.RoleViewer, h.listRuns)
+	r.Handle("GET /be/v1/runs/{id}", auth.RoleViewer, h.getRun)
+	r.Handle("GET /be/v1/runs/{id}/nodes", auth.RoleViewer, h.listRunNodes)
+	r.Handle("GET /be/v1/runs/{id}/events", auth.RoleViewer, h.runEvents)
+	r.Handle("POST /be/v1/runs/{id}/cancel", auth.RoleEditor, h.cancelRun)
+	r.Handle("POST /be/v1/runs/{id}/retry", auth.RoleEditor, h.retryRun)
 
-	r.Handle("POST /v1/signals", auth.RoleEditor, h.signal)
-	r.Handle("GET /v1/executors", auth.RoleViewer, h.listExecutors)
+	r.Handle("POST /be/v1/signals", auth.RoleEditor, h.signal)
+	r.Handle("GET /be/v1/executors", auth.RoleViewer, h.listExecutors)
 
 	if h.services.Assistant != nil {
-		r.Handle("POST /v1/assistant/workflows", auth.RoleEditor, h.assistantWorkflow)
+		r.Handle("POST /be/v1/assistant/workflows", auth.RoleEditor, h.assistantWorkflow)
 	}
 	if h.services.Triggers != nil {
 		r.HandlePublic("POST /hooks/{token}", h.webhook)
-		r.Handle("POST /v1/triggers", auth.RoleAdmin, h.createTrigger)
-		r.Handle("GET /v1/triggers", auth.RoleEditor, h.listTriggers)
-		r.Handle("PATCH /v1/triggers/{id}", auth.RoleAdmin, h.updateTrigger)
-		r.Handle("DELETE /v1/triggers/{id}", auth.RoleAdmin, h.deleteTrigger)
-		r.Handle("POST /v1/triggers/{id}/rotate-token", auth.RoleAdmin, h.rotateTrigger)
+		r.Handle("POST /be/v1/triggers", auth.RoleAdmin, h.createTrigger)
+		r.Handle("GET /be/v1/triggers", auth.RoleEditor, h.listTriggers)
+		r.Handle("PATCH /be/v1/triggers/{id}", auth.RoleAdmin, h.updateTrigger)
+		r.Handle("DELETE /be/v1/triggers/{id}", auth.RoleAdmin, h.deleteTrigger)
+		r.Handle("POST /be/v1/triggers/{id}/rotate-token", auth.RoleAdmin, h.rotateTrigger)
 	}
 	if h.services.Tasks != nil {
-		r.Handle("GET /v1/tasks", auth.RoleViewer, h.listTasks)
-		r.Handle("GET /v1/tasks/{id}", auth.RoleViewer, h.getTask)
-		r.Handle("POST /v1/tasks/{id}/claim", auth.RoleEditor, h.claimTask)
-		r.Handle("POST /v1/tasks/{id}/release", auth.RoleEditor, h.releaseTask)
-		r.Handle("POST /v1/tasks/{id}/complete", auth.RoleEditor, h.completeTask)
+		r.Handle("GET /be/v1/tasks", auth.RoleViewer, h.listTasks)
+		r.Handle("GET /be/v1/tasks/{id}", auth.RoleViewer, h.getTask)
+		r.Handle("POST /be/v1/tasks/{id}/claim", auth.RoleEditor, h.claimTask)
+		r.Handle("POST /be/v1/tasks/{id}/release", auth.RoleEditor, h.releaseTask)
+		r.Handle("POST /be/v1/tasks/{id}/complete", auth.RoleEditor, h.completeTask)
 	}
 
 	if h.services.Identity != nil {
 		h.registerIdentity(r)
 	}
 	if h.services.Connections != nil {
-		r.Handle("GET /v1/integrations", auth.RoleEditor, h.listIntegrations)
-		r.Handle("POST /v1/connections/oauth/start", auth.RoleAdmin, h.startOAuth)
-		r.HandlePublic("GET /v1/oauth/callback", h.oauthCallback)
-		r.Handle("POST /v1/connections/test", auth.RoleAdmin, h.testConnectionInput)
-		r.Handle("POST /v1/connections", auth.RoleAdmin, h.createConnection)
-		r.Handle("GET /v1/connections", auth.RoleEditor, h.listConnections)
-		r.Handle("GET /v1/connections/{name}", auth.RoleEditor, h.getConnection)
-		r.Handle("PUT /v1/connections/{name}", auth.RoleAdmin, h.updateConnection)
-		r.Handle("DELETE /v1/connections/{name}", auth.RoleAdmin, h.deleteConnection)
-		r.Handle("POST /v1/connections/{name}/test", auth.RoleAdmin, h.testConnection)
+		r.Handle("GET /be/v1/integrations", auth.RoleEditor, h.listIntegrations)
+		r.Handle("POST /be/v1/connections/oauth/start", auth.RoleAdmin, h.startOAuth)
+		r.HandlePublic("GET /be/v1/oauth/callback", h.oauthCallback)
+		r.Handle("POST /be/v1/connections/test", auth.RoleAdmin, h.testConnectionInput)
+		r.Handle("POST /be/v1/connections", auth.RoleAdmin, h.createConnection)
+		r.Handle("GET /be/v1/connections", auth.RoleEditor, h.listConnections)
+		r.Handle("GET /be/v1/connections/{name}", auth.RoleEditor, h.getConnection)
+		r.Handle("PUT /be/v1/connections/{name}", auth.RoleAdmin, h.updateConnection)
+		r.Handle("DELETE /be/v1/connections/{name}", auth.RoleAdmin, h.deleteConnection)
+		r.Handle("POST /be/v1/connections/{name}/test", auth.RoleAdmin, h.testConnection)
 	}
 	if h.services.Providers != nil {
-		r.Handle("POST /v1/providers/test", auth.RoleAdmin, h.testProvider)
-		r.Handle("POST /v1/providers", auth.RoleAdmin, h.createProvider)
-		r.Handle("GET /v1/providers", auth.RoleEditor, h.listProviders)
-		r.Handle("POST /v1/providers/{id}/test", auth.RoleAdmin, h.testStoredProvider)
-		r.Handle("DELETE /v1/providers/{id}", auth.RoleAdmin, h.deleteProvider)
+		r.Handle("POST /be/v1/providers/test", auth.RoleAdmin, h.testProvider)
+		r.Handle("POST /be/v1/providers", auth.RoleAdmin, h.createProvider)
+		r.Handle("GET /be/v1/providers", auth.RoleEditor, h.listProviders)
+		r.Handle("POST /be/v1/providers/{id}/test", auth.RoleAdmin, h.testStoredProvider)
+		r.Handle("DELETE /be/v1/providers/{id}", auth.RoleAdmin, h.deleteProvider)
 	}
 	if h.services.Agents != nil {
-		r.Handle("GET /v1/agent-tools", auth.RoleViewer, h.listAgentTools)
-		r.Handle("GET /v1/agents", auth.RoleViewer, h.listAgents)
-		r.Handle("POST /v1/agents", auth.RoleEditor, h.createAgent)
-		r.Handle("GET /v1/agents/{name}", auth.RoleViewer, h.getAgent)
-		r.Handle("PUT /v1/agents/{name}", auth.RoleEditor, h.updateAgent)
-		r.Handle("DELETE /v1/agents/{name}", auth.RoleEditor, h.deleteAgent)
-		r.Handle("POST /v1/agents/{name}/test", auth.RoleEditor, h.testAgent)
+		r.Handle("GET /be/v1/agent-tools", auth.RoleViewer, h.listAgentTools)
+		r.Handle("GET /be/v1/agents", auth.RoleViewer, h.listAgents)
+		r.Handle("POST /be/v1/agents", auth.RoleEditor, h.createAgent)
+		r.Handle("GET /be/v1/agents/{name}", auth.RoleViewer, h.getAgent)
+		r.Handle("PUT /be/v1/agents/{name}", auth.RoleEditor, h.updateAgent)
+		r.Handle("DELETE /be/v1/agents/{name}", auth.RoleEditor, h.deleteAgent)
+		r.Handle("POST /be/v1/agents/{name}/test", auth.RoleEditor, h.testAgent)
 	}
 	if h.services.Vault != nil {
-		r.Handle("GET /v1/secrets", auth.RoleEditor, h.listSecrets)
-		r.Handle("PUT /v1/secrets/{name}", auth.RoleAdmin, h.putSecret)
-		r.Handle("DELETE /v1/secrets/{name}", auth.RoleAdmin, h.deleteSecret)
-		r.HandleAdmin("POST /v1/admin/vault/rotate", h.rotateVault)
-		r.HandleAdmin("GET /v1/admin/vault", h.vaultStatus)
+		r.Handle("GET /be/v1/secrets", auth.RoleEditor, h.listSecrets)
+		r.Handle("PUT /be/v1/secrets/{name}", auth.RoleAdmin, h.putSecret)
+		r.Handle("DELETE /be/v1/secrets/{name}", auth.RoleAdmin, h.deleteSecret)
+		r.HandleAdmin("POST /be/v1/admin/vault/rotate", h.rotateVault)
+		r.HandleAdmin("GET /be/v1/admin/vault", h.vaultStatus)
 	}
 
 	if h.services.Admin != nil {
-		r.HandleAdmin("POST /v1/admin/node-executions/{id}/retry", h.adminRetryNode)
-		r.HandleAdmin("POST /v1/admin/node-executions/{id}/skip", h.adminSkipNode)
-		r.HandleAdmin("POST /v1/admin/workers/{worker_id}/release-leases", h.adminReleaseLeases)
+		r.HandleAdmin("POST /be/v1/admin/node-executions/{id}/retry", h.adminRetryNode)
+		r.HandleAdmin("POST /be/v1/admin/node-executions/{id}/skip", h.adminSkipNode)
+		r.HandleAdmin("POST /be/v1/admin/workers/{worker_id}/release-leases", h.adminReleaseLeases)
 	}
 
 	for _, register := range h.services.Extra {

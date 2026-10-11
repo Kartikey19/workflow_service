@@ -189,7 +189,7 @@ func (Sleep) Execute(ctx context.Context, req executor.Request) (executor.Result
 	return executor.Result{Output: output, Control: &executor.Control{Sleep: &until}}, err
 }
 
-// WaitEvent parks the node until POST /v1/signals delivers its key, or the
+// WaitEvent parks the node until POST /be/v1/signals delivers its key, or the
 // timeout routes to on_timeout (02 §4.5). The signal payload is the output.
 type WaitEvent struct{}
 
@@ -200,7 +200,7 @@ func (WaitEvent) Type() string { return "wait_event" }
 func (WaitEvent) Describe() executor.Description {
 	return executor.Description{
 		Title: "Wait for event", Category: "control",
-		Description: "Pauses until an external system sends a signal with this key (POST /v1/signals), e.g. an approval. Output is the signal payload.",
+		Description: "Pauses until an external system sends a signal with this key (POST /be/v1/signals), e.g. an approval. Output is the signal payload.",
 		Example: `- id: await_approval
   type: wait_event
   needs: [request_approval]

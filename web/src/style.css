@@ -887,3 +887,82 @@ nav {
     box-shadow: none;
   }
 }
+
+.connector-actions {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.8rem 0;
+}
+.builder-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+.builder-add .field {
+  flex: 1;
+  min-width: 170px;
+}
+.builder-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 310px);
+  border: 1px solid var(--line, #d9e2dc);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+.builder-canvas {
+  height: 500px;
+  min-width: 0;
+  background: #f7faf8;
+}
+.builder-properties {
+  padding: 1rem;
+  background: #fff;
+  min-width: 0;
+  overflow: auto;
+  max-height: 650px;
+}
+.builder-properties textarea {
+  min-height: 80px;
+}
+.builder-properties pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.builder-properties fieldset {
+  border: 0;
+  padding: 0;
+}
+.react-flow__node strong,
+.react-flow__node small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.react-flow__node small {
+  margin-top: 6px;
+  font-size: 11px;
+}
+@media (max-width: 1100px) {
+  .builder-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .builder-canvas {
+    height: 370px;
+  }
+  .builder-properties {
+    max-height: none;
+  }
+}
+.workspace {
+  container-type: inline-size;
+}
+@container (max-width: 850px) {
+  .builder-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .builder-properties {
+    max-height: none;
+  }
+}

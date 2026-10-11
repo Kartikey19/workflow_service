@@ -198,7 +198,13 @@ export function OneTime({
     </section>
   );
 }
-export function InputFields({ schema }: { schema: RecordData }) {
+export function InputFields({
+  schema,
+  expressions = false,
+}: {
+  schema: RecordData;
+  expressions?: boolean;
+}) {
   const fields = schema?.properties || schema || {};
   return (
     <>
@@ -226,7 +232,13 @@ export function InputFields({ schema }: { schema: RecordData }) {
               <textarea
                 name={name}
                 placeholder={s.type === "array" ? "[]" : "{}"}
-                defaultValue={s.default ? pretty(s.default) : ""}
+                defaultValue={
+                  typeof s.default === "string" && s.default.includes("${")
+                    ? s.default
+                    : s.default !== undefined
+                      ? pretty(s.default)
+                      : ""
+                }
               />
             ) : s.type === "boolean" ? (
               <select
@@ -241,7 +253,7 @@ export function InputFields({ schema }: { schema: RecordData }) {
               <input
                 name={name}
                 type={
-                  s.type === "number" || s.type === "integer"
+                  !expressions && (s.type === "number" || s.type === "integer")
                     ? "number"
                     : "text"
                 }
@@ -258,7 +270,11 @@ export function InputFields({ schema }: { schema: RecordData }) {
     </>
   );
 }
-export function readInput(data: FormData, schema: RecordData) {
+export function readInput(
+  data: FormData,
+  schema: RecordData,
+  expressions = false,
+) {
   const result: RecordData = {};
   for (const [name, raw] of Object.entries(
     schema?.properties || schema || {},
@@ -266,13 +282,16 @@ export function readInput(data: FormData, schema: RecordData) {
     const s = raw as RecordData;
     const v = data.get(name);
     if (v === "" || v === null) continue;
-    result[name] = ["object", "array"].includes(s.type)
-      ? JSON.parse(String(v))
-      : s.type === "boolean"
-        ? v === "true"
-        : ["number", "integer"].includes(s.type)
-          ? Number(v)
-          : v;
+    result[name] =
+      expressions && String(v).includes("${")
+        ? v
+        : ["object", "array"].includes(s.type)
+          ? JSON.parse(String(v))
+          : s.type === "boolean"
+            ? v === "true"
+            : ["number", "integer"].includes(s.type)
+              ? Number(v)
+              : v;
   }
   return result;
 }

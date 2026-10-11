@@ -68,7 +68,7 @@ export function Runs({
           if (!abort.signal.aborted) setStreamError(e.message);
         });
     } else {
-      stream = new EventSource(`/v1/runs/${selected}/events`);
+      stream = new EventSource(`/be/v1/runs/${selected}/events`);
       eventTypes.forEach((type) =>
         stream!.addEventListener(type, (event) => {
           const e = JSON.parse((event as MessageEvent).data);

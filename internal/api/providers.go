@@ -27,7 +27,7 @@ func connectionView(c providers.Connection) map[string]any {
 	return view
 }
 
-// testProvider is POST /v1/providers/test: proves a key and endpoint work by
+// testProvider is POST /be/v1/providers/test: proves a key and endpoint work by
 // listing the models, before anything is saved. The key is never stored or logged.
 func (h *Handler) testProvider(w http.ResponseWriter, r *http.Request, _ auth.Principal) {
 	var req struct {
@@ -47,7 +47,7 @@ func (h *Handler) testProvider(w http.ResponseWriter, r *http.Request, _ auth.Pr
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "models": result.Models})
 }
 
-// createProvider is POST /v1/providers: tests the connection (unless skip_test
+// createProvider is POST /be/v1/providers: tests the connection (unless skip_test
 // is set) and saves it only if the test passes.
 func (h *Handler) createProvider(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req struct {
