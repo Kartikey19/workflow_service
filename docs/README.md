@@ -74,6 +74,12 @@ Organizations add their own provider keys under `/v1/providers` (`04 §4d`); the
 sealed with the vault key, so they need `VAULT_MASTER_KEY`. `OPENAI_BASE_URL` and
 `GEMINI_BASE_URL` let an operator route those providers through a proxy.
 
+OAuth integrations appear only for providers you register an app with, and need
+`PUBLIC_URL` (redirect URI `{PUBLIC_URL}/v1/oauth/callback`): `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` (Gmail and Drive), `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET`,
+`MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` and `MICROSOFT_TENANT` (default `common`).
+`INTEGRATION_ENDPOINTS` (a JSON object) overrides provider URLs for a proxy or a test server.
+
 Connections (`04 §4e`) seal their credentials with the vault key too. `RESEND_BASE_URL`
 routes Resend through a proxy. Key rotation (`04 §4c`) re-seals vault secrets, provider
 keys and connection credentials together.

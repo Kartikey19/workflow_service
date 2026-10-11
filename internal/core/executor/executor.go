@@ -174,6 +174,11 @@ type Connection struct {
 	Secret map[string]string
 }
 
+// ErrConnectionNeedsAuth means an OAuth connection can no longer get a token (the
+// user revoked access, or the refresh token expired): someone must reconnect it.
+// Retrying cannot help.
+var ErrConnectionNeedsAuth = errors.New("connection must be re-authorised")
+
 // ErrConnectionNotFound means the organization has no connection of that name
 // and kind.
 var ErrConnectionNotFound = errors.New("connection not found")

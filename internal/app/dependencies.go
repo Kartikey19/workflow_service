@@ -11,6 +11,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
+	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
 	"github.com/kartikey/workflow_service/internal/core/executor/email"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	"github.com/kartikey/workflow_service/internal/services/agents"
@@ -95,11 +96,26 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, tools, agentSvc)
 	agentSvc.Attach(agentExecutor)
 
-	connectionSvc := connections.NewService(pool, keyring, policy, connections.Endpoints{Resend: cfg.Services.ResendBaseURL})
+	endpoints, err := connectors.ParseEndpoints(cfg.Services.IntegrationEndpoints)
+	if err != nil {
+		return nil, err
+	}
+	connectionSvc := connections.NewService(pool, keyring, policy, connections.Options{
+		ResendURL: cfg.Services.ResendBaseURL, PublicURL: cfg.Auth.PublicURL, Endpoints: endpoints,
+		Google:          connections.OAuthApp{ClientID: cfg.Services.GoogleClientID, ClientSecret: cfg.Services.GoogleClientSecret},
+		Dropbox:         connections.OAuthApp{ClientID: cfg.Services.DropboxAppKey, ClientSecret: cfg.Services.DropboxAppSecret},
+		Microsoft:       connections.OAuthApp{ClientID: cfg.Services.MicrosoftClientID, ClientSecret: cfg.Services.MicrosoftClientSecret},
+		MicrosoftTenant: cfg.Services.MicrosoftTenant,
+	})
 	emailExecutor := email.New(connectionSvc, policy, cfg.Services.ResendBaseURL)
+	appNodes := []executor.Executor{
+		connectors.NewGmail(connectionSvc, policy, endpoints), connectors.NewGDrive(connectionSvc, policy, endpoints),
+		connectors.NewDropbox(connectionSvc, policy, endpoints), connectors.NewOneDrive(connectionSvc, policy, endpoints),
+	}
 
 	registry := executor.NewRegistry()
-	for _, e := range append(builtin.All(), httpexec.New(policy), agentExecutor, builtin.SubWorkflow{Starter: svc}, emailExecutor) {
+	nodes := append(builtin.All(), httpexec.New(policy), agentExecutor, builtin.SubWorkflow{Starter: svc}, emailExecutor)
+	for _, e := range append(nodes, appNodes...) {
 		if err := registry.Register(e); err != nil {
 			return nil, err
 		}

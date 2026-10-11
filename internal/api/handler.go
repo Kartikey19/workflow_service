@@ -138,6 +138,8 @@ type ConnectionService interface {
 	Update(ctx context.Context, orgID pgtype.UUID, name string, in connections.Input) (connections.Connection, error)
 	Delete(ctx context.Context, orgID pgtype.UUID, name string) error
 	Test(ctx context.Context, orgID pgtype.UUID, name string) error
+	StartOAuth(ctx context.Context, orgID, userID pgtype.UUID, kind, name string) (string, error)
+	CompleteOAuth(ctx context.Context, state, code, providerError string) (string, error)
 }
 
 // AdminService is the operator interventions for stuck work (04 §5.1).
@@ -243,6 +245,8 @@ func (h *Handler) Register(r Router) {
 	}
 	if h.services.Connections != nil {
 		r.Handle("GET /v1/integrations", auth.RoleEditor, h.listIntegrations)
+		r.Handle("POST /v1/connections/oauth/start", auth.RoleAdmin, h.startOAuth)
+		r.HandlePublic("GET /v1/oauth/callback", h.oauthCallback)
 		r.Handle("POST /v1/connections/test", auth.RoleAdmin, h.testConnectionInput)
 		r.Handle("POST /v1/connections", auth.RoleAdmin, h.createConnection)
 		r.Handle("GET /v1/connections", auth.RoleEditor, h.listConnections)

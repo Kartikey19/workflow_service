@@ -94,6 +94,34 @@ func TestConfigValidate(t *testing.T) {
 			},
 		},
 		{
+			name:      "an OAuth app needs a public URL",
+			configure: func(c *Config) { c.Services.GoogleClientID, c.Services.GoogleClientSecret = "id", "secret" },
+			wantError: "PUBLIC_URL is required when a Google, Dropbox or Microsoft OAuth app is configured",
+		},
+		{
+			name: "an OAuth app with a public URL is accepted",
+			configure: func(c *Config) {
+				c.Services.DropboxAppKey, c.Services.DropboxAppSecret, c.Auth.PublicURL = "key", "secret", "https://app.example.com"
+			},
+		},
+		{
+			name: "an OAuth app needs its secret",
+			configure: func(c *Config) {
+				c.Services.MicrosoftClientID, c.Auth.PublicURL = "id", "https://app.example.com"
+			},
+			wantError: "each OAuth app needs both its client ID and its secret",
+		},
+		{
+			name:      "unknown integration endpoint key",
+			configure: func(c *Config) { c.Services.IntegrationEndpoints = `{"gmial_api": "http://x"}` },
+			wantError: `unknown key "gmial_api"`,
+		},
+		{
+			name:      "integration endpoints must be JSON",
+			configure: func(c *Config) { c.Services.IntegrationEndpoints = `not json` },
+			wantError: "INTEGRATION_ENDPOINTS must be a JSON object",
+		},
+		{
 			name:      "negative session lifetime",
 			configure: func(c *Config) { c.Auth.SessionTTL = -time.Hour },
 			wantError: "SESSION_TTL cannot be negative",

@@ -103,6 +103,17 @@ type NodeExecution struct {
 	Item           []byte             `json:"item"`
 }
 
+type OauthState struct {
+	StateHash    string             `json:"state_hash"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Kind         string             `json:"kind"`
+	Name         string             `json:"name"`
+	CodeVerifier string             `json:"code_verifier"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+}
+
 type Organization struct {
 	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`

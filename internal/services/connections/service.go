@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"uuid"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
 	"github.com/kartikey/workflow_service/internal/store/gen"
 	"github.com/kartikey/workflow_service/pkg/exception"
 	"github.com/kartikey/workflow_service/pkg/netguard"
@@ -31,38 +33,52 @@ import (
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
-// Endpoints are operator-chosen base URLs for services that have a public API.
-// An empty entry keeps the public endpoint. Tenants cannot set them.
-type Endpoints struct {
-	Resend string
-}
+// OAuthApp is an OAuth application the operator registered with a provider.
+type OAuthApp struct{ ClientID, ClientSecret string }
 
-// Defaults fills the public endpoints.
-func (e Endpoints) withDefaults() Endpoints {
-	if e.Resend == "" {
-		e.Resend = "https://api.resend.com"
-	}
-	return e
+// Options configures the service. Everything here is operator-level: tenants
+// cannot change an endpoint or an OAuth app.
+type Options struct {
+	ResendURL       string // default https://api.resend.com
+	PublicURL       string // externally visible base URL; OAuth redirects come back to it
+	Google          OAuthApp
+	Dropbox         OAuthApp
+	Microsoft       OAuthApp
+	MicrosoftTenant string // default "common"
+	Endpoints       connectors.Endpoints
 }
 
 // Service is safe for concurrent use. A nil keyring means no credential can be
 // stored, so only kinds without secrets could work; in practice every kind needs
 // the vault key.
 type Service struct {
-	pool      *pgxpool.Pool
-	q         *gen.Queries
-	keyring   *vault.Keyring
-	policy    netguard.Policy
-	endpoints Endpoints
-	registry  map[string]kind
+	pool     *pgxpool.Pool
+	q        *gen.Queries
+	keyring  *vault.Keyring
+	policy   netguard.Policy
+	opts     Options
+	registry map[string]kind
+	refresh  sync.Map // connection ID -> *sync.Mutex, to refresh one token at a time
 }
 
 var _ executor.Connections = (*Service)(nil)
 
-func NewService(pool *pgxpool.Pool, keyring *vault.Keyring, policy netguard.Policy, endpoints Endpoints) *Service {
-	s := &Service{pool: pool, q: gen.New(pool), keyring: keyring, policy: policy, endpoints: endpoints.withDefaults()}
+func NewService(pool *pgxpool.Pool, keyring *vault.Keyring, policy netguard.Policy, opts Options) *Service {
+	if opts.ResendURL == "" {
+		opts.ResendURL = "https://api.resend.com"
+	}
+	opts.ResendURL = strings.TrimRight(opts.ResendURL, "/")
+	if opts.MicrosoftTenant == "" {
+		opts.MicrosoftTenant = "common"
+	}
+	s := &Service{pool: pool, q: gen.New(pool), keyring: keyring, policy: policy, opts: opts}
 	s.registry = s.kinds()
 	return s
+}
+
+// endpoint returns a provider URL.
+func (s *Service) endpoint(key string) string {
+	return s.opts.Endpoints.URL(key, s.opts.MicrosoftTenant)
 }
 
 // Connection is a stored connection as callers see it: credentials never.
@@ -163,6 +179,9 @@ func (s *Service) validate(in *Input) (kind, error) {
 	}
 	if in.Secret == nil {
 		in.Secret = map[string]string{}
+	}
+	if k.info.OAuth {
+		return kind{}, exception.BadRequest(fmt.Sprintf("%s connections are created by signing in with the provider: POST /v1/connections/oauth/start", in.Kind))
 	}
 	if err := k.check(in.Config, in.Secret); err != nil {
 		return kind{}, exception.BadRequest(err.Error())
@@ -392,6 +411,11 @@ func (s *Service) Connection(ctx context.Context, tenantID uuid.UUID, name strin
 	secret, err := s.open(orgID, row)
 	if err != nil {
 		return executor.Connection{}, err
+	}
+	if k, ok := s.registry[row.Kind]; ok && k.info.OAuth && row.TokenExpiresAt.Valid && time.Until(row.TokenExpiresAt.Time) < refreshWindow {
+		if secret, err = s.refreshToken(ctx, orgID, row, secret); err != nil {
+			return executor.Connection{}, err
+		}
 	}
 	return executor.Connection{Name: row.Name, Kind: row.Kind, Config: decodeConfig(row.Config), Secret: secret}, nil
 }

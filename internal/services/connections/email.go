@@ -134,7 +134,7 @@ func resendKind() kind {
 		test: func(ctx context.Context, s *Service, config map[string]any, secret map[string]string) error {
 			ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoints.Resend+"/domains", nil)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.opts.ResendURL+"/domains", nil)
 			if err != nil {
 				return err
 			}

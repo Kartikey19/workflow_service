@@ -53,10 +53,14 @@ type kind struct {
 }
 
 func (s *Service) kinds() map[string]kind {
-	return map[string]kind{
+	registry := map[string]kind{
 		KindSMTP:   smtpKind(),
 		KindResend: resendKind(),
 	}
+	for name, k := range s.oauthKinds() {
+		registry[name] = k
+	}
+	return registry
 }
 
 // Kinds lists the kinds this installation offers.

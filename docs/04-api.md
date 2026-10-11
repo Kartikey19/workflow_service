@@ -429,6 +429,26 @@ characters) and, for OAuth connections, the connected account.
 | `POST /v1/connections/{name}/test` | admin | re-test with the stored credentials |
 | `DELETE /v1/connections/{name}` | admin | nodes that still name it fail with `E_CONNECTION_NOT_FOUND` |
 
+**OAuth connections** (Gmail, Google Drive, Dropbox, OneDrive) are created by signing
+in with the provider, not by pasting credentials, and appear in `GET /v1/integrations`
+(with `oauth: true`) only when the operator registered an OAuth app for the provider:
+
+1. `POST /v1/connections/oauth/start` (admin) with `{kind, name}` returns an
+   `authorize_url`. It carries a one-time `state` bound to your organization and a PKCE
+   challenge; send the user's browser there. Naming an existing connection of the same
+   kind reconnects it with new tokens (use this when access was revoked).
+2. The provider redirects to `GET /v1/oauth/callback` (register
+   `{PUBLIC_URL}/v1/oauth/callback` with the provider). It needs no session, consumes the
+   state (so a replay fails), exchanges the code, looks up the account and stores the
+   tokens sealed with the vault key, then redirects the browser to
+   `{PUBLIC_URL}/connections?connected=<name>`, or `?error=<message>` if anything failed.
+3. Access tokens are refreshed shortly before they expire, once however many nodes need
+   it. If the provider no longer honours the refresh token the node fails permanently with
+   `E_CONNECTION_REAUTH` and says to reconnect.
+
+Scopes are the narrowest that work: Gmail `gmail.send`, Drive `drive.file` (files this
+application created), Dropbox `files.content.write`, OneDrive `Files.ReadWrite`.
+
 Kinds and their fields: **smtp** (`host`, `port` default 587, `tls` = `starttls` |
 `tls` | `none`, `username`, `from`; secret `password`), **resend** (`from`; secret
 `api_key`). A password is never sent over an unencrypted connection to a host other

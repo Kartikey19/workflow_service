@@ -1,13 +1,18 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/kartikey/workflow_service/internal/services/connections"
 	"github.com/kartikey/workflow_service/pkg/auth"
+	"github.com/kartikey/workflow_service/pkg/exception"
 	"github.com/kartikey/workflow_service/pkg/httpx"
 	"github.com/kartikey/workflow_service/pkg/uid"
+	"go.uber.org/zap"
 )
 
 func connectionInfoView(c connections.Connection) map[string]any {
@@ -146,4 +151,50 @@ func (h *Handler) testConnection(w http.ResponseWriter, r *http.Request, p auth.
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// startOAuth is POST /v1/connections/oauth/start: {kind, name} → the provider's
+// authorization URL. The caller sends the user there; the provider redirects to
+// /v1/oauth/callback. Naming an existing connection of the same kind reconnects it.
+func (h *Handler) startOAuth(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	var req struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	target, err := h.services.Connections.StartOAuth(r.Context(), p.TenantID, p.UserID, req.Kind, req.Name)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"authorize_url": target})
+}
+
+// oauthCallback is GET /v1/oauth/callback, where the provider redirects the
+// user's browser. It needs no session: the one-time state identifies the
+// organization that started the sign-in. The browser is sent on to the UI's
+// connections page with the outcome in the query string.
+func (h *Handler) oauthCallback(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	providerError := query.Get("error")
+	if providerError != "" && query.Get("error_description") != "" {
+		providerError += ": " + query.Get("error_description")
+	}
+	name, err := h.services.Connections.CompleteOAuth(r.Context(), query.Get("state"), query.Get("code"), providerError)
+	back := strings.TrimRight(h.services.PublicURL, "/") + "/connections"
+	if err != nil {
+		var ex *exception.Exception
+		message := "sign-in failed"
+		if errors.As(err, &ex) {
+			message = ex.Detail
+		} else {
+			h.logger.Error("oauth callback", zap.Error(err))
+		}
+		http.Redirect(w, r, back+"?"+url.Values{"error": {message}, "name": {name}}.Encode(), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, back+"?"+url.Values{"connected": {name}}.Encode(), http.StatusFound)
 }

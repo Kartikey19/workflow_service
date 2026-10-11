@@ -11,6 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeOAuthState = `-- name: ConsumeOAuthState :one
+delete from oauth_states where state_hash = $1 and expires_at > now() returning state_hash, org_id, user_id, kind, name, code_verifier, created_at, expires_at
+`
+
+// Deleting returns the row once: a replayed callback finds nothing.
+func (q *Queries) ConsumeOAuthState(ctx context.Context, stateHash string) (OauthState, error) {
+	row := q.db.QueryRow(ctx, consumeOAuthState, stateHash)
+	var i OauthState
+	err := row.Scan(
+		&i.StateHash,
+		&i.OrgID,
+		&i.UserID,
+		&i.Kind,
+		&i.Name,
+		&i.CodeVerifier,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const createConnection = `-- name: CreateConnection :one
 insert into connections (id, org_id, name, kind, config, secret_ciphertext, secret_nonce, secret_key_version,
                          secret_hint, account, token_expires_at, created_by)
@@ -71,6 +92,34 @@ func (q *Queries) CreateConnection(ctx context.Context, arg CreateConnectionPara
 	return i, err
 }
 
+const createOAuthState = `-- name: CreateOAuthState :exec
+insert into oauth_states (state_hash, org_id, user_id, kind, name, code_verifier, expires_at)
+values ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type CreateOAuthStateParams struct {
+	StateHash    string             `json:"state_hash"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Kind         string             `json:"kind"`
+	Name         string             `json:"name"`
+	CodeVerifier string             `json:"code_verifier"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStateParams) error {
+	_, err := q.db.Exec(ctx, createOAuthState,
+		arg.StateHash,
+		arg.OrgID,
+		arg.UserID,
+		arg.Kind,
+		arg.Name,
+		arg.CodeVerifier,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const deleteConnection = `-- name: DeleteConnection :execrows
 delete from connections where org_id = $1 and name = $2
 `
@@ -82,6 +131,18 @@ type DeleteConnectionParams struct {
 
 func (q *Queries) DeleteConnection(ctx context.Context, arg DeleteConnectionParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteConnection, arg.OrgID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteExpiredOAuthStates = `-- name: DeleteExpiredOAuthStates :execrows
+delete from oauth_states where expires_at <= now()
+`
+
+func (q *Queries) DeleteExpiredOAuthStates(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredOAuthStates)
 	if err != nil {
 		return 0, err
 	}

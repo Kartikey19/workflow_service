@@ -49,3 +49,14 @@ select id, org_id, name, secret_ciphertext, secret_nonce, secret_key_version
 update connections
    set secret_ciphertext = @ciphertext, secret_nonce = @nonce, secret_key_version = @new_version
  where id = @id and secret_key_version = @old_version;
+
+-- name: CreateOAuthState :exec
+insert into oauth_states (state_hash, org_id, user_id, kind, name, code_verifier, expires_at)
+values (@state_hash, @org_id, sqlc.narg(user_id), @kind, @name, @code_verifier, @expires_at);
+
+-- name: ConsumeOAuthState :one
+-- Deleting returns the row once: a replayed callback finds nothing.
+delete from oauth_states where state_hash = @state_hash and expires_at > now() returning *;
+
+-- name: DeleteExpiredOAuthStates :execrows
+delete from oauth_states where expires_at <= now();

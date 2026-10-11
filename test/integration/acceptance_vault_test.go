@@ -454,7 +454,7 @@ func TestVaultRotationCoversProviderKeysAndConnections(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	oldConnections := connections.NewService(h.pool, oldRing, policy, connections.Endpoints{})
+	oldConnections := connections.NewService(h.pool, oldRing, policy, connections.Options{})
 	if _, err := oldConnections.Create(ctx, h.tenant, "t", connections.Input{
 		Name: "smtp1", Kind: "smtp", SkipTest: true,
 		Config: map[string]any{"host": "smtp.example.com", "username": "u"}, Secret: map[string]string{"password": "smtp-password-1"},
@@ -485,7 +485,7 @@ func TestVaultRotationCoversProviderKeysAndConnections(t *testing.T) {
 	if err != nil || resolved.Client == nil {
 		t.Fatalf("provider key after dropping key 1: %v", err)
 	}
-	conn, err := connections.NewService(h.pool, only2, policy, connections.Endpoints{}).Connection(ctx, uuidOf(h.tenant), "smtp1", "smtp")
+	conn, err := connections.NewService(h.pool, only2, policy, connections.Options{}).Connection(ctx, uuidOf(h.tenant), "smtp1", "smtp")
 	if err != nil || conn.Secret["password"] != "smtp-password-1" {
 		t.Fatalf("connection credentials after dropping key 1: %+v, %v", conn, err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
+	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
 	"github.com/kartikey/workflow_service/pkg/vault"
 )
 
@@ -98,6 +99,22 @@ type VaultConfig struct {
 // cannot set these.
 type ServicesConfig struct {
 	ResendBaseURL string `env:"RESEND_BASE_URL"` // default https://api.resend.com
+
+	// OAuth apps registered with each provider. A provider without a client ID is
+	// hidden: its integrations are not offered.
+	GoogleClientID        string `env:"GOOGLE_CLIENT_ID"`
+	GoogleClientSecret    string `env:"GOOGLE_CLIENT_SECRET"`
+	DropboxAppKey         string `env:"DROPBOX_APP_KEY"`
+	DropboxAppSecret      string `env:"DROPBOX_APP_SECRET"`
+	MicrosoftClientID     string `env:"MICROSOFT_CLIENT_ID"`
+	MicrosoftClientSecret string `env:"MICROSOFT_CLIENT_SECRET"`
+	MicrosoftTenant       string `env:"MICROSOFT_TENANT" envDefault:"common"`
+
+	// IntegrationEndpoints overrides provider URLs, as a JSON object, for a proxy
+	// or a test server. Keys: google_auth, google_token, google_userinfo, gmail_api,
+	// gdrive_api, gdrive_upload, dropbox_auth, dropbox_token, dropbox_api,
+	// dropbox_content, microsoft_auth, microsoft_token, graph_api.
+	IntegrationEndpoints string `env:"INTEGRATION_ENDPOINTS"`
 }
 
 // LLMConfig configures the platform-managed model provider used by agent
@@ -226,6 +243,19 @@ func (c *Config) Validate() error {
 		if _, err := vault.ParseKeyring(c.Vault.MasterKey, c.Vault.KeyVersion, c.Vault.OldKeys); err != nil {
 			add("VAULT_MASTER_KEY / VAULT_KEY_VERSION / VAULT_OLD_KEYS: " + strings.TrimPrefix(err.Error(), "vault: "))
 		}
+	}
+	if c.Services.GoogleClientID != "" || c.Services.DropboxAppKey != "" || c.Services.MicrosoftClientID != "" {
+		if c.Auth.PublicURL == "" {
+			add("PUBLIC_URL is required when a Google, Dropbox or Microsoft OAuth app is configured: providers redirect back to it")
+		}
+		if (c.Services.GoogleClientID == "") != (c.Services.GoogleClientSecret == "") ||
+			(c.Services.DropboxAppKey == "") != (c.Services.DropboxAppSecret == "") ||
+			(c.Services.MicrosoftClientID == "") != (c.Services.MicrosoftClientSecret == "") {
+			add("each OAuth app needs both its client ID and its secret")
+		}
+	}
+	if _, err := connectors.ParseEndpoints(c.Services.IntegrationEndpoints); err != nil {
+		add(err.Error())
 	}
 	if (c.Auth.BootstrapAdminEmail == "") != (c.Auth.BootstrapAdminPassword == "") {
 		add("BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together")

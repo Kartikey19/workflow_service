@@ -467,6 +467,38 @@ recognisable. Delivery is at-least-once: if a send succeeds but the node's resul
 lost, a redelivered attempt can send again, as it can for any side effect.
 Output: `{provider, message_id, recipients}`.
 
+### 4.12 `gmail.send`, `gdrive.upload`, `dropbox.upload`, `onedrive.upload` (M14)
+
+Nodes that act on a third-party account through an OAuth connection (`04 §4e`). Each
+needs `connection: <name>` of the matching kind.
+
+```yaml
+- id: mail
+  type: gmail.send                 # sends as the connected Google account
+  config: {connection: my-gmail, to: [team@example.com], subject: "Done", text: "All good."}
+
+- id: archive
+  type: gdrive.upload
+  config: {connection: team-drive, name: "report-${run.id}.csv", content: ${nodes.render.output.csv}, folder_id: 1AbC}
+
+- id: store
+  type: dropbox.upload
+  config: {connection: team-dropbox, path: "/Reports/${run.id}.csv", content_base64: ${nodes.render.output.b64}}
+
+- id: save
+  type: onedrive.upload
+  config: {connection: team-onedrive, path: "Reports/${run.id}.csv", content: ${nodes.render.output.csv}}
+```
+
+Uploads take `content` (text) or `content_base64` (binary), up to 8 MiB (4 MiB for
+OneDrive, whose single-request limit it is); larger files would need resumable uploads.
+Retry safety differs: **Drive** tags the file with the node's stable key and a retry that
+finds it returns the existing file (`reused: true`); **Dropbox** overwrites the path by
+default (`overwrite: false` fails on a conflict instead) and **OneDrive** replaces, so both
+are harmless to repeat; **Gmail** has no idempotency key, so a send whose result is lost can
+be sent again. 429 and rate-limit replies are retried honouring `Retry-After`; an expired
+token is refreshed first; `401`, `403` (other than rate limits) and `404` are permanent.
+
 ### 4.8 `noop` (M2)
 
 No config. Succeeds immediately. Exists for fan-in points and for testing the
