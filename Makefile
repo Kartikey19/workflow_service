@@ -45,3 +45,17 @@ ui-check:
 	npm run build --prefix web && diff -ru "$$tmp/dist" web/dist
 ui-browser:
 	RUN_UI_TESTS=true go test -count=1 -tags=integration ./test/integration -run '^TestWebUIBrowser$$' -timeout=100s
+
+.PHONY: local-init local-db local-setup local-api local-worker local-db-stop
+local-init:
+	python3 scripts/init-local.py
+local-db: local-init
+	docker compose --env-file .env -f dev/compose.yaml up -d --wait
+local-setup: local-db
+	$(MAKE) ui-install ui-build migrate
+local-api:
+	go run ./cmd/api
+local-worker:
+	go run ./cmd/worker
+local-db-stop:
+	docker compose --env-file .env -f dev/compose.yaml stop

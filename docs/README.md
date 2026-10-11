@@ -17,6 +17,7 @@ or compliance processes all run on the same seven tables.
 | 04 | [HTTP API](04-api.md) | Workflows, runs, signals, tasks and admin endpoints; error model; idempotency semantics |
 | 05 | [Implementation plan](05-implementation-plan.md) | Product scope and decisions, repo layout, engine M0–M9 and product M10–M19 with acceptance criteria, testing, ops, hosting |
 | 06 | [Operations runbook](06-runbook.md) | Local UI, deployment baseline, releases, backups, restore, observability and key rotation |
+| 07 | [Deployment guide](07-deployment.md) | Hosting cost, Neon, GoDaddy DNS, environment separation and CI/CD setup |
 
 If you only read two: **01** for the schema and **03 §5** for the resolver. Those
 two are where correctness lives; everything else is plumbing around them.

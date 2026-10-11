@@ -1,15 +1,12 @@
-name: Build and optional production release
+name: Build release image
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: Deploy this image to the configured production host
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
-  group: production-release
+  group: image-release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   quality:
@@ -25,7 +22,6 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - id: name
         env:
@@ -41,36 +37,24 @@ jobs:
         with:
           context: .
           file: deploy/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.name.outputs.image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-  deploy:
-    if: ${{ inputs.deploy }}
-    needs: image
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - name: Upload configuration and release the immutable image
+      - name: Record the immutable release for environment promotion
         env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          RELEASE_IMAGE: ${{ needs.image.outputs.image }}@${{ needs.image.outputs.digest }}
-        shell: bash
+          IMAGE: ${{ steps.name.outputs.image }}@${{ steps.build.outputs.digest }}
         run: |
-          set -euo pipefail
-          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
-          [[ "$DEPLOY_USER" =~ ^[a-zA-Z0-9_-]+$ ]]
-          umask 077
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          trap 'rm -f ~/.ssh/id_ed25519' EXIT
-          target="$DEPLOY_USER@$DEPLOY_HOST"
-          ssh -o StrictHostKeyChecking=yes "$target" 'mkdir -p /opt/workflow/deploy'
-          rsync -a --exclude='.env' --exclude='__pycache__' -e 'ssh -o StrictHostKeyChecking=yes' deploy/ "$target:/opt/workflow/deploy/"
-          ssh -o StrictHostKeyChecking=yes "$target" "cd /opt/workflow/deploy && ./deploy.sh '$RELEASE_IMAGE'"
+          printf 'Release image: `%s`\n\nPromote this same digest with Deploy staging, then Deploy production.\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+  staging:
+    if: ${{ github.event_name == 'push' && vars.STAGING_AUTO_DEPLOY == 'true' }}
+    needs: image
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: staging
+      image: ${{ needs.image.outputs.image }}@${{ needs.image.outputs.digest }}
+    secrets: inherit

@@ -1,0 +1,65 @@
+# Budget deployment: one API + worker per environment, external PostgreSQL.
+# deploy/env-deploy.sh supplies the project name and private env file explicitly.
+x-app: &app
+  image: ${WORKFLOW_IMAGE:?Set an immutable WORKFLOW_IMAGE}
+  env_file: ${WORKFLOW_ENV_FILE:?Set WORKFLOW_ENV_FILE}
+  environment:
+    APP_ENV: production
+    COOKIE_SECURE: "true"
+    PUBLIC_URL: https://${DOMAIN:?Set DOMAIN}
+    DATABASE_URL: ${DATABASE_URL:?Set the direct Neon URL}
+    HTTP_ADDRESS: :8080
+    WORKER_METRICS_ADDRESS: :9091
+    SERVICE_NAME: workflow-${DEPLOY_ENV:?Set DEPLOY_ENV}
+    DB_MAX_CONNS: ${DB_MAX_CONNS:-4}
+    DB_MIN_CONNS: "0"
+    WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+    WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-2}
+    WORKER_POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-1s}
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 40s
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+  networks: [backend]
+  labels:
+    wf.environment: ${DEPLOY_ENV}
+services:
+  migrate:
+    <<: *app
+    command: [migrate]
+    restart: "no"
+    profiles: [operations]
+  api:
+    <<: *app
+    mem_limit: 256m
+    networks:
+      backend: {}
+      edge:
+        aliases: ["workflow-${DEPLOY_ENV}-api"]
+    healthcheck:
+      test: [CMD, /app/api, healthcheck, http://127.0.0.1:8080/readyz]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 6
+  worker:
+    <<: *app
+    entrypoint: [/app/worker]
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD, /app/api, healthcheck, http://127.0.0.1:9091/readyz]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 6
+networks:
+  backend: {}
+  edge:
+    external: true
+    name: workflow-edge

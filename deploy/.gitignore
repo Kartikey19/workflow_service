@@ -1,0 +1,3 @@
+.release-history
+.deploy.lock
+.env.deploy.*

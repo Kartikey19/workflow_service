@@ -1,0 +1,17 @@
+name: workflow-edge
+services:
+  caddy:
+    image: caddy:2-alpine
+    env_file: ${EDGE_ENV_FILE:-.env}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+    restart: unless-stopped
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    networks: [edge]
+volumes: {caddy_data: {}, caddy_config: {}}
+networks:
+  edge:
+    name: workflow-edge

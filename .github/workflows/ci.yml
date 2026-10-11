@@ -2,6 +2,7 @@ name: CI
 on:
   workflow_call:
   push:
+    branches-ignore: [main] # Build release image calls this same CI once for main.
   pull_request:
 permissions:
   contents: read
@@ -61,6 +62,8 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: Validate GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - run: make ui-install ui-check
       - run: npx --prefix web playwright install --with-deps chromium
       - run: make check
@@ -83,6 +86,15 @@ jobs:
         run: docker build -f deploy/Dockerfile -t workflow-service:acceptance .
       - name: Local HTTPS, rolling replacement and backup restore acceptance
         run: python3 deploy/test-local.py
+      - name: Environment deployment safeguards
+        run: |
+          bash -n deploy/env-deploy.sh
+          python3 deploy/test-runtime.py
+          EDGE_ENV_FILE=env.example docker compose --env-file deploy/edge/env.example -f deploy/edge/compose.yaml config --quiet
+          docker run --rm -e ACME_EMAIL=operator@example.com \
+            -e PRODUCTION_DOMAIN=app.example.com -e STAGING_DOMAIN=staging.example.com \
+            -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
       - name: Validate Alloy configuration
         run: |
           GRAFANA_METRICS_URL=http://localhost:9090/api/v1/write \

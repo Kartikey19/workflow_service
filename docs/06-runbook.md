@@ -1,101 +1,101 @@
 # Operations runbook
 
-Deployment files are a tested baseline, not a selected production hosting plan.
-No remote host or account has been provisioned. Discuss the hosting provider,
-region, budget, database placement, and recovery requirements before using them
-in production. The same image can run on a Docker host regardless of provider.
+The cost-focused remote setup is described in [Deployment](07-deployment.md):
+one API and worker, Neon, GHCR, Caddy, and separate staging/production
+configuration. Staging is on demand and can be stopped independently. No cloud
+resource or deployment has been created by the local tests.
 
 ## Local application
 
-Install Go from `go.mod`, Node 24, and PostgreSQL 16. Copy `.env.example` to
-`.env`; set the database URL, bootstrap account, and a persistent random vault
-key. Keep `.env` private. Run:
+Install the Go version in `go.mod`, Node 24, Python 3, and Docker with Compose. From the
+repository root:
 
 ```sh
-make ui-install ui-build migrate
-go run ./cmd/api
-# In a second terminal with the same environment:
-go run ./cmd/worker
+make local-setup
+make local-api
+# In a second terminal in the same directory:
+make local-worker
 ```
 
-Open http://localhost:8080/ui/ and sign in. The first API process creates the
-bootstrap account only on an empty user database. API replicas serialize this
-operation. Remove the bootstrap password from the environment after initial
-setup. Node is needed for frontend changes; the committed embedded bundle lets
-a Go-only checkout build and serve the UI. `make ui-check` verifies that bundle.
+`local-setup` creates a private repository `.env` if it does not exist, starts
+local PostgreSQL, installs/builds the embedded UI and applies migrations.
+Existing `.env` values are preserved. Open http://localhost:8080/ui/ and sign in
+using its `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`. API routes
+begin `/be/v1/`. Stop API and worker with Ctrl-C; `make local-db-stop` stops
+PostgreSQL while retaining its volume. Run `make local-db` to restart it.
 
-## Deployment prerequisites and first start
+The first API creates the bootstrap administrator only when the user database
+is empty. Remove the bootstrap password from remote environment files after
+initial setup. The committed embedded frontend bundle supports Go-only builds;
+Node is needed to rebuild frontend changes.
 
-The proposed Compose layout has PostgreSQL, two API replicas, scalable workers,
-and Caddy. Only Caddy publishes ports. There is no selected server size or
-provider. For a host you have chosen, install Docker Engine and Compose v2.24+
-(the local test needs `!override`), point the domain's DNS at it, allow inbound
-80/TCP and 443/TCP+UDP, and clone this repository onto the host. Use an operator
-account permitted to access Docker. If the GHCR image is private, authenticate
-Docker on the host using a package read credential before starting.
+## Remote startup, release and rollback
 
-From the repository root, the documented first-start command is:
+Follow [the deployment setup checklist](07-deployment.md#1-create-the-neon-databases)
+for Neon direct connections with verified TLS, private environment files,
+GoDaddy records, the shared Caddy edge and GitHub environment secrets. The
+remote configuration lives in `deploy/environments/staging/.env` and
+`deploy/environments/production/.env`; do not use the local repository `.env`.
+API/worker ports are unpublished. Start the shared `deploy/edge` stack once,
+then deploy each application environment independently.
+
+**Build release image** validates the project and publishes a digest to GHCR.
+Run **Deploy staging** with that digest, verify sign-in/workflows/events, then
+run **Deploy production** with the same digest. Production is manual and honors
+configured environment reviewers. Run **Deploy staging**, action `stop`, when
+testing ends so its Neon database can suspend. Auto staging deployment is off
+unless the repository variable `STAGING_AUTO_DEPLOY=true` is explicitly set.
+
+The equivalent host commands, from `/opt/workflow/deploy`, are:
 
 ```sh
-./deploy/bootstrap.sh
+./env-deploy.sh staging ghcr.io/<owner>/<repository>@sha256:<digest>
+./env-deploy.sh production ghcr.io/<owner>/<repository>@sha256:<digest>
+./env-deploy.sh staging stop
 ```
 
-It prompts for domain, email, image, and initial account password; writes a
-private `deploy/.env` with random database credentials and a vault key; applies
-migrations; and starts the application. The password prompt does not echo.
-Caddy obtains a public certificate when DNS and port reachability are correct.
-Open `https://<domain>` and verify sign-in, a workflow run, and its events.
-Actual public certificate issuance and a fresh remote host remain unverified.
+The script validates configuration, pulls the digest, runs migrations before
+replacement and waits for API/worker readiness. A migration failure leaves the
+application untouched. This inexpensive single-replica layout has a brief API
+interruption during replacement; it does not provide rolling availability.
+If readiness fails after replacement, the old successful digest remains in
+`.env`, but containers may already run the failed image. Inspect the stack and
+redeploy the previous compatible digest. Successful releases record the old
+and new digests in the selected environment's `.release-history`.
 
-Store `deploy/.env` and every required vault key separately from the host and
-from the database backup. A database dump alone cannot recover encrypted
-secrets. Do not put this file in Git or print `docker compose config` with it;
-use `docker compose config --quiet` for validation.
+Migrations must remain additive and compatible with the previous image. Roll
+back **code** through the same workflow/script using a previous digest; do not
+reverse deployed schema migrations. Verify sign-in, a small known run and its
+events after every release. Execution can repeat external side effects after
+failures; use connector idempotency and request Idempotency-Key where supported.
+SSE clients reconnect/replay after API shutdown.
 
-## Release and rollback
+The remote template limits each pool to four connections and each worker to
+four concurrent nodes initially. Dedicated database listeners also consume
+connections. Tune capacity against Neon, upstream services and measured host
+memory before scaling. Continuous polling/readiness keeps Neon active; a full
+month at 0.25 CU exceeds Free's 100 CU-hour allowance. See the deployment guide's
+[budget calculation](07-deployment.md#neon-free-and-always-on-workers).
 
-Build locally with `docker build -f deploy/Dockerfile -t workflow-service:test .`.
-The **Build and optional production release** GitHub Actions workflow is manual.
-Its default builds/pushes only; production deployment requires selecting its
-`deploy` input and configuring the `production` environment. Configure protected
-branches/reviewers as appropriate to the chosen release process. Required
-secrets are `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, and
-`DEPLOY_KNOWN_HOSTS` (a host key verified through a trusted channel). The SSH user
-must own `/opt/workflow/deploy`, access Docker, and have a prepared private
-`.env`. Configuration uploads exclude `.env`. Private image pulls also require
-host registry authentication. No workflow has been dispatched or image pushed
-as part of local verification.
+### Original self-hosted PostgreSQL deployment
 
-For a release initiated on the host:
-
-```sh
-cd deploy
-WORKER_REPLICAS=2 ./deploy.sh ghcr.io/<owner>/<repository>@sha256:<digest>
-```
-
-Use an immutable image digest. The script migrates first, replaces one API at a
-time, reloads Caddy, starts a temporary worker pool, replaces the normal pool,
-and drains/removes the temporary pool. The successful image is recorded in
-`.env`. During replacement Caddy retries GET/HEAD against a healthy replica;
-mutation requests are never automatically replayed. Clients should supply
-Idempotency-Key for retriable run creation and webhook requests. SSE clients
-reconnect/replay after API shutdown.
-
-Migrations must be additive and compatible with the previous image while it is
-still running. To roll back code, pass the previous digest to the same script.
-Do not roll back schema migrations. Check compatibility before rollback. Keep
-at least one healthy API and enough workers during changes. A failed release
-leaves already started replicas in place; inspect `docker compose ps`, resolve
-the failure, and rerun using the intended digest.
-
-Set worker replicas with `WORKER_REPLICAS` when invoking the script. Capacity is
-bounded by database connections and upstream limits: the default pool is eight
-connections per process, PostgreSQL permits 120, and replacement temporarily
-adds a second worker pool. Leave room for migrations, SSE LISTEN connections,
-Alloy scrapes, backups, and interactive administration. Tune PostgreSQL memory
-and worker concurrency against the host selected later.
+`deploy/compose.yaml`, `bootstrap.sh` and `deploy.sh` remain the larger baseline
+and the target of the disposable local HTTPS/backup drill. They run local
+PostgreSQL, two API replicas, workers and Caddy, with a separate private
+`deploy/.env`. They are an alternative to the Neon setup, not the environment
+workflows' runtime stack. `bootstrap.sh` initializes that file and database;
+`deploy.sh <digest>` replaces API replicas in sequence and drains worker pools.
+Do not start its Caddy beside `deploy/edge` on the same ports. The backup and
+Alloy commands below apply to this original layout unless stated otherwise.
 
 ## Backups and restore
+
+For Neon, decide recovery retention and off-host storage before production.
+Use the direct endpoint and verified TLS for dumps/restores, with separate
+staging/production storage prefixes and a compatible PostgreSQL client version.
+The backup scripts accept standard `PG*` variables; the original Compose
+backup profile below points at its local `postgres` service and requires
+adaptation before use with Neon. Always recover into a separate empty database.
 
 Configure a dedicated S3-compatible bucket/prefix and credentials in
 `deploy/.env` using `deploy/env.example`. Enable the backup service:
@@ -194,7 +194,9 @@ historical keys under an agreed retention policy.
 ## Incident response
 
 - API unavailable: inspect container health, PostgreSQL readiness, Caddy DNS/TLS,
-  and recent releases. Keep the healthy replica serving while repairing another.
+  and recent releases. For the single-instance Neon deployment, redeploy a
+  compatible previous digest or repair/restart the API. In the larger baseline,
+  keep the healthy replica serving while repairing another.
 - Backlog growing: inspect `wf_ready_backlog`, active runs, worker health, node
   duration, and upstream rate limits. Scale workers only within database limits.
 - Expired leases: investigate process crashes, database disconnects, and CPU
@@ -208,6 +210,9 @@ historical keys under an agreed retention policy.
 ## Verification commands
 
 ```sh
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+bash -n deploy/env-deploy.sh
+python3 deploy/test-runtime.py
 make ui-install ui-check
 npx --prefix web playwright install chromium
 make check                 # uses DATABASE_URL, MYSQL_URL and optional MONGO_URL for real tests

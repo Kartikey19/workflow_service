@@ -1,0 +1,22 @@
+{
+	email {$ACME_EMAIL}
+}
+(application) {
+	encode zstd gzip
+	@private path /metrics
+	respond @private 404
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy {args[0]} {
+		health_uri /readyz
+		health_interval 30s
+		health_timeout 10s
+		flush_interval -1
+		stream_close_delay 5m
+	}
+}
+{$PRODUCTION_DOMAIN} {
+	import application workflow-production-api:8080
+}
+{$STAGING_DOMAIN} {
+	import application workflow-staging-api:8080
+}

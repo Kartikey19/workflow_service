@@ -1,0 +1,17 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Exact GHCR image@sha256:digest tested in staging (previous digest for rollback)
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: production
+      image: ${{ inputs.image }}
+    secrets: inherit
