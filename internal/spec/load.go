@@ -23,6 +23,11 @@ func Load(data []byte, env *expr.Env) (*Compiled, error) {
 			return nil, fmt.Errorf("compile config of node %q: %w", node.ID, err)
 		}
 		compiled := NodePrograms{Config: config}
+		if node.Foreach != nil {
+			if compiled.Items, err = env.CompileList(node.Foreach.Items); err != nil {
+				return nil, fmt.Errorf("compile foreach items of node %q: %w", node.ID, err)
+			}
+		}
 		if node.If != "" {
 			compiled.If, err = env.CompileCondition(node.If)
 			if err != nil {

@@ -51,11 +51,11 @@ update node_executions
 -- A skipped node is inserted already terminal, so it carries ended_at.
 insert into node_executions (
   id, run_id, tenant_id, node_id, node_type, branch_key, attempt,
-  status, input, idempotency_key, run_after, ended_at
+  status, input, idempotency_key, run_after, ended_at, item
 ) values (
   @id, @run_id, @tenant_id, @node_id, @node_type, @branch_key, 1,
   @status::text, @input, @idempotency_key, coalesce(sqlc.narg(run_after)::timestamptz, now()),
-  case when @status::text = 'skipped' then now() end
+  case when @status::text = 'skipped' then now() end, sqlc.narg(item)
 )
 on conflict (run_id, node_id, branch_key, attempt) do nothing
 returning *;
@@ -98,14 +98,16 @@ update node_executions
 
 -- name: LatestAttemptsForRun :many
 -- Latest attempt per node, kept only when that attempt is terminal; a node whose
--- newest row is a pending retry is not visible to expressions yet.
+-- newest row is a pending retry is not visible to expressions yet. Inside a
+-- foreach branch the branch's own rows win over the shared (branch '') ones, so
+-- a branch sees every upstream node plus its own earlier attempts.
 select node_id, status, attempt, output, metrics
   from (
        select distinct on (node_id) node_id, status, attempt, output, metrics
          from node_executions
         where run_id = @run_id
-          and branch_key = @branch_key
-        order by node_id, attempt desc
+          and branch_key in ('', @branch_key::text)
+        order by node_id, (branch_key = @branch_key::text and @branch_key::text <> '') desc, attempt desc
   ) latest
  where status in ('succeeded', 'failed', 'skipped');
 
@@ -113,10 +115,10 @@ select node_id, status, attempt, output, metrics
 -- A retry is a new row with the same idempotency key (I5), never a mutation.
 insert into node_executions (
   id, run_id, tenant_id, node_id, node_type, branch_key, attempt,
-  status, idempotency_key, run_after
+  status, idempotency_key, run_after, item
 ) values (
   @id, @run_id, @tenant_id, @node_id, @node_type, @branch_key, @attempt,
-  'ready', @idempotency_key, @run_after
+  'ready', @idempotency_key, @run_after, sqlc.narg(item)
 )
 on conflict (run_id, node_id, branch_key, attempt) do nothing;
 
@@ -212,3 +214,37 @@ update node_executions
  where id = @id
    and status in ('ready', 'running', 'waiting')
 returning *;
+
+-- name: CountOpenBranches :one
+-- Branches of a foreach node whose latest attempt has not finished.
+select count(*) from (
+       select distinct on (branch_key) status
+         from node_executions
+        where run_id = @run_id and node_id = @node_id and branch_key <> ''
+        order by branch_key, attempt desc
+) b
+ where status in ('ready', 'running', 'waiting');
+
+-- name: ListBranchResults :many
+select branch_key, status, attempt, output, error
+  from (
+       select distinct on (branch_key) branch_key, status, attempt, output, error
+         from node_executions
+        where run_id = @run_id and node_id = @node_id and branch_key <> ''
+        order by branch_key, attempt desc
+) b;
+
+-- name: CancelReadyBranches :many
+-- After one branch fails, branches that have not started are not worth running.
+update node_executions
+   set status = 'cancelled', ended_at = now()
+ where run_id = @run_id and node_id = @node_id and branch_key <> '' and status = 'ready'
+returning id;
+
+-- name: FinishFanout :one
+-- Completes the controller row (branch '') of a foreach node once every branch
+-- is terminal. Matching on status = 'waiting' makes a second completion a no-op.
+update node_executions
+   set status = @status::text, output = @output, error = @error, ended_at = now()
+ where run_id = @run_id and node_id = @node_id and branch_key = '' and status = 'waiting'
+returning attempt;

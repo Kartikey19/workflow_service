@@ -10,6 +10,8 @@ import (
 type Scope struct {
 	NodeID       string
 	AllowedNodes []string
+	// Foreach permits item and index, which only exist inside a foreach node.
+	Foreach bool
 }
 
 type CompileError struct{ Code, Message string }
@@ -21,16 +23,86 @@ func (e *Env) WithScope(scope Scope) *Env {
 	for _, id := range scope.AllowedNodes {
 		allowed[id] = true
 	}
-	return &Env{cel: e.cel, scope: &nodeScope{current: scope.NodeID, allowed: allowed}}
+	return &Env{cel: e.cel, scope: &nodeScope{current: scope.NodeID, allowed: allowed, foreach: scope.Foreach}}
 }
 
 type nodeScope struct {
 	current string
 	allowed map[string]bool
+	foreach bool
 }
 
 func (s *nodeScope) check(expression *exprpb.Expr) error {
+	if !s.foreach {
+		if err := checkForeachNames(expression, nil); err != nil {
+			return err
+		}
+	}
 	return s.walk(expression, false)
+}
+
+// checkForeachNames rejects item and index outside a foreach node. A
+// comprehension variable of the same name (xs.map(item, item.id)) is a local
+// binding, not the foreach element, so it shadows only within its own loop.
+func checkForeachNames(e *exprpb.Expr, shadow map[string]bool) error {
+	if e == nil {
+		return nil
+	}
+	walk := func(child *exprpb.Expr) error { return checkForeachNames(child, shadow) }
+	switch value := e.ExprKind.(type) {
+	case *exprpb.Expr_IdentExpr:
+		name := value.IdentExpr.Name
+		if (name == "item" || name == "index") && !shadow[name] {
+			return &CompileError{"E_EXPR_SCOPE", fmt.Sprintf("%s is only available in a foreach node", name)}
+		}
+	case *exprpb.Expr_SelectExpr:
+		return walk(value.SelectExpr.Operand)
+	case *exprpb.Expr_CallExpr:
+		if err := walk(value.CallExpr.Target); err != nil {
+			return err
+		}
+		for _, arg := range value.CallExpr.Args {
+			if err := walk(arg); err != nil {
+				return err
+			}
+		}
+	case *exprpb.Expr_ListExpr:
+		for _, element := range value.ListExpr.Elements {
+			if err := walk(element); err != nil {
+				return err
+			}
+		}
+	case *exprpb.Expr_StructExpr:
+		for _, entry := range value.StructExpr.Entries {
+			if err := walk(entry.GetMapKey()); err != nil {
+				return err
+			}
+			if err := walk(entry.Value); err != nil {
+				return err
+			}
+		}
+	case *exprpb.Expr_ComprehensionExpr:
+		c := value.ComprehensionExpr
+		if err := walk(c.IterRange); err != nil {
+			return err
+		}
+		if err := walk(c.AccuInit); err != nil {
+			return err
+		}
+		inner := make(map[string]bool, len(shadow)+3)
+		for name := range shadow {
+			inner[name] = true
+		}
+		for _, name := range []string{c.IterVar, c.IterVar2, c.AccuVar} {
+			inner[name] = true
+		}
+		for _, part := range []*exprpb.Expr{c.LoopCondition, c.LoopStep, c.Result} {
+			if err := checkForeachNames(part, inner); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // A local comprehension variable named nodes shadows the global binding only in

@@ -557,6 +557,21 @@ child executions; a fan-in node with `join: all` over `branch_key='*'` collects
 them. Sub-workflows use `parent_run_id` and a `wait_event` on child completion —
 which means they need no new engine mechanism at all.
 
+**foreach — built (2026-10-11).** Spec in `02 §4.9`. A controller row evaluates
+`items` and parks with no wake-up time; branch rows (`branch_key` = index, element
+stored in the new `node_executions.item`, migration `0009`) run the node; the last
+branch to finish completes the controller inside `runs.Service.Advance`, and the
+node then advances normally with the list of branch outputs. Compile-time scope
+makes `item` and `index` legal only inside a foreach node.
+
+**Acceptance (foreach)**
+- [x] One execution per element, outputs in element order, successor runs once.
+- [x] Empty list, per-element `if`, retries keep their element and key.
+- [x] A failed branch fails the node and runs `on_failure`; unhandled, it fails the run.
+- [x] 40 runs × 12 branches across 8 workers: one controller, one successor, no
+      duplicate branch, under `-race`.
+- [x] A foreach over `human_task` creates one task per element.
+
 ### 3.1 Product milestones (M10–M19)
 
 Each milestone keeps the engine rules: executors never import `store`, every

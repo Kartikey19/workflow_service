@@ -124,7 +124,7 @@ paste around this YAML.)*
 | `run` | object | `{id, correlation_id, started_at, attempt}` |
 | `secrets` | map[string]string | resolved secret refs; **never logged, never persisted** |
 | `now` | timestamp | evaluation time |
-| `item`, `index` | any, int | inside a `foreach` body only (M9) |
+| `item`, `index` | any, int | inside a `foreach` node only (4.9) |
 
 `NodeView` is `{output: any, status: string, attempt: int, metrics: object}`.
 Referencing a node that has not completed is a **compile-time error** if it is not
@@ -328,6 +328,53 @@ names a form for the UI, `assignee` restricts who may claim or complete, and
 `payload` is shown to whoever works the task. See `04 §4.2`.
 
 ---
+
+### 4.9 `foreach` (M9)
+
+Any node except `branch` can run once per element of a list by adding `foreach`:
+
+```yaml
+- id: notify
+  type: http
+  needs: [load_users]
+  foreach:
+    items: ${nodes.load_users.output.body.users}   # one ${...} that returns a list
+    max_items: 200                                  # optional; default 1000, at most 10000
+  config:
+    method: POST
+    url: "https://notify.internal/v1/send"
+    body: {user: '${item.id}', position: '${index}'}
+
+- id: summary
+  type: transform
+  needs: [notify]            # waits for every branch
+  config: {sent: '${size(nodes.notify.output)}'}
+```
+
+Inside the node, `item` is the current element and `index` its position (an
+`int`); they are a compile error anywhere else, including in `items` itself. The
+node's `if` is evaluated per element, so it filters.
+
+How it runs: one *controller* row evaluates `items`, inserts one ready row per
+element (`branch_key` = the index) and parks without a wake-up time. Branches
+are ordinary node executions: they retry, time out and are claimed by any worker,
+and each has its own idempotency key. The last branch to finish completes the
+controller in the same transaction, so to its successors the node looks like any
+other. `nodes.notify.output` is the **list of branch outputs in element order**
+(`null` for a skipped branch), and `on_failure` / `on_timeout` handlers work as
+usual.
+
+Failure: one failed branch fails the node. Branches that have not started are
+cancelled, running ones finish, and the node's error is
+`E_FOREACH_BRANCH_FAILED` with the failed indexes and their errors. Without an
+`on_failure` handler the run fails at the first failed branch. An empty list
+succeeds immediately with `[]`. A list longer than `max_items`, a result that is
+not a list, or one that would exceed the run's node budget fails the node before
+any branch exists. Elements are stored on the branch row (so a retry sees the
+same element); each must stay under the per-node payload limit.
+
+A multi-step body per element is a foreach over a `workflow` node (sub-workflow).
+
 
 ### 4.8 `noop` (M2)
 

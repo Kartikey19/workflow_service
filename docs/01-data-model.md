@@ -226,8 +226,10 @@ create index ne_run_ix on node_executions (run_id, created_at);
 
 Column-by-column rationale for the non-obvious ones:
 
-**`branch_key`** — empty string in v1. In M9, a `foreach` node produces child
-executions of the same `node_id` distinguished by `branch_key = '0','1','2'…`.
+**`branch_key`** — empty string for ordinary nodes. A `foreach` node (M9) has one
+controller row with `branch_key = ''` and one row per list element,
+`branch_key = '0','1','2'…`, each holding its element in `item` (copied to retry
+attempts).
 **Add this column now.** Widening a unique index on your largest, hottest table
 later is a migration you will keep postponing.
 

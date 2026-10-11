@@ -17,7 +17,7 @@ update node_executions
        lease_owner = null, lease_token = null, lease_expires_at = null
  where id = $2
    and status in ('ready', 'running', 'waiting')
-returning id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
+returning id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token, item
 `
 
 type AdminStopNodeParams struct {
@@ -52,8 +52,42 @@ func (q *Queries) AdminStopNode(ctx context.Context, arg AdminStopNodeParams) (N
 		&i.StartedAt,
 		&i.EndedAt,
 		&i.LeaseToken,
+		&i.Item,
 	)
 	return i, err
+}
+
+const cancelReadyBranches = `-- name: CancelReadyBranches :many
+update node_executions
+   set status = 'cancelled', ended_at = now()
+ where run_id = $1 and node_id = $2 and branch_key <> '' and status = 'ready'
+returning id
+`
+
+type CancelReadyBranchesParams struct {
+	RunID  pgtype.UUID `json:"run_id"`
+	NodeID string      `json:"node_id"`
+}
+
+// After one branch fails, branches that have not started are not worth running.
+func (q *Queries) CancelReadyBranches(ctx context.Context, arg CancelReadyBranchesParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, cancelReadyBranches, arg.RunID, arg.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const cancelRunNodes = `-- name: CancelRunNodes :many
@@ -132,7 +166,7 @@ update node_executions ne
         for update skip locked
         limit $3
  )
-returning ne.id, ne.run_id, ne.tenant_id, ne.node_id, ne.node_type, ne.branch_key, ne.attempt, ne.status, ne.input, ne.output, ne.error, ne.metrics, ne.idempotency_key, ne.run_after, ne.lease_owner, ne.lease_expires_at, ne.created_at, ne.started_at, ne.ended_at, ne.lease_token
+returning ne.id, ne.run_id, ne.tenant_id, ne.node_id, ne.node_type, ne.branch_key, ne.attempt, ne.status, ne.input, ne.output, ne.error, ne.metrics, ne.idempotency_key, ne.run_after, ne.lease_owner, ne.lease_expires_at, ne.created_at, ne.started_at, ne.ended_at, ne.lease_token, ne.item
 `
 
 type ClaimReadyParams struct {
@@ -171,6 +205,7 @@ func (q *Queries) ClaimReady(ctx context.Context, arg ClaimReadyParams) ([]NodeE
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.LeaseToken,
+			&i.Item,
 		); err != nil {
 			return nil, err
 		}
@@ -256,6 +291,29 @@ func (q *Queries) CompleteWaitingNode(ctx context.Context, arg CompleteWaitingNo
 	return result.RowsAffected(), nil
 }
 
+const countOpenBranches = `-- name: CountOpenBranches :one
+select count(*) from (
+       select distinct on (branch_key) status
+         from node_executions
+        where run_id = $1 and node_id = $2 and branch_key <> ''
+        order by branch_key, attempt desc
+) b
+ where status in ('ready', 'running', 'waiting')
+`
+
+type CountOpenBranchesParams struct {
+	RunID  pgtype.UUID `json:"run_id"`
+	NodeID string      `json:"node_id"`
+}
+
+// Branches of a foreach node whose latest attempt has not finished.
+func (q *Queries) CountOpenBranches(ctx context.Context, arg CountOpenBranchesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOpenBranches, arg.RunID, arg.NodeID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countRunNodeExecutions = `-- name: CountRunNodeExecutions :one
 select count(*) from node_executions where run_id = $1
 `
@@ -314,7 +372,7 @@ func (q *Queries) DepStates(ctx context.Context, arg DepStatesParams) ([]DepStat
 }
 
 const dueWaitingNodes = `-- name: DueWaitingNodes :many
-select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
+select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token, item
   from node_executions
  where status = 'waiting'
    and run_after <= now()
@@ -353,6 +411,7 @@ func (q *Queries) DueWaitingNodes(ctx context.Context) ([]NodeExecution, error) 
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.LeaseToken,
+			&i.Item,
 		); err != nil {
 			return nil, err
 		}
@@ -367,14 +426,14 @@ func (q *Queries) DueWaitingNodes(ctx context.Context) ([]NodeExecution, error) 
 const enqueueNode = `-- name: EnqueueNode :one
 insert into node_executions (
   id, run_id, tenant_id, node_id, node_type, branch_key, attempt,
-  status, input, idempotency_key, run_after, ended_at
+  status, input, idempotency_key, run_after, ended_at, item
 ) values (
   $1, $2, $3, $4, $5, $6, 1,
   $7::text, $8, $9, coalesce($10::timestamptz, now()),
-  case when $7::text = 'skipped' then now() end
+  case when $7::text = 'skipped' then now() end, $11
 )
 on conflict (run_id, node_id, branch_key, attempt) do nothing
-returning id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
+returning id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token, item
 `
 
 type EnqueueNodeParams struct {
@@ -388,6 +447,7 @@ type EnqueueNodeParams struct {
 	Input          []byte             `json:"input"`
 	IdempotencyKey string             `json:"idempotency_key"`
 	RunAfter       pgtype.Timestamptz `json:"run_after"`
+	Item           []byte             `json:"item"`
 }
 
 // A skipped node is inserted already terminal, so it carries ended_at.
@@ -403,6 +463,7 @@ func (q *Queries) EnqueueNode(ctx context.Context, arg EnqueueNodeParams) (NodeE
 		arg.Input,
 		arg.IdempotencyKey,
 		arg.RunAfter,
+		arg.Item,
 	)
 	var i NodeExecution
 	err := row.Scan(
@@ -426,6 +487,7 @@ func (q *Queries) EnqueueNode(ctx context.Context, arg EnqueueNodeParams) (NodeE
 		&i.StartedAt,
 		&i.EndedAt,
 		&i.LeaseToken,
+		&i.Item,
 	)
 	return i, err
 }
@@ -433,10 +495,10 @@ func (q *Queries) EnqueueNode(ctx context.Context, arg EnqueueNodeParams) (NodeE
 const enqueueRetry = `-- name: EnqueueRetry :execrows
 insert into node_executions (
   id, run_id, tenant_id, node_id, node_type, branch_key, attempt,
-  status, idempotency_key, run_after
+  status, idempotency_key, run_after, item
 ) values (
   $1, $2, $3, $4, $5, $6, $7,
-  'ready', $8, $9
+  'ready', $8, $9, $10
 )
 on conflict (run_id, node_id, branch_key, attempt) do nothing
 `
@@ -451,6 +513,7 @@ type EnqueueRetryParams struct {
 	Attempt        int32              `json:"attempt"`
 	IdempotencyKey string             `json:"idempotency_key"`
 	RunAfter       pgtype.Timestamptz `json:"run_after"`
+	Item           []byte             `json:"item"`
 }
 
 // A retry is a new row with the same idempotency key (I5), never a mutation.
@@ -465,6 +528,7 @@ func (q *Queries) EnqueueRetry(ctx context.Context, arg EnqueueRetryParams) (int
 		arg.Attempt,
 		arg.IdempotencyKey,
 		arg.RunAfter,
+		arg.Item,
 	)
 	if err != nil {
 		return 0, err
@@ -508,8 +572,38 @@ func (q *Queries) ExtendLease(ctx context.Context, arg ExtendLeaseParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const finishFanout = `-- name: FinishFanout :one
+update node_executions
+   set status = $1::text, output = $2, error = $3, ended_at = now()
+ where run_id = $4 and node_id = $5 and branch_key = '' and status = 'waiting'
+returning attempt
+`
+
+type FinishFanoutParams struct {
+	Status string      `json:"status"`
+	Output []byte      `json:"output"`
+	Error  []byte      `json:"error"`
+	RunID  pgtype.UUID `json:"run_id"`
+	NodeID string      `json:"node_id"`
+}
+
+// Completes the controller row (branch ”) of a foreach node once every branch
+// is terminal. Matching on status = 'waiting' makes a second completion a no-op.
+func (q *Queries) FinishFanout(ctx context.Context, arg FinishFanoutParams) (int32, error) {
+	row := q.db.QueryRow(ctx, finishFanout,
+		arg.Status,
+		arg.Output,
+		arg.Error,
+		arg.RunID,
+		arg.NodeID,
+	)
+	var attempt int32
+	err := row.Scan(&attempt)
+	return attempt, err
+}
+
 const getNodeExecution = `-- name: GetNodeExecution :one
-select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token from node_executions where id = $1
+select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token, item from node_executions where id = $1
 `
 
 func (q *Queries) GetNodeExecution(ctx context.Context, id pgtype.UUID) (NodeExecution, error) {
@@ -536,6 +630,7 @@ func (q *Queries) GetNodeExecution(ctx context.Context, id pgtype.UUID) (NodeExe
 		&i.StartedAt,
 		&i.EndedAt,
 		&i.LeaseToken,
+		&i.Item,
 	)
 	return i, err
 }
@@ -546,8 +641,8 @@ select node_id, status, attempt, output, metrics
        select distinct on (node_id) node_id, status, attempt, output, metrics
          from node_executions
         where run_id = $1
-          and branch_key = $2
-        order by node_id, attempt desc
+          and branch_key in ('', $2::text)
+        order by node_id, (branch_key = $2::text and $2::text <> '') desc, attempt desc
   ) latest
  where status in ('succeeded', 'failed', 'skipped')
 `
@@ -566,7 +661,9 @@ type LatestAttemptsForRunRow struct {
 }
 
 // Latest attempt per node, kept only when that attempt is terminal; a node whose
-// newest row is a pending retry is not visible to expressions yet.
+// newest row is a pending retry is not visible to expressions yet. Inside a
+// foreach branch the branch's own rows win over the shared (branch ”) ones, so
+// a branch sees every upstream node plus its own earlier attempts.
 func (q *Queries) LatestAttemptsForRun(ctx context.Context, arg LatestAttemptsForRunParams) ([]LatestAttemptsForRunRow, error) {
 	rows, err := q.db.Query(ctx, latestAttemptsForRun, arg.RunID, arg.BranchKey)
 	if err != nil {
@@ -636,8 +733,57 @@ func (q *Queries) LatestNodeStates(ctx context.Context, runID pgtype.UUID) ([]La
 	return items, nil
 }
 
+const listBranchResults = `-- name: ListBranchResults :many
+select branch_key, status, attempt, output, error
+  from (
+       select distinct on (branch_key) branch_key, status, attempt, output, error
+         from node_executions
+        where run_id = $1 and node_id = $2 and branch_key <> ''
+        order by branch_key, attempt desc
+) b
+`
+
+type ListBranchResultsParams struct {
+	RunID  pgtype.UUID `json:"run_id"`
+	NodeID string      `json:"node_id"`
+}
+
+type ListBranchResultsRow struct {
+	BranchKey string `json:"branch_key"`
+	Status    string `json:"status"`
+	Attempt   int32  `json:"attempt"`
+	Output    []byte `json:"output"`
+	Error     []byte `json:"error"`
+}
+
+func (q *Queries) ListBranchResults(ctx context.Context, arg ListBranchResultsParams) ([]ListBranchResultsRow, error) {
+	rows, err := q.db.Query(ctx, listBranchResults, arg.RunID, arg.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBranchResultsRow
+	for rows.Next() {
+		var i ListBranchResultsRow
+		if err := rows.Scan(
+			&i.BranchKey,
+			&i.Status,
+			&i.Attempt,
+			&i.Output,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunNodes = `-- name: ListRunNodes :many
-select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
+select id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token, item
   from node_executions
  where run_id = $1
    and tenant_id = $2
@@ -679,6 +825,7 @@ func (q *Queries) ListRunNodes(ctx context.Context, arg ListRunNodesParams) ([]N
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.LeaseToken,
+			&i.Item,
 		); err != nil {
 			return nil, err
 		}

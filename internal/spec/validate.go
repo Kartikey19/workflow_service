@@ -80,6 +80,7 @@ func Validate(document *Document) []Diagnostic {
 			add("E_JOIN", "join must be all or any", node.ID, path+".join")
 		}
 		checkTimeout(node.Timeout, node.ID, path+".timeout")
+		diagnostics = append(diagnostics, validateForeach(node, path)...)
 		if node.Type == "http" && node.Timeout == nil {
 			diagnostics = append(diagnostics, Diagnostic{
 				Severity: "warning", Code: "W_NO_TIMEOUT", Message: "HTTP node has no timeout",
@@ -162,4 +163,24 @@ func validateRetry(retry RetryPolicy, nodeID, path string) []Diagnostic {
 		add("jitter", "jitter must be between 0 and 1")
 	}
 	return diagnostics
+}
+
+func validateForeach(node Node, path string) []Diagnostic {
+	if node.Foreach == nil {
+		return nil
+	}
+	var out []Diagnostic
+	add := func(code, message, field string) {
+		out = append(out, Diagnostic{Severity: "error", Code: code, Message: message, NodeID: node.ID, Path: path + ".foreach" + field})
+	}
+	if strings.TrimSpace(node.Foreach.Items) == "" {
+		add("E_FOREACH", "foreach.items is required: a ${...} expression that returns a list", ".items")
+	}
+	if max := node.Foreach.MaxItems; max != nil && (*max < 1 || *max > ForeachMaxItemsLimit) {
+		add("E_FOREACH", fmt.Sprintf("foreach.max_items must be between 1 and %d", ForeachMaxItemsLimit), ".max_items")
+	}
+	if node.Type == "branch" {
+		add("E_FOREACH", "a branch node cannot have foreach", "")
+	}
+	return out
 }

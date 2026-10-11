@@ -35,6 +35,13 @@ type NodeSpec struct {
 	TimeoutNS *int64         `json:"timeout_ns,omitempty"`
 	OnFailure string         `json:"on_failure,omitempty"`
 	OnTimeout string         `json:"on_timeout,omitempty"`
+	Foreach   *ForeachSpec   `json:"foreach,omitempty"`
+}
+
+// ForeachSpec is the normalised foreach modifier of a node.
+type ForeachSpec struct {
+	Items    string `json:"items"`
+	MaxItems int    `json:"max_items"`
 }
 
 type RetrySpec struct {
@@ -54,4 +61,5 @@ type Programs struct {
 type NodePrograms struct {
 	Config *expr.Template
 	If     *expr.Program
+	Items  *expr.Program // foreach.items; nil for a node without foreach
 }

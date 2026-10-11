@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/internal/core/expr"
@@ -64,9 +65,23 @@ func CompileWith(source []byte, opts Options) (*Compiled, []Diagnostic) {
 		return template
 	}
 	for i, node := range document.Nodes {
-		scoped := environment.WithScope(expr.Scope{NodeID: node.ID, AllowedNodes: graph.Transitive[node.ID]})
+		allowed := graph.Transitive[node.ID]
+		scoped := environment.WithScope(expr.Scope{NodeID: node.ID, AllowedNodes: allowed, Foreach: node.Foreach != nil})
 		path := fmt.Sprintf("nodes[%d]", i)
 		compiled := NodePrograms{Config: compileValue(scoped, node.Config, node.ID, path+".config")}
+		if node.Foreach != nil && strings.TrimSpace(node.Foreach.Items) != "" {
+			// items is evaluated once, before any branch exists, so item and
+			// index are not in scope for it.
+			itemsScope := environment.WithScope(expr.Scope{NodeID: node.ID, AllowedNodes: allowed})
+			if compiled.Items, err = itemsScope.CompileList(node.Foreach.Items); err != nil {
+				code := "E_EXPR_TYPE"
+				var compileErr *expr.CompileError
+				if errors.As(err, &compileErr) {
+					code = compileErr.Code
+				}
+				diagnostics = append(diagnostics, Diagnostic{Severity: "error", Code: code, Message: err.Error(), NodeID: node.ID, Path: path + ".foreach.items"})
+			}
+		}
 		if node.If != "" {
 			compiled.If, err = scoped.CompileCondition(node.If)
 			if err != nil {
@@ -103,6 +118,13 @@ func CompileWith(source []byte, opts Options) (*Compiled, []Diagnostic) {
 			If: node.If, Config: node.Config, OnFailure: node.OnFailure, OnTimeout: node.OnTimeout,
 			Retry: RetrySpec{MaxAttempts: *node.Retry.MaxAttempts, Backoff: *node.Retry.Backoff,
 				InitialNS: int64(initial), MaxNS: int64(maximum), Jitter: *node.Retry.Jitter, RetryOn: node.Retry.RetryOn},
+		}
+		if node.Foreach != nil {
+			maxItems := DefaultForeachMaxItems
+			if node.Foreach.MaxItems != nil {
+				maxItems = *node.Foreach.MaxItems
+			}
+			normalized.Foreach = &ForeachSpec{Items: node.Foreach.Items, MaxItems: maxItems}
 		}
 		if node.Timeout != nil {
 			duration, _ := positiveDuration(node.Timeout)

@@ -107,6 +107,19 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 		return
 	}
 
+	// 2b. foreach: the controller row fans out and parks; each branch row runs
+	// the node once with item and index bound to its element.
+	if node.Foreach != nil {
+		if ne.BranchKey == "" {
+			d.fanOut(parent, ctx, ne, compiled, node, bindings)
+			return
+		}
+		if bindings, err = branchBindings(ne, bindings); err != nil {
+			d.failPermanent(ctx, ne, compiled, "E_FOREACH_ITEM", err)
+			return
+		}
+	}
+
 	// 3. `if` false writes a real skipped row so the skip cascades (02 §2).
 	if programs.If != nil {
 		ok, err := programs.If.EvalBool(ctx, bindings)

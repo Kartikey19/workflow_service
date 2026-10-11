@@ -67,7 +67,7 @@ func TestCompileRejectsInvalidExpressions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, source := range []string{"", "input.count +", `${input.count}`, "unknown.value", `1 + "x"`, "item", "index", `now + 1`} {
+	for _, source := range []string{"", "input.count +", `${input.count}`, "unknown.value", `1 + "x"`, `now + 1`} {
 		t.Run(source, func(t *testing.T) {
 			if _, err := environment.Compile(source); err == nil {
 				t.Fatal("expected compilation error")

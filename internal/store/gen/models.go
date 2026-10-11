@@ -29,6 +29,7 @@ type NodeExecution struct {
 	StartedAt      pgtype.Timestamptz `json:"started_at"`
 	EndedAt        pgtype.Timestamptz `json:"ended_at"`
 	LeaseToken     pgtype.UUID        `json:"lease_token"`
+	Item           []byte             `json:"item"`
 }
 
 type Run struct {

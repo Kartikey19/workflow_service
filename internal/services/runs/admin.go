@@ -69,7 +69,7 @@ func (f *Service) RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, ac
 		next := ne.Attempt + 1
 		rows, err := q.EnqueueRetry(ctx, gen.EnqueueRetryParams{
 			ID: uid.New(), RunID: run.ID, TenantID: run.TenantID, NodeID: ne.NodeID, NodeType: ne.NodeType,
-			BranchKey: ne.BranchKey, Attempt: next, IdempotencyKey: ne.IdempotencyKey,
+			BranchKey: ne.BranchKey, Attempt: next, IdempotencyKey: ne.IdempotencyKey, Item: ne.Item,
 			RunAfter: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		})
 		if err != nil {

@@ -46,6 +46,10 @@ type Bindings struct {
 	Run     RunView
 	Secrets map[string]string
 	Now     time.Time
+	// Item and Index are the current element of a foreach branch; they are nil
+	// and 0 elsewhere, where the compiler forbids referring to them.
+	Item  any
+	Index int
 }
 
 func NewEnv() (*Env, error) {
@@ -55,6 +59,8 @@ func NewEnv() (*Env, error) {
 		cel.Variable("run", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("secrets", cel.MapType(cel.StringType, cel.StringType)),
 		cel.Variable("now", cel.TimestampType),
+		cel.Variable("item", cel.DynType),
+		cel.Variable("index", cel.IntType),
 	}, library()...)
 	environment, err := cel.NewEnv(options...)
 	if err != nil {
@@ -111,6 +117,8 @@ func (p *Program) Eval(ctx context.Context, bindings Bindings) (ref.Val, error) 
 		},
 		"secrets": bindings.Secrets,
 		"now":     bindings.Now,
+		"item":    bindings.Item,
+		"index":   int64(bindings.Index),
 	}
 	result, _, err := p.cel.ContextEval(ctx, activation)
 	if err != nil {
@@ -152,4 +160,42 @@ func (p *Program) EvalBool(ctx context.Context, bindings Bindings) (bool, error)
 		return false, errors.New("condition did not return a boolean")
 	}
 	return value, nil
+}
+
+// CompileList requires a whole-expression template whose result is a list, as
+// foreach.items does. Dynamic results are accepted at compile time and checked
+// by EvalList.
+func (e *Env) CompileList(source string) (*Program, error) {
+	parts, err := ParseTemplate(source)
+	if err != nil {
+		return nil, &CompileError{"E_EXPR_SYNTAX", err.Error()}
+	}
+	if len(parts) != 1 || !parts[0].IsExpression {
+		return nil, &CompileError{"E_EXPR_TYPE", "items must be exactly one ${...} expression"}
+	}
+	program, err := e.Compile(parts[0].Text)
+	if err != nil {
+		return nil, err
+	}
+	if program.outputType.Kind() != cel.ListKind && program.outputType != cel.DynType {
+		return nil, &CompileError{"E_EXPR_TYPE", "items expression must return a list"}
+	}
+	return program, nil
+}
+
+// EvalList evaluates a CompileList program to its elements.
+func (p *Program) EvalList(ctx context.Context, bindings Bindings) ([]any, error) {
+	result, err := p.Eval(ctx, bindings)
+	if err != nil {
+		return nil, err
+	}
+	native, err := nativeValue(result)
+	if err != nil {
+		return nil, err
+	}
+	list, ok := native.([]any)
+	if !ok {
+		return nil, errors.New("expression did not return a list")
+	}
+	return list, nil
 }

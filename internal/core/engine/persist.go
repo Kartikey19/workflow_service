@@ -29,6 +29,7 @@ type outcome struct {
 	retryAt time.Time // non-zero: keep the failed row and enqueue attempt+1
 	gotoID  *string   // branch: the chosen successor
 	park    *park     // sleep / wait_event
+	fanout  [][]byte  // foreach controller: the encoded elements, one branch each
 }
 
 type park struct {
@@ -51,7 +52,7 @@ func (d *Dispatcher) markStarted(ctx context.Context, ne gen.NodeExecution, inpu
 		if rows == 0 {
 			return errLeaseLost
 		}
-		if err := runs.AppendEvent(ctx, q, run, "node.started", ne.NodeID, ne.Attempt, map[string]any{"worker_id": d.cfg.ID}); err != nil {
+		if err := runs.AppendEvent(ctx, q, run, "node.started", ne.NodeID, ne.Attempt, branchPayload(ne.BranchKey, map[string]any{"worker_id": d.cfg.ID})); err != nil {
 			return err
 		}
 		return q.NotifyRunEvents(ctx, uid.String(ne.RunID))
@@ -95,6 +96,34 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 			} else if !errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("check wait key: %w", err)
 			}
+		}
+
+		if o.fanout != nil {
+			// The controller parks without a wake-up time: the last branch to
+			// finish completes it, not the clock (runs.Service.Advance).
+			rows, err := q.ParkNode(ctx, gen.ParkNodeParams{
+				ID: ne.ID, LeaseToken: ne.LeaseToken, WorkerID: d.leaseOwner(), Output: o.output, Metrics: o.metrics,
+				RunAfter: pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true},
+			})
+			if err != nil {
+				return fmt.Errorf("park foreach controller: %w", err)
+			}
+			if rows == 0 {
+				return errLeaseLost
+			}
+			if err := d.insertBranches(ctx, q, run, ne, o.fanout); err != nil {
+				return err
+			}
+			if err := runs.AppendEvent(ctx, q, run, "node.fanout", ne.NodeID, ne.Attempt, map[string]any{"branches": len(o.fanout)}); err != nil {
+				return err
+			}
+			if err := q.NotifyReady(ctx, uid.String(ne.RunID)); err != nil {
+				return fmt.Errorf("notify ready: %w", err)
+			}
+			if err := d.runs.Recompute(ctx, q, run, compiled); err != nil {
+				return err
+			}
+			return q.NotifyRunEvents(ctx, uid.String(ne.RunID))
 		}
 
 		if o.park != nil {
@@ -157,7 +186,7 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 		if len(o.output) > 0 {
 			payload["output_bytes"] = len(o.output)
 		}
-		if err := runs.AppendEvent(ctx, q, run, "node."+o.status, ne.NodeID, ne.Attempt, payload); err != nil {
+		if err := runs.AppendEvent(ctx, q, run, "node."+o.status, ne.NodeID, ne.Attempt, branchPayload(ne.BranchKey, payload)); err != nil {
 			return err
 		}
 
@@ -177,6 +206,7 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 				NodeType: ne.NodeType, BranchKey: ne.BranchKey, Attempt: ne.Attempt + 1,
 				IdempotencyKey: ne.IdempotencyKey, // identical across attempts (I5)
 				RunAfter:       pgtype.Timestamptz{Time: o.retryAt, Valid: true},
+				Item:           ne.Item, // a foreach branch retries the same element
 			}); err != nil {
 				return fmt.Errorf("enqueue node retry: %w", err)
 			}
@@ -266,4 +296,18 @@ func optionalJSON(schema json.RawMessage) []byte {
 		return nil
 	}
 	return schema
+}
+
+// branchPayload tags a foreach branch's events with its list index; events
+// carry no branch column, and a timeline of 100 identical node.succeeded rows
+// is not readable.
+func branchPayload(branchKey string, payload map[string]any) map[string]any {
+	if branchKey == "" {
+		return payload
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["branch"] = branchKey
+	return payload
 }

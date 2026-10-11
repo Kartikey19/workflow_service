@@ -30,6 +30,11 @@ type Completed struct {
 // status (03 §5). The caller holds the run row lock taken by LockRun, in the same
 // transaction that wrote the node's terminal state.
 func (f *Service) Advance(ctx context.Context, q *gen.Queries, run gen.Run, compiled *spec.Compiled, done Completed) error {
+	if done.BranchKey != "" {
+		if node, ok := compiled.Spec.Node(done.NodeID); ok && node.Foreach != nil {
+			return f.advanceBranch(ctx, q, run, compiled, done)
+		}
+	}
 	if budget := f.MaxNodesPerRun; budget > 0 {
 		count, err := q.CountRunNodeExecutions(ctx, run.ID)
 		if err != nil {

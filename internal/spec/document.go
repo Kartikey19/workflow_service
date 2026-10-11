@@ -39,7 +39,24 @@ type Node struct {
 	Timeout   *string        `yaml:"timeout" json:"timeout"`
 	OnFailure string         `yaml:"on_failure" json:"on_failure"`
 	OnTimeout string         `yaml:"on_timeout" json:"on_timeout"`
+	Foreach   *Foreach       `yaml:"foreach" json:"foreach"`
 }
+
+// Foreach runs a node once per element of a list (02 §4.9). Items is a single
+// ${...} expression that must evaluate to a list; inside the node, item and
+// index name the current element. Anything that needs a foreach node waits for
+// every branch and sees its output as the list of branch outputs.
+type Foreach struct {
+	Items    string `yaml:"items" json:"items"`
+	MaxItems *int   `yaml:"max_items" json:"max_items"`
+}
+
+// Foreach limits. A list longer than the node's max_items fails the node, so a
+// runaway query cannot fan out into millions of rows.
+const (
+	DefaultForeachMaxItems = 1000
+	ForeachMaxItemsLimit   = 10000
+)
 
 type RetryPolicy struct {
 	MaxAttempts *int     `yaml:"max_attempts" json:"max_attempts"`
