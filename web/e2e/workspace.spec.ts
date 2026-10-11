@@ -79,12 +79,24 @@ test("invite to successful agent workflow, administration, and responsive naviga
   await page
     .getByLabel("Workflow name", { exact: true })
     .fill("browser-workflow");
+  // Edit a valid draft and publish immediately, before the field debounce fires.
+  await expect(
+    page.getByRole("button", { name: "Publish version", exact: true }),
+  ).toBeEnabled();
   await page
     .getByLabel("Agent prompt", { exact: true })
     .fill("Summarize the test.");
+  const publication = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/be/v1/workflows",
+  );
   await page
     .getByRole("button", { name: "Publish version", exact: true })
     .click();
+  expect((await publication).postDataJSON().yaml).toContain(
+    "Summarize the test.",
+  );
   await expect(
     page.getByRole("heading", { name: "Run browser-workflow", exact: true }),
   ).toBeVisible();

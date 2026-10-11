@@ -178,6 +178,49 @@ func TestDispatcherRun(t *testing.T) {
 	}
 }
 
+func TestDispatcherClaimCancelledBeforeStart(t *testing.T) {
+	for _, reassigned := range []bool{false, true} {
+		name := "owned claim is cancelled"
+		if reassigned {
+			name = "reassigned claim remains fenced"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			h := newHarness(t, ctx)
+			h.mustPublish("apiVersion: workflow/v1\nname: claimed-cancel\nnodes:\n  - {id: act, type: script, config: {}}\n")
+			runID := h.start("claimed-cancel", nil)
+			claim := claimOne(t, ctx, gen.New(h.pool), "worker-a")
+			if reassigned {
+				if _, err := h.pool.Exec(ctx, `update node_executions set lease_owner = 'worker-b', lease_token = gen_random_uuid() where id = $1`, claim.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := h.flow.Cancel(ctx, h.tenant, runID, "cancel before dispatch"); err != nil {
+				t.Fatal(err)
+			}
+			dispatcher := engine.NewDispatcher(engine.Config{ID: "worker-a", LeaseTTL: 30 * time.Second}, h.flow, h.registry, nil, testLogger())
+			dispatcher.Run(ctx, claim)
+			var status string
+			var owner pgtype.Text
+			var token pgtype.UUID
+			if err := h.pool.QueryRow(ctx, `select status, lease_owner, lease_token from node_executions where id = $1`, claim.ID).Scan(&status, &owner, &token); err != nil {
+				t.Fatal(err)
+			}
+			if reassigned {
+				if status != "running" || owner.String != "worker-b" || !token.Valid || token == claim.LeaseToken {
+					t.Fatalf("reassigned claim was changed: status=%s owner=%s token=%v", status, owner.String, token)
+				}
+			} else if status != "cancelled" || owner.Valid || token.Valid {
+				t.Fatalf("owned claim was left live: status=%s owner=%s token=%v", status, owner.String, token)
+			}
+			if calls := h.script.callCount("act"); calls != 0 {
+				t.Fatalf("cancelled node executed %d times", calls)
+			}
+		})
+	}
+}
+
 func echoConfig(*pgxpool.Pool) func(context.Context, executor.Request) (executor.Result, error) {
 	return func(_ context.Context, req executor.Request) (executor.Result, error) {
 		return executor.Result{Output: req.Config}, nil
