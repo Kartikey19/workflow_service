@@ -13,11 +13,11 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/pkg/httpx"
 	"github.com/kartikey/workflow_service/pkg/netguard"
 )
 
@@ -185,9 +185,9 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 	cause := fmt.Errorf("unexpected HTTP status %d from %s", resp.StatusCode, target.Host)
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return result, &executor.RetryableError{Code: "rate_limited", Err: cause, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+		return result, &executor.RetryableError{Code: "rate_limited", Err: cause, RetryAfter: httpx.ParseRetryAfter(resp.Header.Get("Retry-After"))}
 	case resp.StatusCode >= 500 || resp.StatusCode == http.StatusRequestTimeout:
-		return result, &executor.RetryableError{Code: "upstream_5xx", Err: cause, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+		return result, &executor.RetryableError{Code: "upstream_5xx", Err: cause, RetryAfter: httpx.ParseRetryAfter(resp.Header.Get("Retry-After"))}
 	default:
 		return result, executor.Permanent("upstream_4xx", cause)
 	}
@@ -212,19 +212,6 @@ func classifyTransport(ctx context.Context, err error) error {
 		return executor.Retryable("timeout", err)
 	}
 	return executor.Retryable("connection_error", err)
-}
-
-func retryAfter(header string) time.Duration {
-	if header == "" {
-		return 0
-	}
-	if seconds, err := strconv.Atoi(strings.TrimSpace(header)); err == nil && seconds > 0 {
-		return min(time.Duration(seconds)*time.Second, time.Hour)
-	}
-	if at, err := http.ParseTime(header); err == nil {
-		return min(max(time.Until(at), 0), time.Hour)
-	}
-	return 0
 }
 
 func decodeBody(contentType string, data []byte) any {

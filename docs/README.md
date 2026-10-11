@@ -64,6 +64,12 @@ go run ./cmd/api             # HTTP API
 go run ./cmd/worker          # claim loop, dispatcher, sweeper
 ```
 
+Agent nodes call the platform model provider: set `ANTHROPIC_API_KEY` (and
+optionally `ANTHROPIC_BASE_URL` and `LLM_PRICING_JSON`, a JSON object of model
+name or family prefix to `{input_per_mtok, output_per_mtok}` that overrides the
+built-in price estimates behind `cost_usd`). Without a key, workflows with agent
+nodes still publish but those nodes fail permanently with `llm_not_configured`.
+
 Only `DATABASE_URL` is required; every other setting has a default (see
 `internal/config/config.go`, where each field's `env` tag names its variable).
 

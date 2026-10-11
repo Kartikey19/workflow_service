@@ -21,6 +21,7 @@ type Config struct {
 	Database DatabaseConfig
 	Worker   WorkerConfig
 	Egress   EgressConfig
+	LLM      LLMConfig
 }
 
 type AppConfig struct {
@@ -64,6 +65,17 @@ type WorkerConfig struct {
 type EgressConfig struct {
 	AllowCIDRs   string `env:"EGRESS_ALLOW_CIDRS"`                      // comma separated
 	AllowPrivate bool   `env:"EGRESS_ALLOW_PRIVATE" envDefault:"false"` // local development only
+}
+
+// LLMConfig configures the platform-managed model provider used by agent
+// nodes. Without a key, workflows with agent nodes still publish but their
+// nodes fail permanently with llm_not_configured.
+type LLMConfig struct {
+	AnthropicAPIKey  string `env:"ANTHROPIC_API_KEY"`
+	AnthropicBaseURL string `env:"ANTHROPIC_BASE_URL"` // default https://api.anthropic.com
+	// PricingJSON overrides the built-in per-model price estimates, e.g.
+	// {"claude-sonnet-5-5": {"input_per_mtok": 3, "output_per_mtok": 15}}.
+	PricingJSON string `env:"LLM_PRICING_JSON"`
 }
 
 // LoadEnv loads an optional .env from the working directory. Shell values win.

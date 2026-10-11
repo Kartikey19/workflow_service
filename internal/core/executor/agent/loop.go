@@ -1,0 +1,244 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/pkg/jsonschema"
+	"github.com/kartikey/workflow_service/pkg/llm"
+	"github.com/kartikey/workflow_service/pkg/obs"
+)
+
+// maxToolResultBytes bounds what a tool can push into the conversation.
+const maxToolResultBytes = 32 << 10
+
+// usage accumulates what the loop has spent so far. It is reported on every
+// outcome, success or failure, because failed attempts cost money too.
+type usage struct {
+	model      string
+	iterations int
+	tokensIn   int
+	tokensOut  int
+	cost       float64
+	costKnown  bool
+	toolCalls  int
+	stop       string
+}
+
+func (u *usage) metrics() map[string]any {
+	return map[string]any{
+		"iterations": u.iterations, "tokens_in": u.tokensIn, "tokens_out": u.tokensOut,
+		"cost_usd": u.cost, "cost_known": u.costKnown, "model": u.model,
+		"stop_reason": u.stop, "tool_calls": u.toolCalls,
+	}
+}
+
+func (u *usage) add(resolved Resolved, response llm.Response) {
+	u.tokensIn += response.Usage.InputTokens
+	u.tokensOut += response.Usage.OutputTokens
+	if response.Model != "" {
+		u.model = response.Model
+	}
+	u.stop = response.StopReason
+	obs.AgentTokens.WithLabelValues(resolved.Provider, "input").Add(float64(response.Usage.InputTokens))
+	obs.AgentTokens.WithLabelValues(resolved.Provider, "output").Add(float64(response.Usage.OutputTokens))
+	if cost, ok := resolved.Pricing.Cost(u.model, response.Usage); ok {
+		u.cost += cost
+		u.costKnown = true
+		obs.AgentCost.WithLabelValues(resolved.Provider).Add(cost)
+	}
+}
+
+// Execute runs the model, executing requested tools until it answers or
+// max_iterations model calls have been made.
+func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.Result, error) {
+	var c config
+	if err := executor.DecodeConfig(req.Config, &c); err != nil {
+		return executor.Result{}, err
+	}
+	if err := c.validateResolved(e.tools); err != nil {
+		return executor.Result{}, executor.Permanent("bad_config", err)
+	}
+	resolved, err := e.clients.Client(ctx, req.TenantID, c.Model)
+	if errors.Is(err, ErrNotConfigured) {
+		return executor.Result{}, executor.Permanent("llm_not_configured", err)
+	}
+	if err != nil {
+		return executor.Result{}, executor.Retryable("provider_lookup", err)
+	}
+
+	maxTokens := c.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = defaultMaxTokens
+	}
+	var schema any
+	structured := len(c.OutputSchema) > 0 && string(c.OutputSchema) != "null"
+	if structured {
+		_ = json.Unmarshal(c.OutputSchema, &schema)
+	}
+	llmRequest := llm.Request{
+		Model: c.Model, System: systemPrompt(c.System, c.OutputSchema, structured),
+		MaxTokens: maxTokens, Temperature: c.Temperature,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{{Type: llm.BlockText, Text: promptText(c.Prompt)}}}},
+	}
+	for _, name := range c.Tools {
+		tool, _ := e.tools.Get(name)
+		llmRequest.Tools = append(llmRequest.Tools, llm.Tool{Name: tool.Name(), Description: tool.Description(), InputSchema: tool.InputSchema()})
+	}
+
+	spent := &usage{model: c.Model}
+	call := Call{TenantID: req.TenantID, RunID: req.RunID, NodeID: req.NodeID}
+	for {
+		if spent.iterations >= c.MaxIterations {
+			return executor.Result{Metrics: spent.metrics()}, executor.Permanent("max_iterations_exceeded",
+				fmt.Errorf("the model still wanted tools after %d iterations", c.MaxIterations))
+		}
+		spent.iterations++
+		response, err := resolved.Client.Complete(ctx, llmRequest)
+		if err != nil {
+			return executor.Result{Metrics: spent.metrics()}, classify(ctx, err)
+		}
+		spent.add(resolved, response)
+
+		uses := response.ToolUses()
+		if len(uses) == 0 || response.StopReason != llm.StopToolUse {
+			return finish(response, structured, schema, spent)
+		}
+		llmRequest.Messages = append(llmRequest.Messages, llm.Message{Role: llm.RoleAssistant, Content: response.Content})
+		results := make([]llm.Block, 0, len(uses))
+		for _, use := range uses {
+			spent.toolCalls++
+			results = append(results, e.runTool(ctx, call, c.Tools, use))
+		}
+		llmRequest.Messages = append(llmRequest.Messages, llm.Message{Role: llm.RoleUser, Content: results})
+	}
+}
+
+// runTool executes one requested tool. Anything the model got wrong, or any
+// tool failure, goes back to the model as an error result so it can recover.
+func (e *Executor) runTool(ctx context.Context, call Call, allowed []string, use llm.Block) llm.Block {
+	result := llm.Block{Type: llm.BlockToolResult, ToolUseID: use.ToolUseID}
+	tool, ok := e.tools.Get(use.ToolName)
+	if !ok || !hasTool(allowed, use.ToolName) {
+		result.IsError = true
+		result.ToolContent = fmt.Sprintf("tool %q is not available", use.ToolName)
+		return result
+	}
+	output, err := tool.Call(ctx, call, use.ToolInput)
+	if err != nil {
+		result.IsError = true
+		result.ToolContent = err.Error()
+		return result
+	}
+	text := string(output)
+	if len(text) > maxToolResultBytes {
+		text = text[:maxToolResultBytes] + "…[truncated]"
+	}
+	result.ToolContent = text
+	return result
+}
+
+// finish turns the model's final reply into node output.
+func finish(response llm.Response, structured bool, schema any, spent *usage) (executor.Result, error) {
+	text := response.Text()
+	if !structured {
+		output, err := executor.JSON(map[string]string{"text": text})
+		return executor.Result{Output: output, Metrics: spent.metrics()}, err
+	}
+	if response.StopReason == llm.StopMaxTokens {
+		return executor.Result{Metrics: spent.metrics()}, executor.Permanent("invalid_output",
+			errors.New("the reply was cut off at max_tokens before the JSON was complete"))
+	}
+	value, err := extractJSON(text)
+	if err != nil {
+		return executor.Result{Metrics: spent.metrics()}, executor.Permanent("invalid_output", err)
+	}
+	var decoded any
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return executor.Result{Metrics: spent.metrics()}, executor.Permanent("invalid_output", err)
+	}
+	if violations := jsonschema.Validate(schema, decoded); len(violations) > 0 {
+		parts := make([]string, 0, len(violations))
+		for _, v := range violations {
+			parts = append(parts, v.Field+" "+v.Message)
+		}
+		// Retrying a schema-violating reply usually reproduces it; fail once.
+		return executor.Result{Metrics: spent.metrics()}, executor.Permanent("invalid_output",
+			fmt.Errorf("reply does not match output_schema: %s", strings.Join(parts, "; ")))
+	}
+	return executor.Result{Output: value, Metrics: spent.metrics()}, nil
+}
+
+func systemPrompt(system string, schema json.RawMessage, structured bool) string {
+	if !structured {
+		return system
+	}
+	instruction := "Reply with one JSON value that matches this JSON Schema, and nothing else:\n" + string(schema)
+	if system == "" {
+		return instruction
+	}
+	return system + "\n\n" + instruction
+}
+
+// promptText sends a string prompt as is and any other JSON value as JSON.
+func promptText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	return string(raw)
+}
+
+// extractJSON finds the JSON value in a reply that may wrap it in a code fence
+// or surround it with prose.
+func extractJSON(text string) (json.RawMessage, error) {
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "```") {
+		trimmed = strings.TrimPrefix(trimmed, "```")
+		if newline := strings.IndexByte(trimmed, '\n'); newline >= 0 {
+			trimmed = trimmed[newline+1:]
+		}
+		trimmed = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(trimmed), "```"))
+	}
+	if json.Valid([]byte(trimmed)) {
+		return json.RawMessage(trimmed), nil
+	}
+	for _, pair := range [][2]string{{"{", "}"}, {"[", "]"}} {
+		start, end := strings.Index(trimmed, pair[0]), strings.LastIndex(trimmed, pair[1])
+		if start >= 0 && end > start && json.Valid([]byte(trimmed[start:end+1])) {
+			return json.RawMessage(trimmed[start : end+1]), nil
+		}
+	}
+	return nil, errors.New("the reply does not contain valid JSON")
+}
+
+// classify maps a provider failure onto the retry model: rate limits and
+// outages are retried (honouring Retry-After), everything else fails once.
+func classify(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err() // DeadlineExceeded is a retryable timeout; Canceled is permanent
+	}
+	var apiErr *llm.Error
+	if !errors.As(err, &apiErr) {
+		return executor.Retryable("connection_error", err)
+	}
+	switch {
+	case apiErr.Status == http.StatusTooManyRequests:
+		return &executor.RetryableError{Code: "rate_limited", Err: apiErr, RetryAfter: apiErr.RetryAfter}
+	case apiErr.Retryable && apiErr.Status >= 500:
+		return &executor.RetryableError{Code: "upstream_5xx", Err: apiErr, RetryAfter: apiErr.RetryAfter}
+	case apiErr.Retryable:
+		code := apiErr.Code
+		if code == "" {
+			code = "upstream_error"
+		}
+		return &executor.RetryableError{Code: code, Err: apiErr, RetryAfter: apiErr.RetryAfter}
+	default:
+		return executor.Permanent("upstream_4xx", apiErr)
+	}
+}

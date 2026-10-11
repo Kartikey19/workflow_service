@@ -509,14 +509,23 @@ Anthropic client, the tool-calling loop inside one executor, a tool registry,
 `max_iterations` enforcement, structured output validation, token/cost metrics.
 
 **Acceptance**
-- [ ] `max_iterations` is enforced and reported in `metrics.iterations`.
-- [ ] `cost_usd` populated; `select sum((metrics->>'cost_usd')::numeric) ... group
+- [x] `max_iterations` is enforced and reported in `metrics.iterations`.
+- [x] `cost_usd` populated; `select sum((metrics->>'cost_usd')::numeric) ... group
       by tenant_id` produces a plausible bill.
-- [ ] Output failing `output_schema` is a **permanent** error, not retryable —
+- [x] Output failing `output_schema` is a **permanent** error, not retryable —
       retrying a schema-violating model response usually reproduces it, and you
       would rather see it fail once.
-- [ ] Rate limits (429) classify as retryable and honour `Retry-After`.
-- [ ] A spec with an `agent` node and no `max_iterations` fails to publish.
+- [x] Rate limits (429) classify as retryable and honour `Retry-After`.
+- [x] A spec with an `agent` node and no `max_iterations` fails to publish.
+
+**Built (2026-10-11).** `pkg/llm` is the provider-neutral interface (messages,
+tool calls, usage, errors, per-model price estimates) and `pkg/llm/anthropic` its
+plain `net/http` client. `internal/core/executor/agent` holds the executor, the
+tool registry (`current_time` ships built in) and the `Clients` seam where
+per-organization provider connections plug in at M13. The platform key comes from
+`ANTHROPIC_API_KEY`; without it agent nodes publish but fail permanently with
+`llm_not_configured`. Prices are estimates per model family and can be overridden
+with `LLM_PRICING_JSON`. Without `output_schema` the output is `{"text": ...}`.
 
 ### M8 — `human_task` (1 week)
 
@@ -918,8 +927,7 @@ production.
 
 - [ ] All three example workflows in `02 §5` run end to end against real HTTP
       upstreams, including the timeout and compensation paths. Delivery (5.1)
-      is done, with happy, timeout and compensation tests; Agentic (5.2) waits
-      for M7 and Healthcare (5.3) for M8. The lint already compiles all three.
+      and Agentic (5.2) are done; Healthcare (5.3) waits for M8. The lint already compiles all three.
 - [x] Invariants I1–I7 asserted by `checkInvariants` in every engine test.
 - [x] 8-worker diamond test, 200 iterations, zero duplicates, with `-race`.
 - [x] Kill -9 chaos test: every run terminal, no duplicate `succeeded` rows.

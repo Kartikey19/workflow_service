@@ -10,11 +10,14 @@ import (
 	"github.com/kartikey/workflow_service/internal/config"
 	"github.com/kartikey/workflow_service/internal/core/engine"
 	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
 	"github.com/kartikey/workflow_service/pkg/auth"
+	"github.com/kartikey/workflow_service/pkg/llm"
+	"github.com/kartikey/workflow_service/pkg/llm/anthropic"
 	"github.com/kartikey/workflow_service/pkg/netguard"
 	"go.uber.org/zap"
 )
@@ -86,4 +89,22 @@ func (d *Deps) Worker(cfg config.WorkerConfig) *engine.Worker {
 	}
 	dispatcher := engine.NewDispatcher(engineCfg, d.Runs, d.Registry, d.Secrets, d.Log)
 	return engine.NewWorker(engineCfg, d.Log, d.Pool, d.Runs, dispatcher.Run)
+}
+
+// newAgentExecutor wires the agent node to the platform model key. The tool
+// registry starts with the harmless built-ins; data and MCP tools join it in M15.
+func newAgentExecutor(cfg config.LLMConfig) (*agent.Executor, error) {
+	tools, err := agent.NewTools(agent.CurrentTime{})
+	if err != nil {
+		return nil, err
+	}
+	if cfg.AnthropicAPIKey == "" {
+		return agent.New(agent.Unconfigured{}, tools), nil
+	}
+	pricing, err := llm.ParsePricing(cfg.PricingJSON)
+	if err != nil {
+		return nil, fmt.Errorf("LLM_PRICING_JSON: %w", err)
+	}
+	client := anthropic.New(cfg.AnthropicAPIKey, cfg.AnthropicBaseURL, nil)
+	return agent.New(agent.NewStatic("anthropic", client, pricing), tools), nil
 }

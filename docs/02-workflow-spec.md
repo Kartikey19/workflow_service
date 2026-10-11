@@ -276,7 +276,7 @@ run.
   type: agent
   needs: [fetch_ticket]
   config:
-    model: claude-sonnet-5
+    model: claude-sonnet-5-5
     system: "You classify support tickets. Reply with JSON only."
     prompt: ${nodes.fetch_ticket.output.body}
     tools: [search_kb, get_customer]     # names registered in the tool registry
@@ -291,7 +291,9 @@ run.
         category: {type: string}
 ```
 
-Output: the parsed model response (validated against `output_schema` when given).
+Output: with `output_schema`, the model's JSON reply, validated against it (a
+violation, a reply that is not JSON, or one cut off at `max_tokens` is a permanent
+failure). Without it, `{"text": "<reply>"}`.
 Metrics: `{iterations, tokens_in, tokens_out, cost_usd, model, stop_reason}`.
 
 The tool-calling loop lives **inside** this executor and is a single durable step.
@@ -422,7 +424,7 @@ nodes:
     type: agent
     needs: [fetch_ticket]
     config:
-      model: claude-sonnet-5
+      model: claude-sonnet-5-5
       system: "Classify the ticket. Respond with JSON only."
       prompt: ${nodes.fetch_ticket.output.body.description}
       tools: [search_kb]
@@ -452,7 +454,7 @@ nodes:
     type: agent
     needs: [route]
     config:
-      model: claude-sonnet-5
+      model: claude-sonnet-5-5
       system: "Draft a helpful reply."
       prompt: ${nodes.fetch_ticket.output.body.description}
       max_iterations: 3

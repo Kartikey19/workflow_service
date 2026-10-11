@@ -72,7 +72,7 @@ func TestWorkflowLint(t *testing.T) {
 	for _, block := range blocks {
 		name := "docs/02-workflow-spec.md#" + regexp.MustCompile(`(?m)^name: (\S+)`).FindStringSubmatch(block[1])[1]
 		missing := ""
-		for _, m := range regexp.MustCompile(`(?m)^\s*(?:- )?type: (\w+)`).FindAllStringSubmatch(block[1], -1) {
+		for _, m := range regexp.MustCompile(`(?m)^\s*- id: \S+\n\s+type: (\w+)`).FindAllStringSubmatch(block[1], -1) {
 			if !registered[m[1]] {
 				missing = m[1]
 			}

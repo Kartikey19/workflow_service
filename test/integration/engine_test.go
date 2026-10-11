@@ -71,6 +71,7 @@ type harness struct {
 	pool     *pgxpool.Pool
 	flow     *runs.Service
 	script   *scripted
+	llm      *fakeLLM
 	tenant   pgtype.UUID
 	registry *executor.Registry
 	publish  *workflows.Service
@@ -90,7 +91,9 @@ func newHarness(t *testing.T, ctx context.Context) *harness {
 	registry.MustRegister(script)
 	// httptest upstreams listen on loopback, which the default policy blocks.
 	registry.MustRegister(httpexec.New(netguard.Policy{AllowPrivate: true}))
-	h := &harness{t: t, pool: pool, flow: f, script: script, tenant: newUUID(t), registry: registry, publish: workflows.NewService(pool, registry)}
+	model := &fakeLLM{}
+	registry.MustRegister(newTestAgent(t, model))
+	h := &harness{t: t, pool: pool, flow: f, script: script, llm: model, tenant: newUUID(t), registry: registry, publish: workflows.NewService(pool, registry)}
 	t.Cleanup(h.stopWorkers)
 	return h
 }
