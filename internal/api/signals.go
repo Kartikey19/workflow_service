@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/pkg/httpx"
 	"net/http"
 	"strings"
@@ -26,6 +28,12 @@ func (h *Handler) signal(w http.ResponseWriter, r *http.Request, p auth.Principa
 	if strings.TrimSpace(req.Key) == "" {
 		h.writeError(w, r, exception.BadRequest("key is required"))
 		return
+	}
+	for _, prefix := range executor.ReservedWaitKeyPrefixes {
+		if strings.HasPrefix(req.Key, prefix) {
+			h.writeError(w, r, exception.BadRequest(fmt.Sprintf("keys starting with %q are reserved; complete tasks through /v1/tasks", prefix)))
+			return
+		}
 	}
 	result, err := h.services.Runs.Signal(r.Context(), p.TenantID, req.Key, req.Payload)
 	if err != nil {

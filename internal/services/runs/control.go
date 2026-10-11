@@ -13,13 +13,16 @@ import (
 	"github.com/kartikey/workflow_service/pkg/jsonschema"
 	"github.com/kartikey/workflow_service/pkg/obs"
 	"github.com/kartikey/workflow_service/pkg/uid"
+	"go.uber.org/zap"
 )
 
 // Cancel ends a run (03 §10). Ready and waiting nodes are cancelled now; running
 // nodes stop at their next heartbeat, whose fenced extension fails once the run
-// is terminal, and their results are discarded.
+// is terminal, and their results are discarded. Unfinished sub-workflow runs
+// are cancelled with it, and if the run is itself a sub-workflow its parent's
+// waiting node is completed (as failed).
 func (f *Service) Cancel(ctx context.Context, tenantID, runID pgtype.UUID, reason string) error {
-	return db.InTx(ctx, f.Pool, func(tx pgx.Tx) error {
+	err := db.InTx(ctx, f.Pool, func(tx pgx.Tx) error {
 		q := f.Q.WithTx(tx)
 		run, err := q.LockRun(ctx, runID)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && run.TenantID != tenantID) {
@@ -34,21 +37,49 @@ func (f *Service) Cancel(ctx context.Context, tenantID, runID pgtype.UUID, reaso
 		if reason == "" {
 			reason = "cancelled by request"
 		}
-		if _, err := q.CancelRun(ctx, gen.CancelRunParams{ID: runID, TenantID: tenantID, Reason: reason}); err != nil {
-			return fmt.Errorf("cancel run: %w", err)
-		}
-		if _, err := q.CancelRunNodes(ctx, runID); err != nil {
-			return fmt.Errorf("cancel run nodes: %w", err)
-		}
-		if err := q.CancelRunWaits(ctx, runID); err != nil {
-			return fmt.Errorf("cancel run waits: %w", err)
-		}
-		if err := AppendEvent(ctx, q, run, "run.cancelled", "", 0, map[string]any{"reason": reason}); err != nil {
-			return err
-		}
-		obs.RunsFinished.WithLabelValues("cancelled").Inc()
-		return q.NotifyRunEvents(ctx, uid.String(runID))
+		return f.cancelLocked(ctx, q, run, reason)
 	})
+	if err != nil {
+		return err
+	}
+	f.propagateToParent(ctx, runID)
+	return nil
+}
+
+// cancelLocked cancels a run the caller has locked, and its unfinished children.
+func (f *Service) cancelLocked(ctx context.Context, q *gen.Queries, run gen.Run, reason string) error {
+	if _, err := q.CancelRun(ctx, gen.CancelRunParams{ID: run.ID, TenantID: run.TenantID, Reason: reason}); err != nil {
+		return fmt.Errorf("cancel run: %w", err)
+	}
+	if _, err := q.CancelRunNodes(ctx, run.ID); err != nil {
+		return fmt.Errorf("cancel run nodes: %w", err)
+	}
+	if err := q.CancelRunWaits(ctx, run.ID); err != nil {
+		return fmt.Errorf("cancel run waits: %w", err)
+	}
+	if err := AppendEvent(ctx, q, run, "run.cancelled", "", 0, map[string]any{"reason": reason}); err != nil {
+		return err
+	}
+	obs.RunsFinished.WithLabelValues("cancelled").Inc()
+	if err := f.cancelActiveChildren(ctx, q, run, "the parent run was cancelled"); err != nil {
+		return err
+	}
+	return q.NotifyRunEvents(ctx, uid.String(run.ID))
+}
+
+// propagateToParent completes the parent's node that waits on runID, if runID
+// is a finished child. It runs after the transaction that ended the child has
+// committed; a failure only delays the parent until the next sweep.
+func (f *Service) propagateToParent(ctx context.Context, runID pgtype.UUID) {
+	if err := f.CompleteSubworkflow(ctx, runID); err != nil {
+		f.Log.Warn("complete sub-workflow node; the sweeper will retry", zap.Error(err), zap.String("run_id", uid.String(runID)))
+	}
+}
+
+// PropagateToParent is propagateToParent for the dispatcher, which finishes
+// runs in its own transactions.
+func (f *Service) PropagateToParent(ctx context.Context, runID pgtype.UUID) {
+	f.propagateToParent(ctx, runID)
 }
 
 // PayloadError is a signal payload that fails the wait's schema (422). The
@@ -92,12 +123,14 @@ func (f *Service) Signal(ctx context.Context, tenantID pgtype.UUID, key string, 
 	}
 
 	var result SignalResult
+	isChild := false
 	err = db.InTx(ctx, f.Pool, func(tx pgx.Tx) error {
 		q := f.Q.WithTx(tx)
 		run, err := LockRun(ctx, q, runID)
 		if err != nil {
 			return err
 		}
+		isChild = run.ParentRunID.Valid
 		wait, err := q.LockLiveWait(ctx, gen.LockLiveWaitParams{TenantID: tenantID, WaitKey: key})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoWaiter // fulfilled or expired between peek and lock
@@ -155,6 +188,9 @@ func (f *Service) Signal(ctx context.Context, tenantID pgtype.UUID, key string, 
 		return SignalResult{}, err
 	}
 	obs.Signals.WithLabelValues("delivered").Inc()
+	if isChild {
+		f.propagateToParent(ctx, runID)
+	}
 	return result, nil
 }
 
@@ -167,12 +203,14 @@ func (f *Service) WakeDue(ctx context.Context) (int, error) {
 	}
 	handled := 0
 	for _, node := range due {
+		isChild := false
 		err := db.InTx(ctx, f.Pool, func(tx pgx.Tx) error {
 			q := f.Q.WithTx(tx)
 			run, err := LockRun(ctx, q, node.RunID)
 			if err != nil {
 				return err
 			}
+			isChild = run.ParentRunID.Valid
 			if IsTerminalRun(run.Status) {
 				return nil
 			}
@@ -181,8 +219,12 @@ func (f *Service) WakeDue(ctx context.Context) (int, error) {
 			if node.NodeType != "sleep" {
 				status, eventType = "failed", "node.timeout"
 				errorJSON, _ = json.Marshal(map[string]any{"code": "wait_timeout", "message": "wait timed out", "retryable": false})
-				if err := q.ExpireNodeWaits(ctx, node.ID); err != nil {
+				expired, err := q.ExpireNodeWaits(ctx, node.ID)
+				if err != nil {
 					return fmt.Errorf("expire wait: %w", err)
+				}
+				if err := f.cancelWaitedChildren(ctx, q, run, expired); err != nil {
+					return err
 				}
 			}
 			rows, err := q.CompleteWaitingNode(ctx, gen.CompleteWaitingNodeParams{ID: node.ID, Status: status, Error: errorJSON})
@@ -208,6 +250,9 @@ func (f *Service) WakeDue(ctx context.Context) (int, error) {
 		if err != nil {
 			return handled, err
 		}
+		if isChild {
+			f.propagateToParent(ctx, node.RunID)
+		}
 	}
 	if handled > 0 {
 		obs.SweeperActions.WithLabelValues("wake_waiting").Add(float64(handled))
@@ -223,12 +268,14 @@ func (f *Service) FailPastDeadline(ctx context.Context) (int, error) {
 	}
 	failed := 0
 	for _, candidate := range runs {
+		isChild := false
 		err := db.InTx(ctx, f.Pool, func(tx pgx.Tx) error {
 			q := f.Q.WithTx(tx)
 			run, err := LockRun(ctx, q, candidate.ID)
 			if err != nil {
 				return err
 			}
+			isChild = run.ParentRunID.Valid
 			if IsTerminalRun(run.Status) {
 				return nil
 			}
@@ -242,6 +289,9 @@ func (f *Service) FailPastDeadline(ctx context.Context) (int, error) {
 		})
 		if err != nil {
 			return failed, err
+		}
+		if isChild {
+			f.propagateToParent(ctx, candidate.ID)
 		}
 	}
 	if failed > 0 {

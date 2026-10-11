@@ -105,6 +105,12 @@ func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, p auth.Princi
 		TenantID: p.TenantID, WorkflowName: optionalQueryText(r, "workflow"),
 		Status: optionalQueryText(r, "status"), CorrelationID: optionalQueryText(r, "correlation_id"),
 	}
+	if parent := r.URL.Query().Get("parent_run_id"); parent != "" {
+		if params.ParentRunID, err = uid.Parse(parent); err != nil {
+			h.writeError(w, r, exception.BadRequest("parent_run_id must be a run ID"))
+			return
+		}
+	}
 	if params.CreatedAfter, err = optionalQueryTime(r, "created_after"); err != nil {
 		h.writeError(w, r, err)
 		return

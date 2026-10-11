@@ -179,6 +179,44 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const finishedChildrenWithLiveWait = `-- name: FinishedChildrenWithLiveWait :many
+select r.id
+  from run_waits w
+  join runs r on r.id = case
+         when substr(w.wait_key, 13) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+         then substr(w.wait_key, 13)::uuid end
+ where w.status = 'waiting'
+   and w.wait_key like 'subworkflow:%'
+   and r.tenant_id = w.tenant_id
+   and r.parent_run_id = w.run_id
+   and r.status in ('succeeded', 'failed', 'cancelled')
+ limit 100
+`
+
+// Child runs that ended while their parent's node still waits on them: either
+// the post-commit propagation missed (crash, or the child finished before the
+// parent's wait row existed) or it has not run yet. The tenant and parent checks
+// keep a user-chosen wait key from ever matching another run.
+func (q *Queries) FinishedChildrenWithLiveWait(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, finishedChildrenWithLiveWait)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRun = `-- name: GetRun :one
 select id, tenant_id, workflow_id, workflow_version_id, status, input, output, error, idempotency_key, correlation_id, trigger, parent_run_id, created_at, started_at, ended_at, deadline_at, request_hash, created_by
 from runs
@@ -193,6 +231,37 @@ type GetRunParams struct {
 
 func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 	row := q.db.QueryRow(ctx, getRun, arg.ID, arg.TenantID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
+		&i.Status,
+		&i.Input,
+		&i.Output,
+		&i.Error,
+		&i.IdempotencyKey,
+		&i.CorrelationID,
+		&i.Trigger,
+		&i.ParentRunID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.DeadlineAt,
+		&i.RequestHash,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const getRunAny = `-- name: GetRunAny :one
+select id, tenant_id, workflow_id, workflow_version_id, status, input, output, error, idempotency_key, correlation_id, trigger, parent_run_id, created_at, started_at, ended_at, deadline_at, request_hash, created_by from runs where id = $1
+`
+
+// Unscoped read for internal propagation between a child run and its parent.
+func (q *Queries) GetRunAny(ctx context.Context, id pgtype.UUID) (Run, error) {
+	row := q.db.QueryRow(ctx, getRunAny, id)
 	var i Run
 	err := row.Scan(
 		&i.ID,
@@ -299,6 +368,50 @@ func (q *Queries) GetRunDetail(ctx context.Context, arg GetRunDetailParams) (Get
 	return i, err
 }
 
+const listActiveChildRuns = `-- name: ListActiveChildRuns :many
+select id, tenant_id, workflow_id, workflow_version_id, status, input, output, error, idempotency_key, correlation_id, trigger, parent_run_id, created_at, started_at, ended_at, deadline_at, request_hash, created_by from runs
+ where parent_run_id = $1 and status in ('pending', 'running', 'waiting')
+`
+
+func (q *Queries) ListActiveChildRuns(ctx context.Context, parentRunID pgtype.UUID) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listActiveChildRuns, parentRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.WorkflowID,
+			&i.WorkflowVersionID,
+			&i.Status,
+			&i.Input,
+			&i.Output,
+			&i.Error,
+			&i.IdempotencyKey,
+			&i.CorrelationID,
+			&i.Trigger,
+			&i.ParentRunID,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DeadlineAt,
+			&i.RequestHash,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunEvents = `-- name: ListRunEvents :many
 select id, run_id, tenant_id, seq, type, node_id, branch_key, attempt, payload, created_at from run_events
  where run_id = $1 and tenant_id = $2 and seq > $3
@@ -358,12 +471,13 @@ select r.id, r.tenant_id, r.workflow_id, r.workflow_version_id, r.status, r.inpu
    and ($2::text is null or w.name = $2::text)
    and ($3::text is null or r.status = $3::text)
    and ($4::text is null or r.correlation_id = $4::text)
-   and ($5::timestamptz is null or r.created_at >= $5::timestamptz)
-   and ($6::timestamptz is null or r.created_at < $6::timestamptz)
-   and ($7::timestamptz is null
-        or (r.created_at, r.id) < ($7::timestamptz, $8::uuid))
+   and ($5::uuid is null or r.parent_run_id = $5::uuid)
+   and ($6::timestamptz is null or r.created_at >= $6::timestamptz)
+   and ($7::timestamptz is null or r.created_at < $7::timestamptz)
+   and ($8::timestamptz is null
+        or (r.created_at, r.id) < ($8::timestamptz, $9::uuid))
  order by r.created_at desc, r.id desc
- limit $9
+ limit $10
 `
 
 type ListRunsParams struct {
@@ -371,6 +485,7 @@ type ListRunsParams struct {
 	WorkflowName  pgtype.Text        `json:"workflow_name"`
 	Status        pgtype.Text        `json:"status"`
 	CorrelationID pgtype.Text        `json:"correlation_id"`
+	ParentRunID   pgtype.UUID        `json:"parent_run_id"`
 	CreatedAfter  pgtype.Timestamptz `json:"created_after"`
 	CreatedBefore pgtype.Timestamptz `json:"created_before"`
 	BeforeCreated pgtype.Timestamptz `json:"before_created"`
@@ -391,6 +506,7 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]ListRunsR
 		arg.WorkflowName,
 		arg.Status,
 		arg.CorrelationID,
+		arg.ParentRunID,
 		arg.CreatedAfter,
 		arg.CreatedBefore,
 		arg.BeforeCreated,
@@ -502,6 +618,24 @@ func (q *Queries) PeekLiveWait(ctx context.Context, arg PeekLiveWaitParams) (pgt
 	var run_id pgtype.UUID
 	err := row.Scan(&run_id)
 	return run_id, err
+}
+
+const runDepth = `-- name: RunDepth :one
+with recursive chain(run_id, parent_id, depth) as (
+  select r0.id, r0.parent_run_id, 0 from runs r0 where r0.id = $1
+  union all
+  select r.id, r.parent_run_id, chain.depth + 1
+    from runs r join chain on r.id = chain.parent_id
+)
+select max(chain.depth)::int as depth from chain
+`
+
+// Number of ancestors of a run: 0 for a top-level run.
+func (q *Queries) RunDepth(ctx context.Context, id pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, runDepth, id)
+	var depth int32
+	err := row.Scan(&depth)
+	return depth, err
 }
 
 const runStatusCounts = `-- name: RunStatusCounts :many

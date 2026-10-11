@@ -19,9 +19,11 @@ update run_waits
    set status = 'fulfilled', payload = @payload, fulfilled_at = now()
  where id = @id;
 
--- name: ExpireNodeWaits :exec
+-- name: ExpireNodeWaits :many
+-- Returns the keys so a sub-workflow wait can cancel the child it was waiting on.
 update run_waits set status = 'expired'
- where node_execution_id = @node_execution_id and status = 'waiting';
+ where node_execution_id = @node_execution_id and status = 'waiting'
+returning wait_key;
 
 -- name: CancelRunWaits :exec
 update run_waits set status = 'cancelled'

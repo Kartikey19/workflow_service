@@ -59,8 +59,12 @@ func (f *Service) RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, ac
 			if err != nil {
 				return fmt.Errorf("cancel live attempt: %w", err)
 			}
-			if err := q.ExpireNodeWaits(ctx, ne.ID); err != nil {
+			expired, err := q.ExpireNodeWaits(ctx, ne.ID)
+			if err != nil {
 				return fmt.Errorf("expire waits: %w", err)
+			}
+			if err := f.cancelWaitedChildren(ctx, q, run, expired); err != nil {
+				return err
 			}
 		case "failed":
 		default:
@@ -108,8 +112,12 @@ func (f *Service) SkipNode(ctx context.Context, nodeExecutionID pgtype.UUID, act
 		if err != nil {
 			return fmt.Errorf("skip node: %w", err)
 		}
-		if err := q.ExpireNodeWaits(ctx, ne.ID); err != nil {
+		expired, err := q.ExpireNodeWaits(ctx, ne.ID)
+		if err != nil {
 			return fmt.Errorf("expire waits: %w", err)
+		}
+		if err := f.cancelWaitedChildren(ctx, q, run, expired); err != nil {
+			return err
 		}
 		if err := AppendEvent(ctx, q, run, "admin.node_skipped", ne.NodeID, ne.Attempt, map[string]any{"actor": actor, "from_status": ne.Status}); err != nil {
 			return err

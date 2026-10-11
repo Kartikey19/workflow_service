@@ -74,12 +74,14 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 		return
 	}
 
+	isChild := false
 	err := db.InTx(ctx, d.runs.Pool, func(tx pgx.Tx) error {
 		q := d.store.WithTx(tx)
 		run, err := runs.LockRun(ctx, q, ne.RunID)
 		if err != nil {
 			return err
 		}
+		isChild = run.ParentRunID.Valid
 		if runs.IsTerminalRun(run.Status) {
 			rows, err := q.CancelRunningNode(ctx, gen.CancelRunningNodeParams{ID: ne.ID, LeaseToken: ne.LeaseToken, WorkerID: d.leaseOwner(), Metrics: o.metrics})
 			if err == nil && rows == 0 {
@@ -240,6 +242,10 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 			zap.String("node_execution_id", uid.String(ne.ID)), zap.String("status", o.status))
 	default:
 		obs.NodeAttempts.WithLabelValues(ne.NodeType, o.status, o.code).Inc()
+		if isChild {
+			// The run may have just ended; tell the parent node waiting on it.
+			d.runs.PropagateToParent(parent, ne.RunID)
+		}
 	}
 }
 

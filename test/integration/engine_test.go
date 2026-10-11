@@ -93,6 +93,7 @@ func newHarness(t *testing.T, ctx context.Context) *harness {
 	registry.MustRegister(httpexec.New(netguard.Policy{AllowPrivate: true}))
 	model := &fakeLLM{}
 	registry.MustRegister(newTestAgent(t, model))
+	registry.MustRegister(builtin.SubWorkflow{Starter: f})
 	h := &harness{t: t, pool: pool, flow: f, script: script, llm: model, tenant: newUUID(t), registry: registry, publish: workflows.NewService(pool, registry)}
 	t.Cleanup(h.stopWorkers)
 	return h

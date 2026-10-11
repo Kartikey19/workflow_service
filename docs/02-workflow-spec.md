@@ -376,6 +376,48 @@ same element); each must stay under the per-node payload limit.
 A multi-step body per element is a foreach over a `workflow` node (sub-workflow).
 
 
+### 4.10 `workflow` (M9)
+
+Runs another published workflow of the same organization as a **child run** and
+waits for it.
+
+```yaml
+- id: onboard
+  type: workflow
+  needs: [create_account]
+  config:
+    name: onboard-customer          # required
+    version: 3                      # optional; default is the latest at that moment
+    input: {customer: '${nodes.create_account.output.body.id}'}
+    timeout: 2h                     # optional; how long to wait. default 720h
+```
+
+The child is an ordinary run with `trigger: subworkflow` and `parent_run_id` set
+(`GET /v1/runs?parent_run_id=` lists a run's children). The node's output is
+`{run_id, status, output}`, where `output` is the child's `outputs`. If the child
+fails or is cancelled the node fails with `E_SUBWORKFLOW_FAILED` or
+`E_SUBWORKFLOW_CANCELLED` and the child's error attached, so `on_failure`
+handlers work as usual.
+
+There is no separate engine mechanism. The node starts the child (the child's
+idempotency key is the node's own stable key, so a retried or redelivered attempt
+gets the same run, never a second one) and parks on a wait keyed
+`subworkflow:<child run id>`; when the child ends, the parent's waiting node is
+completed and the parent advances. A sweeper pass repairs the case where that
+notification is missed. Cancelling the parent, or the parent failing, hitting its
+deadline or giving up waiting, cancels unfinished children. Nesting is limited to
+5 levels, which also stops a workflow that calls itself. A missing or archived
+workflow, a version that does not exist, or input that fails the child's schema
+fails the node permanently before any run is created. Child runs are not counted
+against the monthly run allowance.
+
+Combine with `foreach` for a multi-step body per element:
+`foreach: {items: ...}` on a `workflow` node starts one child per element.
+
+Wait keys starting with `task:` or `subworkflow:` belong to the engine: a
+`wait_event` cannot use them and `POST /v1/signals` rejects them.
+
+
 ### 4.8 `noop` (M2)
 
 No config. Succeeds immediately. Exists for fan-in points and for testing the

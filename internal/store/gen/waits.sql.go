@@ -21,14 +21,31 @@ func (q *Queries) CancelRunWaits(ctx context.Context, runID pgtype.UUID) error {
 	return err
 }
 
-const expireNodeWaits = `-- name: ExpireNodeWaits :exec
+const expireNodeWaits = `-- name: ExpireNodeWaits :many
 update run_waits set status = 'expired'
  where node_execution_id = $1 and status = 'waiting'
+returning wait_key
 `
 
-func (q *Queries) ExpireNodeWaits(ctx context.Context, nodeExecutionID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, expireNodeWaits, nodeExecutionID)
-	return err
+// Returns the keys so a sub-workflow wait can cancel the child it was waiting on.
+func (q *Queries) ExpireNodeWaits(ctx context.Context, nodeExecutionID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, expireNodeWaits, nodeExecutionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var wait_key string
+		if err := rows.Scan(&wait_key); err != nil {
+			return nil, err
+		}
+		items = append(items, wait_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const fulfillWait = `-- name: FulfillWait :exec

@@ -166,8 +166,8 @@ Good enough for a progress bar and free to compute.
 
 ### 3.3 `GET /v1/runs` — list
 
-Filters: `workflow`, `status`, `correlation_id`, `created_after`,
-`created_before`. Keyset paginated on `(created_at, id)` descending.
+Filters: `workflow`, `status`, `correlation_id`, `parent_run_id` (the child runs
+of a sub-workflow node), `created_after`, `created_before`. Keyset paginated on `(created_at, id)` descending.
 
 `?correlation_id=ORD-88213` is the query that gets used most. It is backed by
 `runs_correlation_ix`.
@@ -246,6 +246,9 @@ waiting node with `payload` as its output, and advances the DAG — one transact
   in `03-engine.md §7.3`; **v1 rejects, and callers must retry.** Document this
   prominently, because it is the thing integrators will trip on.
 - **422** if `payload` fails the wait's declared `schema`.
+- **400** if `key` starts with `task:` or `subworkflow:`. Those wait keys belong to
+  the engine; complete a human task through `/v1/tasks` (§4.2), which applies the
+  claim and assignee rules, and sub-workflows complete themselves.
 
 An `Idempotency-Key` header is honoured: a duplicate signal for an
 already-fulfilled wait returns **200** with the original result rather than 404.

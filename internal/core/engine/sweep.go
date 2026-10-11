@@ -57,4 +57,11 @@ func (s *sweeper) pass(ctx context.Context) {
 	} else if failed > 0 {
 		s.log.Info("failed runs past deadline", zap.Int("count", failed))
 	}
+	// 4. Complete sub-workflow nodes whose child ended but whose post-commit
+	// propagation was missed.
+	if done, err := s.runs.PropagateFinishedChildren(ctx); err != nil && ctx.Err() == nil {
+		s.log.Error("complete finished sub-workflows", zap.Error(err))
+	} else if done > 0 {
+		s.log.Info("completed sub-workflow nodes", zap.Int("count", done))
+	}
 }

@@ -572,6 +572,30 @@ makes `item` and `index` legal only inside a foreach node.
       duplicate branch, under `-race`.
 - [x] A foreach over `human_task` creates one task per element.
 
+**Sub-workflows — built (2026-10-11).** The `workflow` node (`02 §4.10`) starts a
+child run through `executor.ChildStarter` (the executor never touches the store;
+the child's idempotency key is the node's stable key) and parks on a wait keyed
+`subworkflow:<child run id>`. `runs.Service.CompleteSubworkflow` completes that
+node when the child ends, called after the child's transaction commits and backed
+by a sweeper pass for missed notifications. Cancelling or ending a parent cancels
+its unfinished children (parent lock first, then child, everywhere); a parent that
+gives up waiting cancels the child it started. Nesting is capped at 5. The wait
+prefixes `task:` and `subworkflow:` are reserved for the engine: `wait_event` and
+`POST /v1/signals` reject them, which also closes a way to bypass task assignee
+rules through the signals endpoint.
+
+**Acceptance (sub-workflows)**
+- [x] A child's outputs come back as the node's output; the child is a run with
+      `trigger: subworkflow` and `parent_run_id` set.
+- [x] A failed or cancelled child fails the node and runs `on_failure`; cancelling
+      the parent, or the parent timing out, cancels the child.
+- [x] Missing workflow, bad version or bad input fail permanently without creating a run.
+- [x] A self-calling workflow stops at the nesting limit; the failure travels up.
+- [x] A retried or redelivered start reuses the child run (no duplicate children).
+- [x] 30 concurrent parents with near-instant children all complete; the sweeper
+      completes a node whose notification was lost.
+- [x] A foreach over a `workflow` node starts one child per element.
+
 ### 3.1 Product milestones (M10–M19)
 
 Each milestone keeps the engine rules: executors never import `store`, every

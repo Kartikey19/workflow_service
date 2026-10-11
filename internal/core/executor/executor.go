@@ -115,3 +115,28 @@ func (e *PermanentError) Error() string {
 func (e *PermanentError) Unwrap() error {
 	return e.Err
 }
+
+// ChildRequest asks for a child run for a sub-workflow node (02 §4.10).
+type ChildRequest struct {
+	TenantID    uuid.UUID
+	ParentRunID uuid.UUID
+	Workflow    string
+	Version     int // 0 pins the latest version
+	Input       map[string]any
+	// IdempotencyKey is the parent node execution's key, stable across attempts,
+	// so a retried or redelivered attempt gets the run the first one created.
+	IdempotencyKey string
+}
+
+// ChildStarter starts child runs. Executors reach the run service only through
+// this interface, never the store. Failures that retrying cannot fix come back
+// as *PermanentError.
+type ChildStarter interface {
+	StartChild(ctx context.Context, req ChildRequest) (uuid.UUID, error)
+}
+
+// Wait keys with these prefixes are created by the engine for its own node
+// types. They cannot be chosen by a wait_event or delivered by POST
+// /v1/signals, so a caller cannot complete a task or a sub-workflow wait around
+// the checks those paths make.
+var ReservedWaitKeyPrefixes = []string{"task:", "subworkflow:"}

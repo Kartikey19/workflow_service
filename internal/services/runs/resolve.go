@@ -236,6 +236,9 @@ func (f *Service) finishRun(ctx context.Context, q *gen.Queries, run gen.Run, st
 	if err := q.CancelRunWaits(ctx, run.ID); err != nil {
 		return fmt.Errorf("cancel run waits: %w", err)
 	}
+	if err := f.cancelActiveChildren(ctx, q, run, "the parent run ended"); err != nil {
+		return err
+	}
 	payload := map[string]any{}
 	if runError != nil {
 		payload["code"] = runError["code"]

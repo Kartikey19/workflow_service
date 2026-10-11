@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kartikey/workflow_service/internal/core/executor"
@@ -241,6 +242,11 @@ func (WaitEvent) Execute(ctx context.Context, req executor.Request) (executor.Re
 	}
 	if config.Key == "" {
 		return executor.Result{}, executor.Permanent("bad_config", errors.New("key resolved to an empty string"))
+	}
+	for _, prefix := range executor.ReservedWaitKeyPrefixes {
+		if strings.HasPrefix(config.Key, prefix) {
+			return executor.Result{}, executor.Permanent("bad_config", fmt.Errorf("keys starting with %q are reserved for the engine", prefix))
+		}
 	}
 	timeout := defaultWaitTimeout
 	if config.Timeout != "" {

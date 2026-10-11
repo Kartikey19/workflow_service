@@ -69,6 +69,7 @@ select sqlc.embed(r), w.name as workflow_name, wv.version as workflow_version
    and (sqlc.narg(workflow_name)::text is null or w.name = sqlc.narg(workflow_name)::text)
    and (sqlc.narg(status)::text is null or r.status = sqlc.narg(status)::text)
    and (sqlc.narg(correlation_id)::text is null or r.correlation_id = sqlc.narg(correlation_id)::text)
+   and (sqlc.narg(parent_run_id)::uuid is null or r.parent_run_id = sqlc.narg(parent_run_id)::uuid)
    and (sqlc.narg(created_after)::timestamptz is null or r.created_at >= sqlc.narg(created_after)::timestamptz)
    and (sqlc.narg(created_before)::timestamptz is null or r.created_at < sqlc.narg(created_before)::timestamptz)
    and (sqlc.narg(before_created)::timestamptz is null
@@ -112,3 +113,38 @@ select pg_notify('wf_ready', @run_id::text);
 
 -- name: NotifyRunEvents :exec
 select pg_notify('wf_events', @run_id::text);
+
+-- name: GetRunAny :one
+-- Unscoped read for internal propagation between a child run and its parent.
+select * from runs where id = @id;
+
+-- name: RunDepth :one
+-- Number of ancestors of a run: 0 for a top-level run.
+with recursive chain(run_id, parent_id, depth) as (
+  select r0.id, r0.parent_run_id, 0 from runs r0 where r0.id = @id
+  union all
+  select r.id, r.parent_run_id, chain.depth + 1
+    from runs r join chain on r.id = chain.parent_id
+)
+select max(chain.depth)::int as depth from chain;
+
+-- name: ListActiveChildRuns :many
+select * from runs
+ where parent_run_id = @parent_run_id and status in ('pending', 'running', 'waiting');
+
+-- name: FinishedChildrenWithLiveWait :many
+-- Child runs that ended while their parent's node still waits on them: either
+-- the post-commit propagation missed (crash, or the child finished before the
+-- parent's wait row existed) or it has not run yet. The tenant and parent checks
+-- keep a user-chosen wait key from ever matching another run.
+select r.id
+  from run_waits w
+  join runs r on r.id = case
+         when substr(w.wait_key, 13) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+         then substr(w.wait_key, 13)::uuid end
+ where w.status = 'waiting'
+   and w.wait_key like 'subworkflow:%'
+   and r.tenant_id = w.tenant_id
+   and r.parent_run_id = w.run_id
+   and r.status in ('succeeded', 'failed', 'cancelled')
+ limit 100;
