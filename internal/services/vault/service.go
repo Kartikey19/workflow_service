@@ -10,11 +10,14 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kartikey/workflow_service/internal/store/gen"
+	"github.com/kartikey/workflow_service/pkg/db"
 	"github.com/kartikey/workflow_service/pkg/exception"
 	"github.com/kartikey/workflow_service/pkg/uid"
 	"github.com/kartikey/workflow_service/pkg/vault"
@@ -23,14 +26,17 @@ import (
 
 const (
 	// MinValueLength keeps outputs and errors scrubbable: redacting a one or two
-	// character value would mangle everything around it.
-	MinValueLength = 8
+	// character value would mangle everything around it. Keys inside a group are
+	// exempt, so a group can also hold settings such as an effort or temperature;
+	// values shorter than this are not masked.
+	MinValueLength = vault.MinScrubLength
 	// MaxValueBytes bounds a single secret.
 	MaxValueBytes = 64 << 10
 	rotateBatch   = 100
 )
 
-var namePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
+// A name is a plain secret ("API_KEY") or one key of a group ("openai.api_key").
+var namePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}(\.[A-Za-z][A-Za-z0-9_]{0,63})?$`)
 
 // Service is safe for concurrent use. A nil keyring means the vault is not
 // configured: every operation answers 501.
@@ -65,29 +71,80 @@ type Info struct {
 	UpdatedBy  string
 }
 
-// Put stores or replaces a secret.
+// Put stores or replaces a secret, or one key of a group when name is
+// "group.key".
 func (s *Service) Put(ctx context.Context, orgID pgtype.UUID, name, value, actor string) error {
+	return s.put(ctx, orgID, map[string]string{name: value}, actor)
+}
+
+// PutGroup stores or replaces several keys of one group, e.g. api_key, effort
+// and temperature of "open_api_settings": all of them or none.
+func (s *Service) PutGroup(ctx context.Context, orgID pgtype.UUID, group string, keys map[string]string, actor string) error {
+	if len(keys) == 0 {
+		return exception.BadRequest("give at least one key for the group")
+	}
+	named := make(map[string]string, len(keys))
+	for key, value := range keys {
+		named[group+"."+key] = value
+	}
+	return s.put(ctx, orgID, named, actor)
+}
+
+// put checks every name and value first, then writes them in one transaction.
+func (s *Service) put(ctx context.Context, orgID pgtype.UUID, values map[string]string, actor string) error {
 	if s.keyring == nil {
 		return notConfigured()
 	}
-	if !namePattern.MatchString(name) {
-		return exception.BadRequest("a secret name starts with a capital letter and uses capitals, digits and underscores (at most 64)")
+	for name, value := range values {
+		// namePattern allows one dot, so a group or key containing a dot fails here.
+		if !namePattern.MatchString(name) {
+			return exception.BadRequest(fmt.Sprintf("%q is not a valid name: a secret name starts with a letter and uses letters, digits and underscores (at most 64); a group key is group.key", name))
+		}
+		if _, _, grouped := strings.Cut(name, "."); value == "" || (!grouped && len(value) < MinValueLength) {
+			return exception.BadRequest(fmt.Sprintf("a secret value must be at least %d characters (a key inside a group can be shorter)", MinValueLength))
+		}
+		if len(value) > MaxValueBytes {
+			return exception.BadRequest(fmt.Sprintf("a secret value must be at most %d bytes", MaxValueBytes))
+		}
 	}
-	if len(value) < MinValueLength {
-		return exception.BadRequest(fmt.Sprintf("a secret value must be at least %d characters", MinValueLength))
-	}
-	if len(value) > MaxValueBytes {
-		return exception.BadRequest(fmt.Sprintf("a secret value must be at most %d bytes", MaxValueBytes))
-	}
-	ciphertext, nonce, version, err := s.keyring.Seal([]byte(value), aad(orgID, name))
+	return db.InTx(ctx, s.pool, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		if err := noClash(ctx, q, orgID, values); err != nil {
+			return err
+		}
+		for name, value := range values {
+			ciphertext, nonce, version, err := s.keyring.Seal([]byte(value), aad(orgID, name))
+			if err != nil {
+				return err
+			}
+			if err := q.UpsertSecret(ctx, gen.UpsertSecretParams{
+				ID: uid.New(), OrgID: orgID, Name: name, Ciphertext: ciphertext, Nonce: nonce, KeyVersion: int32(version),
+				UpdatedBy: pgtype.Text{String: actor, Valid: actor != ""},
+			}); err != nil {
+				return fmt.Errorf("store secret: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// noClash keeps a name from being both a plain secret and a group, which would
+// make secrets.NAME mean two things.
+func noClash(ctx context.Context, q *gen.Queries, orgID pgtype.UUID, values map[string]string) error {
+	rows, err := q.ListSecretNames(ctx, orgID)
 	if err != nil {
-		return err
+		return fmt.Errorf("list secrets: %w", err)
 	}
-	if err := s.q.UpsertSecret(ctx, gen.UpsertSecretParams{
-		ID: uid.New(), OrgID: orgID, Name: name, Ciphertext: ciphertext, Nonce: nonce, KeyVersion: int32(version),
-		UpdatedBy: pgtype.Text{String: actor, Valid: actor != ""},
-	}); err != nil {
-		return fmt.Errorf("store secret: %w", err)
+	for name := range values {
+		group, _, grouped := strings.Cut(name, ".")
+		for _, row := range rows {
+			switch {
+			case grouped && row.Name == group:
+				return exception.Conflict("name_taken", fmt.Sprintf("%q is already a plain secret; pick another group name", group))
+			case !grouped && strings.HasPrefix(row.Name, name+"."):
+				return exception.Conflict("name_taken", fmt.Sprintf("%q is already a group; pick another secret name", name))
+			}
+		}
 	}
 	return nil
 }

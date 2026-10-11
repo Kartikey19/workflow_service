@@ -282,6 +282,18 @@ func (q *Queries) DeleteUserSessions(ctx context.Context, userID pgtype.UUID) er
 	return err
 }
 
+const ensurePlatformAdmin = `-- name: EnsurePlatformAdmin :exec
+update users
+   set platform_admin = true, disabled_at = null, failed_logins = 0, locked_until = null
+ where id = $1
+`
+
+// Restores the configured administrator's access without touching the password.
+func (q *Queries) EnsurePlatformAdmin(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, ensurePlatformAdmin, id)
+	return err
+}
+
 const getAPIKeyAuth = `-- name: GetAPIKeyAuth :one
 select k.id, k.org_id, k.name, k.role, k.last_used_at
   from api_keys k join organizations o on o.id = k.org_id

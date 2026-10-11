@@ -3,7 +3,6 @@
 package auth
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -60,18 +59,6 @@ func (p Principal) Actor() string {
 
 // Can reports whether the principal's role grants at least minimum.
 func (p Principal) Can(minimum string) bool { return AtLeast(p.Role, minimum) }
-
-type principalKey struct{}
-
-func WithPrincipal(ctx context.Context, p Principal) context.Context {
-	return context.WithValue(ctx, principalKey{}, p)
-}
-
-// From returns the principal the authentication middleware attached.
-func From(ctx context.Context) (Principal, bool) {
-	p, ok := ctx.Value(principalKey{}).(Principal)
-	return p, ok
-}
 
 // Authenticator resolves a request to a principal, or ErrUnauthenticated.
 type Authenticator interface {

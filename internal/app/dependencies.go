@@ -52,7 +52,6 @@ type Deps struct {
 	Assistant *assistant.Service
 	Auth      auth.Authenticator
 	Secrets   engine.SecretSource
-	Extra     []func(api.Router)
 
 	cfgAuth config.AuthConfig
 }
@@ -99,10 +98,6 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 		MicrosoftTenant: cfg.Services.MicrosoftTenant,
 	})
 	catalog := connectors.NewCatalog(connectionSvc, policy, endpoints, cfg.Services.ResendBaseURL)
-	tools, err := agent.NewTools(append([]agent.Tool{agent.CurrentTime{}, agent.NewHTTPRequest(policy)}, agent.DatabaseToolsWithCatalog(catalog)...)...)
-	if err != nil {
-		return nil, err
-	}
 	var platform agent.Clients = agent.Unconfigured{}
 	if cfg.LLM.AnthropicAPIKey != "" {
 		client := anthropic.New(cfg.LLM.AnthropicAPIKey, cfg.LLM.AnthropicBaseURL, nil)
@@ -111,9 +106,9 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	providerSvc := providers.NewService(pool, keyring, policy, pricing).WithBaseURLs(map[string]string{
 		providers.Anthropic: cfg.LLM.AnthropicBaseURL, providers.OpenAI: cfg.LLM.OpenAIBaseURL, providers.Gemini: cfg.LLM.GeminiBaseURL,
 	})
-	agentSvc := agents.NewService(pool, tools)
+	agentSvc := agents.NewService(pool)
 	mcpExecutor := mcpexec.New(connectionSvc, policy)
-	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, tools, agentSvc).WithDynamicTools(agent.NewConnectorTools(catalog, connectionSvc, mcpExecutor))
+	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, agentSvc).WithDynamicTools(agent.NewConnectorTools(catalog, connectionSvc, mcpExecutor))
 	agentSvc.Attach(agentExecutor)
 
 	appNodes := append(catalog.Nodes(), mcpExecutor)
@@ -180,7 +175,7 @@ func (d *Deps) Services() *api.Services {
 		Pool: d.Pool, Workflows: d.Workflows, Runs: d.Runs, Executors: d.Registry,
 		Tasks: d.Tasks, Admin: d.Runs, Identity: d.Identity, Vault: d.Vault,
 		Assistant: d.Assistant, Triggers: d.Triggers, Providers: d.Providers, Agents: d.Agents, Connections: d.Conns,
-		CookieSecure: d.cfgAuth.CookieSecure, PublicURL: d.cfgAuth.PublicURL, Auth: d.Auth, Extra: d.Extra,
+		CookieSecure: d.cfgAuth.CookieSecure, PublicURL: d.cfgAuth.PublicURL, Auth: d.Auth,
 	}
 }
 

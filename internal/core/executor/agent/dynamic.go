@@ -13,7 +13,8 @@ var mcpReference = regexp.MustCompile(`^mcp:[a-z0-9][a-z0-9_-]{0,62}$`)
 // IsMCPReference identifies a saved server whose tools are discovered per attempt.
 func IsMCPReference(name string) bool { return mcpReference.MatchString(name) }
 
-// DynamicTools owns all sessions opened while discovering an attempt's tools.
+// DynamicTools turns an agent's references into tools for one attempt, and owns
+// all sessions opened while discovering them.
 // The returned cleanup must close them, including on a discovery failure.
 type DynamicTools interface {
 	Resolve(context.Context, uuid.UUID, []string) ([]Tool, func(), error)
@@ -21,64 +22,31 @@ type DynamicTools interface {
 
 func (e *Executor) WithDynamicTools(source DynamicTools) *Executor { e.dynamic = source; return e }
 
+// resolveTools builds one attempt's tools from the agent's references.
 func (e *Executor) resolveTools(ctx context.Context, tenant uuid.UUID, refs []string) (*Tools, []string, func(), error) {
-	var selected []Tool
-	var remote []string
-	seen := map[string]bool{}
-	for _, ref := range refs {
-		if seen[ref] {
-			return nil, nil, func() {}, fmt.Errorf("duplicate tool reference %q", ref)
-		}
-		seen[ref] = true
-		if IsDynamicReference(ref) {
-			remote = append(remote, ref)
-			continue
-		}
-		tool, ok := e.tools.Get(ref)
-		if !ok {
-			return nil, nil, func() {}, fmt.Errorf("unknown tool %q", ref)
-		}
-		selected = append(selected, tool)
+	if err := validateReferences(refs); err != nil {
+		return nil, nil, func() {}, err
 	}
-	cleanup := func() {}
-	if len(remote) > 0 {
-		if e.dynamic == nil {
-			return nil, nil, cleanup, errors.New("connector tools are unavailable on this worker")
-		}
-		mcpCount := 0
-		for _, ref := range remote {
-			if IsMCPReference(ref) {
-				mcpCount++
-			}
-		}
-		if mcpCount > 8 {
-			return nil, nil, cleanup, errors.New("at most 8 MCP servers per agent")
-		}
-		tools, closeTools, err := e.dynamic.Resolve(ctx, tenant, remote)
-		if closeTools != nil {
-			cleanup = closeTools
-		}
-		if err != nil {
-			cleanup()
-			return nil, nil, func() {}, err
-		}
-		selected = append(selected, tools...)
+	if len(refs) == 0 {
+		return &Tools{}, nil, func() {}, nil
 	}
-	registry, err := NewTools(selected...)
+	if e.dynamic == nil {
+		return nil, nil, func() {}, errors.New("connector tools are unavailable on this worker")
+	}
+	tools, cleanup, err := e.dynamic.Resolve(ctx, tenant, refs)
+	if cleanup == nil {
+		cleanup = func() {}
+	}
+	if err != nil {
+		cleanup()
+		return nil, nil, func() {}, err
+	}
+	registry, err := NewTools(tools...)
 	if err != nil {
 		cleanup()
 		return nil, nil, func() {}, err
 	}
 	return registry, registry.Names(), cleanup, nil
-}
-
-func validateDatabaseTools(names []string, connection string) error {
-	for _, name := range names {
-		if (name == "list_tables" || name == "describe_table" || name == "run_query") && connection == "" {
-			return errors.New("database tools require database_connection")
-		}
-	}
-	return nil
 }
 
 func validateReferences(names []string) error {

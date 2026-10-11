@@ -337,7 +337,7 @@ func (e *Executor) sendResend(ctx context.Context, apiKey string, m mailer.Messa
 		case errors.Is(err, netguard.ErrBlocked):
 			return executor.Permanent("egress_blocked", err)
 		}
-		return executor.Retryable("connection_error", errors.New("Resend could not be reached"))
+		return executor.Retryable("connection_error", errors.New("could not reach Resend"))
 	}
 	defer res.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
@@ -348,7 +348,7 @@ func (e *Executor) sendResend(ctx context.Context, apiKey string, m mailer.Messa
 		Message string `json:"message"`
 	}
 	_ = json.Unmarshal(data, &failure)
-	cause := fmt.Errorf("Resend answered HTTP %d: %s", res.StatusCode, strings.TrimSpace(failure.Message))
+	cause := fmt.Errorf("response from Resend: HTTP %d: %s", res.StatusCode, strings.TrimSpace(failure.Message))
 	switch {
 	case res.StatusCode == http.StatusTooManyRequests:
 		return &executor.RetryableError{Code: "rate_limited", Err: cause, RetryAfter: httpx.ParseRetryAfter(res.Header.Get("Retry-After"))}

@@ -143,7 +143,7 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 	if contentType != "" {
 		httpReq.Header.Set("Content-Type", contentType)
 	}
-	httpReq.Header.Set("User-Agent", "workflow-service/1")
+	httpReq.Header.Set("User-Agent", "Weft/1")
 	for key, value := range c.Headers {
 		httpReq.Header.Set(key, value)
 	}

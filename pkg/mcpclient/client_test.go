@@ -73,7 +73,7 @@ func TestSecurityAndBounds(t *testing.T) {
 	var hits int
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++; w.WriteHeader(200) }))
 	defer target.Close()
-	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 302) }))
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
 	defer redirect.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

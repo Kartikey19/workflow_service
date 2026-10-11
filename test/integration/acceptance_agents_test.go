@@ -4,14 +4,7 @@ package integration_test
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 )
 
@@ -45,16 +38,16 @@ func TestAgentsAPIRulesAndRevisions(t *testing.T) {
 
 	// Validation: each of these is a 400 and creates nothing.
 	for name, mutate := range map[string]func(map[string]any){
-		"bad name":            func(b map[string]any) { b["name"] = "Not Valid" },
-		"no model":            func(b map[string]any) { b["model"] = "" },
-		"no max_iterations":   func(b map[string]any) { delete(b, "max_iterations") },
-		"too many iterations": func(b map[string]any) { b["max_iterations"] = 51 },
-		"unknown tool":        func(b map[string]any) { b["tools"] = []string{"search_kb"} },
-		"unknown connection":  func(b map[string]any) { b["connection"] = "ghost" },
-		"bad temperature":     func(b map[string]any) { b["temperature"] = 2 },
-		"bad output schema":   func(b map[string]any) { b["output_schema"] = map[string]any{"oneOf": []any{}} },
-		"bad input schema":    func(b map[string]any) { b["input_schema"] = map[string]any{"oneOf": []any{}} },
-		"bad allowed host":    func(b map[string]any) { b["allowed_hosts"] = []string{"https://api.example.com/path"} },
+		"bad name":             func(b map[string]any) { b["name"] = "Not Valid" },
+		"no model":             func(b map[string]any) { b["model"] = "" },
+		"no max_iterations":    func(b map[string]any) { delete(b, "max_iterations") },
+		"too many iterations":  func(b map[string]any) { b["max_iterations"] = 51 },
+		"unknown tool":         func(b map[string]any) { b["tools"] = []string{"search_kb"} },
+		"unknown connection":   func(b map[string]any) { b["connection"] = "ghost" },
+		"bad temperature":      func(b map[string]any) { b["temperature"] = 2 },
+		"bad output schema":    func(b map[string]any) { b["output_schema"] = map[string]any{"oneOf": []any{}} },
+		"bad input schema":     func(b map[string]any) { b["input_schema"] = map[string]any{"oneOf": []any{}} },
+		"legacy allowed_hosts": func(b map[string]any) { b["allowed_hosts"] = []string{"api.example.com"} },
 	} {
 		body := agentBody("candidate", "compat")
 		mutate(body)
@@ -93,14 +86,14 @@ func TestAgentsAPIRulesAndRevisions(t *testing.T) {
 		t.Fatalf("updating a missing agent = %d, want 404", status)
 	}
 
-	// Tools are discoverable.
+	// Tools are discoverable: every agent searches its connectors with the same three.
 	_, tools := viewer.call("GET", "/be/v1/agent-tools", nil)
 	names := []string{}
 	for _, item := range tools["items"].([]any) {
 		names = append(names, item.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "current_time,describe_table,http_request,list_tables,run_query" {
-		t.Fatalf("tools = %v", names)
+	if strings.Join(names, ",") != "glob,grep,read" || !strings.Contains(toJSON(tools["searchable_kinds"]), "postgres") {
+		t.Fatalf("tools = %v", tools)
 	}
 
 	// A connection used by an agent cannot be deleted; unused ones can.
@@ -165,92 +158,5 @@ func TestAgentNodeFailuresAreClear(t *testing.T) {
 	result := owner.mustOK("POST", "/be/v1/agents/strict/test", map[string]any{"input": map[string]any{"text": 5}}, 200)
 	if result["ok"] != false || result["error"].(map[string]any)["code"] != "invalid_input" {
 		t.Fatalf("agent test = %v", result)
-	}
-}
-
-// toolServer is an OpenAI-compatible fake that asks for the http_request tool on
-// its first call and answers once it has the tool result.
-func toolServer(t *testing.T, target string) (*httptest.Server, func() string) {
-	t.Helper()
-	var calls atomic.Int32
-	var mu sync.Mutex
-	var toolResult string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		var req struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
-		_ = json.Unmarshal(raw, &req)
-		if calls.Add(1) == 1 {
-			_, _ = fmt.Fprintf(w, `{"model":"fake-model","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[
-				{"id":"call_1","type":"function","function":{"name":"http_request","arguments":%q}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}`,
-				`{"url":"`+target+`"}`)
-			return
-		}
-		for _, m := range req.Messages {
-			if m.Role == "tool" {
-				mu.Lock()
-				toolResult = m.Content
-				mu.Unlock()
-			}
-		}
-		_, _ = io.WriteString(w, `{"model":"fake-model","choices":[{"finish_reason":"stop","message":{"content":"{\"summary\":\"done\"}"}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}`)
-	}))
-	t.Cleanup(server.Close)
-	return server, func() string {
-		mu.Lock()
-		defer mu.Unlock()
-		return toolResult
-	}
-}
-
-// The http_request tool is fail-closed: it works only for hosts in the agent's
-// own allowed_hosts, and the model is told why when it is refused.
-func TestAgentHTTPToolRespectsAllowedHosts(t *testing.T) {
-	ctx := context.Background()
-	s := newStack(t, ctx)
-	owner := s.owner(t, "Tools Co")
-	var hits atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		_, _ = io.WriteString(w, `{"fact":"the sky is blue"}`)
-	}))
-	t.Cleanup(target.Close)
-
-	for name, tt := range map[string]struct {
-		hosts    []string
-		wantHits int32
-		wantIn   string
-	}{
-		"allowed host":  {[]string{"127.0.0.1"}, 1, "the sky is blue"},
-		"no allow-list": {nil, 0, "no allowed_hosts"},
-		"another host":  {[]string{"example.com"}, 0, "not in this agent's allowed_hosts"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			hits.Store(0)
-			server, toolResult := toolServer(t, target.URL+"/fact")
-			conn := strings.ReplaceAll(name, " ", "-")
-			owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": conn, "provider": "openai_compatible", "base_url": server.URL, "api_key": "compat-key-123456", "skip_test": true}, 201)
-			agentBody := agentBody("fetcher-"+conn, conn)
-			agentBody["tools"] = []string{"http_request"}
-			agentBody["max_iterations"] = 3
-			if tt.hosts != nil {
-				agentBody["allowed_hosts"] = tt.hosts
-			}
-			owner.mustOK("POST", "/be/v1/agents", agentBody, 201)
-			result := owner.mustOK("POST", "/be/v1/agents/fetcher-"+conn+"/test", map[string]any{"input": map[string]any{"q": "fact"}}, 200)
-			if result["ok"] != true || result["metrics"].(map[string]any)["tool_calls"] != float64(1) {
-				t.Fatalf("agent test = %v", result)
-			}
-			if hits.Load() != tt.wantHits {
-				t.Fatalf("the target was called %d times, want %d", hits.Load(), tt.wantHits)
-			}
-			if got := toolResult(); !strings.Contains(got, tt.wantIn) {
-				t.Fatalf("the model's tool result = %q, want it to contain %q", got, tt.wantIn)
-			}
-		})
 	}
 }

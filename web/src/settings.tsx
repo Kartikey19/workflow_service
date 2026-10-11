@@ -1,6 +1,6 @@
-import { connectorActions } from "./connectors";
+import { connectorActions, kindIcon } from "./connectors";
 import { useState } from "react";
-import { api, enc, type RecordData } from "./api";
+import { api, enc, secretParts, type RecordData } from "./api";
 import {
   useResource,
   Field,
@@ -9,9 +9,17 @@ import {
   Empty,
   ResourceState,
   OneTime,
+  InviteNotice,
   Status,
   JSONView,
+  humanize,
 } from "./components";
+const providerNames: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  gemini: "Google Gemini",
+  openai_compatible: "Custom (OpenAI-compatible)",
+};
 const roles = (
   <>
     <option>viewer</option>
@@ -24,6 +32,7 @@ export function Connections({ admin }: { admin: boolean }) {
     providers = useResource("/providers"),
     kinds = useResource("/integrations");
   const [kind, setKind] = useState("smtp"),
+    [llmKind, setLlmKind] = useState("anthropic"),
     [form, setForm] = useState(false),
     [result, setResult] = useState<RecordData | null>(null),
     [editing, edit] = useState<RecordData | null>(null);
@@ -72,22 +81,36 @@ export function Connections({ admin }: { admin: boolean }) {
           })),
         ].map((c: RecordData) => (
           <article className="panel card" key={c.id}>
-            <span className="eyebrow">{c.kind}</span>
-            <h2>{c.name}</h2>
-            <small>
-              {c.account ||
-                c.secret_hint ||
-                c.base_url ||
-                "Credentials encrypted"}
-            </small>
-            {!c.provider && (
-              <div className="connector-actions">
-                {connectorActions(kinds.data?.items, c.kind).map((action) => (
-                  <small key={action.name}>
-                    {action.title} · {action.read_only ? "Read only" : "Writes"}
-                  </small>
-                ))}
+            <div className="card-head">
+              <span className="card-icon">
+                {(() => {
+                  const Icon = kindIcon(c.provider ? "llm" : c.kind);
+                  return <Icon size={18} aria-hidden="true" />;
+                })()}
+              </span>
+              <div>
+                <h2>{c.name}</h2>
+                <small>
+                  {c.provider
+                    ? providerNames[c.kind]
+                    : kinds.data?.items.find(
+                        (k: RecordData) => k.kind === c.kind,
+                      )?.title || c.kind}
+                </small>
               </div>
+            </div>
+            <small>{c.account || c.base_url || "Credentials encrypted"}</small>
+            {!c.provider && (
+              <ul className="connector-actions" aria-label="Actions">
+                {connectorActions(kinds.data?.items, c.kind).map((action) => (
+                  <li key={action.name}>
+                    {action.title}
+                    <span className={action.read_only ? "reads" : "writes"}>
+                      {action.read_only ? "Read only" : "Writes"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
             <div className="row">
               {admin && (
@@ -164,20 +187,29 @@ export function Connections({ admin }: { admin: boolean }) {
             <h2>{editing ? `Edit ${editing.name}` : "Add connector"}</h2>
             <button onClick={() => setForm(false)}>Close</button>
           </div>
-          <Field label="Integration">
-            <select
-              value={kind}
-              disabled={!!editing}
-              onChange={(e) => setKind(e.target.value)}
-            >
-              {kinds.data?.items.map((k: RecordData) => (
-                <option key={k.kind} value={k.kind}>
-                  {k.title}
-                </option>
-              ))}
-              <option value="llm">Language model provider</option>
-            </select>
-          </Field>
+          {!editing && (
+            <div className="app-grid" role="radiogroup" aria-label="App">
+              {[
+                ...(kinds.data?.items || []),
+                { kind: "llm", title: "Language model provider" },
+              ].map((k: RecordData) => {
+                const Icon = kindIcon(k.kind);
+                return (
+                  <button
+                    key={k.kind}
+                    type="button"
+                    role="radio"
+                    aria-checked={kind === k.kind}
+                    className="app-tile"
+                    onClick={() => setKind(k.kind)}
+                  >
+                    <Icon size={18} aria-hidden="true" />
+                    {k.title}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <ActionForm
             key={`${kind}-${editing?.name || ""}`}
             label={descriptor?.oauth ? "Connect account" : "Test and save"}
@@ -239,26 +271,45 @@ export function Connections({ admin }: { admin: boolean }) {
             {kind === "llm" ? (
               <>
                 <Field label="Provider">
-                  <select name="provider">
-                    <option>anthropic</option>
-                    <option>openai</option>
-                    <option>gemini</option>
-                    <option>openai_compatible</option>
+                  <select
+                    name="provider"
+                    value={llmKind}
+                    onChange={(e) => setLlmKind(e.target.value)}
+                  >
+                    {Object.entries(providerNames).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
                   </select>
                 </Field>
-                <Field label="API key">
+                {llmKind === "openai_compatible" && (
+                  <Field
+                    label="Base URL"
+                    hint="Any server that speaks the OpenAI chat API, such as Groq, Ollama or vLLM."
+                  >
+                    <input
+                      name="base_url"
+                      type="url"
+                      required
+                      placeholder="https://api.groq.com/openai/v1"
+                    />
+                  </Field>
+                )}
+                <Field
+                  label="API key"
+                  hint={
+                    llmKind === "openai_compatible"
+                      ? "Leave blank for a local server that needs no key."
+                      : undefined
+                  }
+                >
                   <input
                     name="api_key"
                     type="password"
-                    required
+                    required={llmKind !== "openai_compatible"}
                     autoComplete="off"
                   />
-                </Field>
-                <Field
-                  label="Base URL"
-                  hint="Required only for an OpenAI-compatible provider."
-                >
-                  <input name="base_url" type="url" />
                 </Field>
               </>
             ) : (
@@ -316,12 +367,36 @@ export function Connections({ admin }: { admin: boolean }) {
 }
 export function Vault({ admin }: { admin: boolean }) {
   const list = useResource("/secrets");
-  const [form, setForm] = useState(false);
+  const [form, setForm] = useState(false),
+    [grouped, setGrouped] = useState(false),
+    [rows, setRows] = useState([0]);
+  // Names with a dot are keys of a group: openai.api_key belongs to openai.
+  const plain: RecordData[] = [],
+    groups: Record<string, RecordData[]> = {};
+  for (const s of list.data?.items || []) {
+    const { group, key } = secretParts(s.name);
+    if (group === undefined) plain.push(s);
+    else (groups[group] ||= []).push({ ...s, key });
+  }
+  const remove = (name: string, label: string) => (
+    <AsyncButton
+      danger
+      run={async () => {
+        if (confirm(`Delete ${label}?`)) {
+          await api(`/secrets/${enc(name)}`, "DELETE");
+          list.reload();
+        }
+      }}
+    >
+      Delete
+    </AsyncButton>
+  );
   return (
     <>
       <div className="toolbar">
         <p className="muted">
-          Write-only secrets available to your workflow nodes.
+          Write-only secrets for your workflow steps. Keep related keys together
+          in a group and read them as <code>{"${secrets.group.key}"}</code>.
         </p>
         {admin && (
           <button className="primary" onClick={() => setForm(!form)}>
@@ -330,48 +405,144 @@ export function Vault({ admin }: { admin: boolean }) {
         )}
       </div>
       <ResourceState error={list.error} loading={!list.data} />
-      <section className="panel">
-        {list.data?.items?.map((s: RecordData) => (
-          <div className="resource-row" key={s.name}>
-            <strong className="mono">{s.name}</strong>
-            <small>Key version {s.key_version}</small>
-            {admin && (
-              <AsyncButton
-                danger
-                run={async () => {
-                  if (confirm(`Delete secret ${s.name}?`)) {
-                    await api(`/secrets/${enc(s.name)}`, "DELETE");
-                    list.reload();
-                  }
-                }}
-              >
-                Delete
-              </AsyncButton>
-            )}
+      {!!plain.length && (
+        <section className="panel">
+          <h2>Secrets</h2>
+          {plain.map((s) => (
+            <div className="resource-row" key={s.name}>
+              <strong className="mono">{s.name}</strong>
+              <small>
+                Updated {new Date(s.updated_at).toLocaleDateString()}
+              </small>
+              {admin && remove(s.name, `secret ${s.name}`)}
+            </div>
+          ))}
+        </section>
+      )}
+      {Object.entries(groups).map(([group, keys]) => (
+        <section className="panel" key={group}>
+          <div className="row spread group-head">
+            <h2 className="mono">{group}</h2>
+            {admin && remove(group, `the group ${group} and all its keys`)}
           </div>
-        ))}
-        {list.data && !list.data.items.length && (
-          <Empty>Your vault is empty.</Empty>
-        )}
-      </section>
+          {keys.map((k) => (
+            <div className="resource-row" key={k.name}>
+              <strong className="mono">{k.key}</strong>
+              <small className="mono">{k.reference}</small>
+              {admin && remove(k.name, `${group}.${k.key}`)}
+            </div>
+          ))}
+        </section>
+      ))}
+      {list.data && !list.data.items.length && (
+        <Empty>Your vault is empty.</Empty>
+      )}
       {form && admin && (
         <section className="panel">
-          <h2>Add or replace secret</h2>
+          <div className="row spread">
+            <h2>Add or replace secret</h2>
+            <div className="segmented" role="group" aria-label="Kind">
+              <button aria-pressed={!grouped} onClick={() => setGrouped(false)}>
+                Single secret
+              </button>
+              <button aria-pressed={grouped} onClick={() => setGrouped(true)}>
+                Group of keys
+              </button>
+            </div>
+          </div>
           <ActionForm
+            key={String(grouped)}
             submit={async (data) => {
-              await api(`/secrets/${enc(String(data.get("name")))}`, "PUT", {
-                value: data.get("value"),
-              });
+              const name = String(data.get("name"));
+              if (grouped) {
+                const keys = data.getAll("key").map(String),
+                  values = data.getAll("value").map(String);
+                await api(`/secrets/${enc(name)}`, "PUT", {
+                  fields: Object.fromEntries(
+                    keys.map((k, i) => [k, values[i]]),
+                  ),
+                });
+              } else {
+                await api(`/secrets/${enc(name)}`, "PUT", {
+                  value: data.get("value"),
+                });
+              }
               setForm(false);
+              setRows([0]);
               list.reload();
             }}
           >
-            <Field label="Secret name">
-              <input name="name" required pattern="[A-Za-z_][A-Za-z0-9_]*" />
+            <Field
+              label={grouped ? "Group name" : "Secret name"}
+              hint={
+                grouped
+                  ? "For example open_api_settings. Workflows read each key as secrets.group.key."
+                  : undefined
+              }
+            >
+              <input
+                name="name"
+                required
+                pattern="[A-Za-z][A-Za-z0-9_]*"
+                placeholder={grouped ? "open_api_settings" : "API_KEY"}
+              />
             </Field>
-            <Field label="Value">
-              <input name="value" required type="password" autoComplete="off" />
-            </Field>
+            {grouped ? (
+              <>
+                {rows.map((id, i) => (
+                  <div className="split key-row" key={id}>
+                    <Field label={i === 0 ? "Key" : ""}>
+                      <input
+                        name="key"
+                        required
+                        aria-label="Key"
+                        pattern="[A-Za-z][A-Za-z0-9_]*"
+                        placeholder={["api_key", "effort", "temperature"][i]}
+                      />
+                    </Field>
+                    <Field label={i === 0 ? "Value" : ""}>
+                      <input
+                        name="value"
+                        required
+                        aria-label="Value"
+                        type="password"
+                        autoComplete="off"
+                      />
+                    </Field>
+                    {rows.length > 1 && (
+                      <button
+                        type="button"
+                        aria-label="Remove key"
+                        onClick={() => setRows(rows.filter((r) => r !== id))}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <p>
+                  <button
+                    type="button"
+                    onClick={() => setRows([...rows, Math.max(...rows) + 1])}
+                  >
+                    Add key
+                  </button>
+                </p>
+                <small>
+                  Values shorter than 8 characters, such as an effort or a
+                  temperature, are treated as settings and are not masked.
+                </small>
+              </>
+            ) : (
+              <Field label="Value">
+                <input
+                  name="value"
+                  required
+                  type="password"
+                  autoComplete="off"
+                />
+              </Field>
+            )}
           </ActionForm>
         </section>
       )}
@@ -420,7 +591,7 @@ export function Webhooks({ admin }: { admin: boolean }) {
         {list.data?.items?.map((t: RecordData) => (
           <article className="panel card" key={t.id}>
             <span className="eyebrow">
-              {t.signed ? "HMAC SIGNED" : "TOKEN AUTHENTICATED"}
+              {t.signed ? "Signed with HMAC" : "Secret token in the URL"}
             </span>
             <h2>{t.name}</h2>
             <p>
@@ -471,6 +642,7 @@ export function Webhooks({ admin }: { admin: boolean }) {
           <h2>Create webhook</h2>
           <ActionForm
             label="Create webhook"
+            done=""
             submit={async (data) => {
               expose(
                 await api("/triggers", "POST", {
@@ -519,15 +691,7 @@ export function Team({ admin, selfID }: { admin: boolean; selfID: string }) {
   return (
     <>
       {created && (
-        <OneTime
-          title="Invite link"
-          value={{
-            accept_url:
-              created.accept_url ||
-              `${location.origin}/ui/accept-invite?token=${created.token}`,
-          }}
-          close={() => setCreated(null)}
-        />
+        <InviteNotice invite={created} close={() => setCreated(null)} />
       )}
       <ResourceState error={members.error} loading={!members.data} />
       <section className="panel">
@@ -587,6 +751,7 @@ export function Team({ admin, selfID }: { admin: boolean; selfID: string }) {
             <h2>Invite a teammate</h2>
             <ActionForm
               label="Create invite"
+              done=""
               submit={async (data) => {
                 setCreated(
                   await api("/invites", "POST", {
@@ -678,6 +843,7 @@ export function APIKeys() {
           <h2>Create API key</h2>
           <ActionForm
             label="Create key"
+            done=""
             submit={async (data) => {
               setCreated(
                 await api("/api-keys", "POST", {
@@ -710,7 +876,7 @@ export function Usage() {
       <ResourceState error={usage.error} loading={!usage.data} />
       {usage.data && (
         <section className="panel">
-          <span className="eyebrow">CURRENT PLAN</span>
+          <span className="eyebrow">Current plan</span>
           <h2>{usage.data.plan.name}</h2>
           <div className="split">
             {[
@@ -766,6 +932,60 @@ export function Usage() {
     </>
   );
 }
+// A person decides: approve or reject with a note, which the next step reads
+// as nodes.<step>.output.approved and .note. Other answers can be sent as JSON.
+function TaskDecision({ task, done }: { task: RecordData; done: () => void }) {
+  const [note, setNote] = useState(""),
+    [custom, setCustom] = useState("{}");
+  const complete = async (payload: unknown) => {
+    await api(`/tasks/${task.id}/complete`, "POST", { payload });
+    done();
+  };
+  return (
+    <div className="task-decision">
+      <Field label="Note">
+        <textarea
+          rows={2}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Optional reason, shown to the next step"
+        />
+      </Field>
+      <div className="row">
+        <AsyncButton primary run={() => complete({ approved: true, note })}>
+          Approve
+        </AsyncButton>
+        <AsyncButton danger run={() => complete({ approved: false, note })}>
+          Reject
+        </AsyncButton>
+        <AsyncButton
+          run={async () => {
+            await api(
+              `/tasks/${task.id}/${task.claimed_by ? "release" : "claim"}`,
+              "POST",
+            );
+            done();
+          }}
+        >
+          {task.claimed_by ? "Release" : "Claim"}
+        </AsyncButton>
+      </div>
+      <details>
+        <summary>Send other data instead</summary>
+        <Field label="Completion data (JSON)">
+          <textarea
+            className="code"
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+          />
+        </Field>
+        <AsyncButton run={() => complete(JSON.parse(custom))}>
+          Complete with this data
+        </AsyncButton>
+      </details>
+    </div>
+  );
+}
 export function Tasks({ editable }: { editable: boolean }) {
   const [status, setStatus] = useState(""),
     [cursor, setCursor] = useState("");
@@ -790,57 +1010,34 @@ export function Tasks({ editable }: { editable: boolean }) {
         <button onClick={list.reload}>Refresh</button>
       </div>
       <ResourceState error={list.error} loading={!list.data} />
-      {list.data?.items?.map((t: RecordData) => (
-        <section className="panel" key={t.id}>
-          <div className="row spread">
-            <h2>
-              {t.workflow} · {t.node_id}
-            </h2>
-            <Status value={t.status} />
-          </div>
-          <p>
-            Queue: {t.queue} ·{" "}
-            {t.claimed_by ? `Claimed by ${t.claimed_by}` : "Unclaimed"}
-          </p>
-          <JSONView value={t.payload} />
-          {editable &&
-            !["completed", "cancelled", "timed_out"].includes(t.status) && (
-              <>
-                <div className="row">
-                  <AsyncButton
-                    run={async () => {
-                      await api(`/tasks/${t.id}/claim`, "POST");
-                      list.reload();
-                    }}
-                  >
-                    Claim
-                  </AsyncButton>
-                  <AsyncButton
-                    run={async () => {
-                      await api(`/tasks/${t.id}/release`, "POST");
-                      list.reload();
-                    }}
-                  >
-                    Release
-                  </AsyncButton>
+      {list.data?.items?.map((t: RecordData) => {
+        const open = !["completed", "cancelled", "timed_out"].includes(
+          t.status,
+        );
+        return (
+          <section className="panel task" key={t.id}>
+            <div className="row spread">
+              <div>
+                <h2>{t.workflow}</h2>
+                <small>
+                  Step {t.node_id} in the {t.queue} queue,{" "}
+                  {t.claimed_by ? `claimed by ${t.claimed_by}` : "unclaimed"}
+                </small>
+              </div>
+              <Status value={t.status} />
+            </div>
+            <dl className="task-fields">
+              {Object.entries(t.payload || {}).map(([k, v]) => (
+                <div key={k}>
+                  <dt>{humanize(k)}</dt>
+                  <dd>{typeof v === "string" ? v : JSON.stringify(v)}</dd>
                 </div>
-                <ActionForm
-                  label="Complete task"
-                  submit={async (data) => {
-                    await api(`/tasks/${t.id}/complete`, "POST", {
-                      payload: JSON.parse(String(data.get("payload"))),
-                    });
-                    list.reload();
-                  }}
-                >
-                  <Field label="Completion payload (JSON)">
-                    <textarea name="payload" defaultValue="{}" required />
-                  </Field>
-                </ActionForm>
-              </>
-            )}
-        </section>
-      ))}
+              ))}
+            </dl>
+            {editable && open && <TaskDecision task={t} done={list.reload} />}
+          </section>
+        );
+      })}
       {list.data && !list.data.items.length && (
         <Empty>No tasks match this status.</Empty>
       )}

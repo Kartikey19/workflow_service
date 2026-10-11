@@ -50,7 +50,7 @@ func (q *Queries) CountSealedByKeyVersion(ctx context.Context) ([]CountSealedByK
 }
 
 const deleteSecret = `-- name: DeleteSecret :execrows
-delete from secrets where org_id = $1 and name = $2
+delete from secrets where org_id = $1 and (name = $2 or starts_with(name, $2 || '.'))
 `
 
 type DeleteSecretParams struct {
@@ -58,6 +58,7 @@ type DeleteSecretParams struct {
 	Name  string      `json:"name"`
 }
 
+// A name also removes the keys of the group of that name ("group.key").
 func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteSecret, arg.OrgID, arg.Name)
 	if err != nil {

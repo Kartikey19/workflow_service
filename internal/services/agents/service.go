@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
 	"regexp"
 	"slices"
 	"strings"
@@ -27,10 +26,7 @@ import (
 	"github.com/kartikey/workflow_service/pkg/uid"
 )
 
-var (
-	namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
-	hostPattern = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
-)
+var namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
 // testTimeout bounds one test run.
 const testTimeout = 2 * time.Minute
@@ -38,8 +34,7 @@ const testTimeout = 2 * time.Minute
 // Service is safe for concurrent use. Attach must be called before Test or
 // Create/Update (it supplies the validation and the executor to run).
 type Service struct {
-	q     *gen.Queries
-	tools *agent.Tools
+	q *gen.Queries
 
 	validator interface{ ValidateDefinition(agent.Definition) error }
 	runner    executor.Executor
@@ -47,8 +42,8 @@ type Service struct {
 
 var _ agent.Definitions = (*Service)(nil)
 
-func NewService(pool *pgxpool.Pool, tools *agent.Tools) *Service {
-	return &Service{q: gen.New(pool), tools: tools}
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{q: gen.New(pool)}
 }
 
 // Attach connects the agent executor, which validates definitions and runs
@@ -58,41 +53,37 @@ func (s *Service) Attach(e *agent.Executor) { s.validator, s.runner = e, e }
 
 // Agent is a stored definition as the API shows it.
 type Agent struct {
-	ID                 pgtype.UUID
-	Name               string
-	Description        string
-	Connection         string
-	Model              string
-	System             string
-	InputSchema        json.RawMessage
-	OutputSchema       json.RawMessage
-	Tools              []string
-	DatabaseConnection string
-	AllowedHosts       []string
-	MaxIterations      int
-	MaxTokens          *int
-	Temperature        *float64
-	Revision           int
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	UpdatedBy          string
+	ID            pgtype.UUID
+	Name          string
+	Description   string
+	Connection    string
+	Model         string
+	System        string
+	InputSchema   json.RawMessage
+	OutputSchema  json.RawMessage
+	Tools         []string // connectors the agent searches, or mcp:<server>
+	MaxIterations int
+	MaxTokens     *int
+	Temperature   *float64
+	Revision      int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	UpdatedBy     string
 }
 
 // Input is what a caller sends to create or replace an agent.
 type Input struct {
-	Name               string
-	Description        string
-	Connection         string // provider connection name; empty uses the platform provider
-	Model              string
-	System             string
-	InputSchema        json.RawMessage
-	OutputSchema       json.RawMessage
-	Tools              []string
-	DatabaseConnection string
-	AllowedHosts       []string
-	MaxIterations      int
-	MaxTokens          *int
-	Temperature        *float64
+	Name          string
+	Description   string
+	Connection    string // provider connection name; empty uses the platform provider
+	Model         string
+	System        string
+	InputSchema   json.RawMessage
+	OutputSchema  json.RawMessage
+	Tools         []string
+	MaxIterations int
+	MaxTokens     *int
+	Temperature   *float64
 }
 
 func nonNull(raw json.RawMessage) []byte {
@@ -120,7 +111,7 @@ func floatPtr(v pgtype.Float8) *float64 {
 func fromRow(a gen.Agent, connection string) Agent {
 	return Agent{
 		ID: a.ID, Name: a.Name, Description: a.Description, Connection: connection, Model: a.Model, System: a.SystemPrompt,
-		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts, DatabaseConnection: a.DatabaseConnection,
+		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools,
 		MaxIterations: int(a.MaxIterations), MaxTokens: intPtr(a.MaxTokens), Temperature: floatPtr(a.Temperature),
 		Revision: int(a.Revision), CreatedAt: a.CreatedAt.Time, UpdatedAt: a.UpdatedAt.Time, UpdatedBy: a.UpdatedBy.String,
 	}
@@ -138,18 +129,9 @@ func (s *Service) validate(ctx context.Context, orgID pgtype.UUID, in *Input) (p
 	if in.Tools == nil {
 		in.Tools = []string{}
 	}
-	if in.AllowedHosts == nil {
-		in.AllowedHosts = []string{}
-	}
-	for i, host := range in.AllowedHosts {
-		in.AllowedHosts[i] = strings.ToLower(strings.TrimSpace(host))
-		if !hostPattern.MatchString(in.AllowedHosts[i]) {
-			return pgtype.UUID{}, exception.BadRequest(fmt.Sprintf("allowed_hosts entry %q must be a host name such as api.example.com or *.example.com", host))
-		}
-	}
 	definition := agent.Definition{
 		Name: in.Name, Connection: in.Connection, Model: strings.TrimSpace(in.Model), System: in.System,
-		InputSchema: in.InputSchema, OutputSchema: in.OutputSchema, Tools: in.Tools, AllowedHosts: in.AllowedHosts, DatabaseConnection: in.DatabaseConnection,
+		InputSchema: in.InputSchema, OutputSchema: in.OutputSchema, Tools: in.Tools,
 		MaxIterations: in.MaxIterations, Temperature: in.Temperature,
 	}
 	if in.MaxTokens != nil {
@@ -161,37 +143,19 @@ func (s *Service) validate(ctx context.Context, orgID pgtype.UUID, in *Input) (p
 		}
 	}
 	in.Model = definition.Model
-	if in.DatabaseConnection != "" {
-		row, err := s.q.GetConnection(ctx, gen.GetConnectionParams{OrgID: orgID, Name: in.DatabaseConnection})
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && row.Kind != "postgres" && row.Kind != "mysql" {
-			return pgtype.UUID{}, exception.BadRequest("database_connection must name a postgres or mysql connection in this organization")
-		}
-		if err != nil {
-			return pgtype.UUID{}, fmt.Errorf("load database connection: %w", err)
-		}
-	}
+	// Every tool is a connector the agent can search, or an MCP server.
 	for _, ref := range in.Tools {
-
-		if name, action, ok := agent.ConnectorReference(ref); ok {
-			a, _ := connectors.LookupAction(action)
-			row, err := s.q.GetConnection(ctx, gen.GetConnectionParams{OrgID: orgID, Name: name})
-			if errors.Is(err, pgx.ErrNoRows) || err == nil && !slices.Contains(a.Kinds, row.Kind) {
-				return pgtype.UUID{}, exception.BadRequest("connector tool reference must name a matching connector in this organization")
-			}
-			if err != nil {
-				return pgtype.UUID{}, fmt.Errorf("load connector: %w", err)
-			}
-			continue
-		}
-		if !agent.IsMCPReference(ref) {
-			continue
-		}
-		row, err := s.q.GetConnection(ctx, gen.GetConnectionParams{OrgID: orgID, Name: strings.TrimPrefix(ref, "mcp:")})
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && row.Kind != "mcp" {
-			return pgtype.UUID{}, exception.BadRequest("MCP tool reference must name an mcp connection in this organization")
-		}
-		if err != nil {
-			return pgtype.UUID{}, fmt.Errorf("load MCP connection: %w", err)
+		name, mcp := strings.CutPrefix(ref, "mcp:")
+		row, err := s.q.GetConnection(ctx, gen.GetConnectionParams{OrgID: orgID, Name: name})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return pgtype.UUID{}, exception.BadRequest(fmt.Sprintf("tool %q must name a connector in this organization", ref))
+		case err != nil:
+			return pgtype.UUID{}, fmt.Errorf("load connector: %w", err)
+		case mcp && row.Kind != "mcp":
+			return pgtype.UUID{}, exception.BadRequest(fmt.Sprintf("%q is not an MCP server", name))
+		case !mcp && !slices.Contains(agent.SearchableKinds(), row.Kind):
+			return pgtype.UUID{}, exception.BadRequest(fmt.Sprintf("connector %q (%s) cannot be searched by an agent; agents can search %s", name, row.Kind, strings.Join(agent.SearchableKinds(), ", ")))
 		}
 	}
 	if in.Connection == "" {
@@ -216,7 +180,7 @@ func (s *Service) Create(ctx context.Context, orgID pgtype.UUID, actor string, i
 	row, err := s.q.CreateAgent(ctx, gen.CreateAgentParams{
 		ID: uid.New(), OrgID: orgID, Name: in.Name, Description: in.Description, ConnectionID: connectionID,
 		Model: in.Model, SystemPrompt: in.System, InputSchema: nonNull(in.InputSchema), OutputSchema: nonNull(in.OutputSchema),
-		Tools: in.Tools, AllowedHosts: in.AllowedHosts, DatabaseConnection: in.DatabaseConnection, MaxIterations: int32(in.MaxIterations),
+		Tools: in.Tools, MaxIterations: int32(in.MaxIterations),
 		MaxTokens: pgInt(in.MaxTokens), Temperature: pgFloat(in.Temperature), UpdatedBy: pgtype.Text{String: actor, Valid: actor != ""},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -238,7 +202,7 @@ func (s *Service) Update(ctx context.Context, orgID pgtype.UUID, actor, name str
 	row, err := s.q.UpdateAgent(ctx, gen.UpdateAgentParams{
 		OrgID: orgID, Name: name, Description: in.Description, ConnectionID: connectionID, Model: in.Model,
 		SystemPrompt: in.System, InputSchema: nonNull(in.InputSchema), OutputSchema: nonNull(in.OutputSchema),
-		Tools: in.Tools, AllowedHosts: in.AllowedHosts, DatabaseConnection: in.DatabaseConnection, MaxIterations: int32(in.MaxIterations),
+		Tools: in.Tools, MaxIterations: int32(in.MaxIterations),
 		MaxTokens: pgInt(in.MaxTokens), Temperature: pgFloat(in.Temperature), UpdatedBy: pgtype.Text{String: actor, Valid: actor != ""},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -314,32 +278,13 @@ func (s *Service) Definition(ctx context.Context, tenantID uuid.UUID, name strin
 	a := row.Agent
 	def := agent.Definition{
 		Name: a.Name, Revision: int(a.Revision), Connection: row.ConnectionName, Model: a.Model, System: a.SystemPrompt,
-		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts, DatabaseConnection: a.DatabaseConnection,
+		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools,
 		MaxIterations: int(a.MaxIterations), Temperature: floatPtr(a.Temperature),
 	}
 	if a.MaxTokens.Valid {
 		def.MaxTokens = int(a.MaxTokens.Int32)
 	}
 	return def, nil
-}
-
-// ToolInfo describes a tool an agent may be given.
-type ToolInfo struct {
-	Name        string
-	Description string
-	InputSchema json.RawMessage
-}
-
-// Tools lists the registered tools, for the editor.
-func (s *Service) Tools() []ToolInfo {
-	names := s.tools.Names()
-	out := make([]ToolInfo, 0, len(names))
-	for _, name := range names {
-		if tool, ok := s.tools.Get(name); ok {
-			out = append(out, ToolInfo{Name: name, Description: tool.Description(), InputSchema: tool.InputSchema()})
-		}
-	}
-	return out
 }
 
 // TestResult is the outcome of running an agent once, outside any workflow.

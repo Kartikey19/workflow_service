@@ -290,20 +290,23 @@ func (s *Service) SwitchOrg(ctx context.Context, p auth.Principal, orgID pgtype.
 	return Membership{}, exception.NotFound("organization")
 }
 
-// Bootstrap creates the first platform admin, with an organization of their
-// own, when no user exists yet. With users present it does nothing, so it is
-// safe to run on every start.
+// Bootstrap makes sure the configured platform admin can sign in. It runs on
+// every start and is idempotent, whether or not other users exist:
+//   - no account with that email: create it, with an organization of its own;
+//   - an account exists: its password is never reset from the environment, but it
+//     is restored to platform admin, re-enabled, unlocked, and given an
+//     organization if it has none (say, it was removed from all of them).
+//
+// It reports whether the account was created.
 func (s *Service) Bootstrap(ctx context.Context, email, password string) (bool, error) {
-	count, err := s.q.CountUsers(ctx)
-	if err != nil {
-		return false, fmt.Errorf("count users: %w", err)
-	}
-	if count > 0 {
-		return false, nil
-	}
-	email, err = normalizeEmail(email)
+	email, err := normalizeEmail(email)
 	if err != nil {
 		return false, fmt.Errorf("BOOTSTRAP_ADMIN_EMAIL: %w", err)
+	}
+	if existing, err := s.q.GetUserByEmail(ctx, email); err == nil {
+		return false, s.restoreAdmin(ctx, existing.ID)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("find bootstrap admin: %w", err)
 	}
 	if err := checkPassword(password); err != nil {
 		return false, fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD: %w", err)
@@ -317,12 +320,10 @@ func (s *Service) Bootstrap(ctx context.Context, email, password string) (bool, 
 		if err := q.LockBootstrap(ctx); err != nil {
 			return fmt.Errorf("lock administrator bootstrap: %w", err)
 		}
-		count, err := q.CountUsers(ctx)
-		if err != nil {
-			return fmt.Errorf("recheck users: %w", err)
-		}
-		if count > 0 {
-			return nil
+		if _, err := q.GetUserByEmail(ctx, email); err == nil {
+			return nil // another replica created it first; the next start restores it if needed
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("recheck bootstrap admin: %w", err)
 		}
 
 		user, err := q.CreateUser(ctx, gen.CreateUserParams{ID: newID(), Email: email, Name: "Platform admin", PasswordHash: hash, PlatformAdmin: true})
@@ -343,4 +344,25 @@ func (s *Service) Bootstrap(ctx context.Context, email, password string) (bool, 
 		return false, err
 	}
 	return created, nil
+}
+
+// restoreAdmin makes an existing administrator account usable again.
+func (s *Service) restoreAdmin(ctx context.Context, userID pgtype.UUID) error {
+	return pgxTx(ctx, s.pool, func(q *gen.Queries) error {
+		if err := q.EnsurePlatformAdmin(ctx, userID); err != nil {
+			return fmt.Errorf("restore bootstrap admin: %w", err)
+		}
+		memberships, err := q.ListMembershipsForUser(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("list admin memberships: %w", err)
+		}
+		if len(memberships) > 0 {
+			return nil
+		}
+		org, err := s.createOrganization(ctx, q, "Platform", "team")
+		if err != nil {
+			return err
+		}
+		return q.UpsertMembership(ctx, gen.UpsertMembershipParams{OrgID: org.ID, UserID: userID, Role: auth.RoleOwner})
+	})
 }

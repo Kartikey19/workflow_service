@@ -1,4 +1,6 @@
-# workflow_service
+# Weft
+
+Weft is the product name; the repository and Go module are still called `workflow_service`.
 
 Durable YAML workflows with PostgreSQL leasing/fencing, agents and tool loops,
 human tasks, sub-workflows, fan-out/fan-in, webhooks, and a React web workspace.
@@ -56,12 +58,34 @@ run `make ui-install ui-build migrate` and start the same two processes. Skip
 setup permits private-address connectors for testing; remote environments keep
 that permission disabled.
 
-Sign in at http://localhost:8080/ui/ using the bootstrap account. Connect a model
-provider, create an agent, and use its form to publish/run a workflow without
-editing YAML. Build on the visual canvas with saved connector and agent steps, editable
-dependencies and action forms. Advanced workflows have a YAML editor with live
-compiler diagnostics. The assistant creates reviewable drafts using tenant
-resources; it never publishes automatically.
+Sign in at http://localhost:8080/ui/ using the bootstrap account. The bootstrap
+admin is ensured on every API start, whether or not other users exist. It is
+created if its email is missing. If the account already exists, its password is
+never reset from the environment, but it is restored to platform admin,
+re-enabled, unlocked, and given an organization if it has none. Keep
+`BOOTSTRAP_ADMIN_EMAIL` set in every environment that should keep this admin.
+
+Inviting people. Invites are links, not emails (nothing is sent automatically):
+
+- **Teammates in an organization you belong to:** Team page, enter an email and
+  role, then copy the link shown once and send it. They set a password on that
+  page and join that organization.
+- **A new customer organization:** sign in as the platform admin, open the
+  Platform page, enter the owner's email and an organization name, and send the
+  link. The invitee becomes owner of a new, empty organization. The same page
+  lists organizations and changes their plan.
+
+Invite links work once and expire after 7 days. To test as a customer, accept a
+platform invite with a second email address (a private browser window avoids
+replacing your admin session). Connect a model
+provider (including a custom OpenAI-compatible one), create an agent, and build a
+workflow on the visual canvas: add a step, type its details, and the canvas and checks
+update as you type. Steps connect after the selected one; agents, saved connectors and
+built-in steps are all steps. Keep related credentials and settings in a Vault secret
+group (for example `open_api_settings` with `api_key`, `effort` and `temperature`) and
+insert a key into any step as `${secrets.open_api_settings.api_key}`. The
+assistant creates reviewable drafts using tenant resources; it never publishes
+automatically.
 
 The Connectors page configures PostgreSQL, MySQL, MongoDB, Gmail, Drive, Docs,
 Sheets, Calendar, Slack, Notion, email and MCP accounts once. Workflows and agents

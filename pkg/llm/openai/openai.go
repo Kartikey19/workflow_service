@@ -8,14 +8,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 
-	"github.com/kartikey/workflow_service/pkg/httpx"
 	"github.com/kartikey/workflow_service/pkg/llm"
 )
 
@@ -149,7 +146,7 @@ func (c *Client) authorize(r *http.Request) {
 func (c *Client) do(ctx context.Context, r *http.Request) ([]byte, *http.Response, error) {
 	res, err := c.http.Do(r)
 	if err != nil {
-		return nil, nil, transportError(ctx, err)
+		return nil, nil, llm.TransportError(ctx, err)
 	}
 	defer res.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(res.Body, maxResponse+1))
@@ -307,25 +304,5 @@ func statusError(res *http.Response, data []byte) error {
 			code = ""
 		}
 	}
-	message := wire.Error.Message
-	if message == "" {
-		message = strings.TrimSpace(string(data[:min(len(data), 200)]))
-	}
-	return &llm.Error{
-		Status: res.StatusCode, Code: code, Message: message,
-		Retryable:  res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusRequestTimeout || res.StatusCode >= 500,
-		RetryAfter: httpx.ParseRetryAfter(res.Header.Get("Retry-After")),
-	}
-}
-
-func transportError(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	var netErr net.Error
-	code := "connection_error"
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		code = "timeout"
-	}
-	return &llm.Error{Code: code, Message: err.Error(), Retryable: true}
+	return llm.StatusError(res, code, wire.Error.Message, data)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 )
 
@@ -172,5 +171,3 @@ func validHost(host string) bool {
 	}
 	return true
 }
-
-func portString(port int) string { return strconv.Itoa(port) }

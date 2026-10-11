@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
@@ -267,7 +266,7 @@ func TestVaultAPI(t *testing.T) {
 		t.Fatalf("an editor deleting a secret = %d, want 403", status)
 	}
 	for name, body := range map[string]map[string]any{
-		"api_key":   {"value": apiKeyValue}, // lowercase name
+		"1_KEY":     {"value": apiKeyValue}, // starts with a digit
 		"BAD-NAME":  {"value": apiKeyValue},
 		"SHORT_VAL": {"value": "tiny"},
 	} {
@@ -426,15 +425,6 @@ func TestVaultRotationReportsUnreadableRows(t *testing.T) {
 	}
 }
 
-func randomKey(t *testing.T) []byte {
-	t.Helper()
-	b := make([]byte, vault.KeySize)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
-
 // Rotation covers everything sealed under the master key, not just vault
 // secrets: provider-connection API keys and connection credentials too. After
 // the old key is dropped they must still open.
@@ -488,5 +478,134 @@ func TestVaultRotationCoversProviderKeysAndConnections(t *testing.T) {
 	conn, err := connections.NewService(h.pool, only2, policy, connections.Options{}).Connection(ctx, uuidOf(h.tenant), "smtp1", "smtp")
 	if err != nil || conn.Secret["password"] != "smtp-password-1" {
 		t.Fatalf("connection credentials after dropping key 1: %+v, %v", conn, err)
+	}
+}
+
+const groupWorkflow = `
+apiVersion: workflow/v1
+name: uses-group
+nodes:
+  - id: call
+    type: http
+    timeout: 5s
+    config:
+      method: POST
+      url: "URL"
+      headers: {Authorization: "Bearer ${secrets.open_api_settings.api_key}"}
+      body: {effort: "${secrets.open_api_settings.effort}", temperature: "${double(secrets.open_api_settings.temperature)}"}
+`
+
+// A group holds several keys under one name and a workflow reads each as
+// ${secrets.group.key}. The credential reaches the upstream and is masked in
+// storage; short settings such as an effort or temperature are passed through
+// and stay readable.
+func TestVaultGroupKeysAreReadAsGroupDotKey(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, ctx)
+	svc := h.useVault(ringOf(t, 1, 1))
+	if err := svc.PutGroup(ctx, h.tenant, "open_api_settings", map[string]string{"api_key": apiKeyValue, "effort": "high", "temperature": "0.3"}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var auth, body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		auth, body = r.Header.Get("Authorization"), string(raw)
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	t.Cleanup(server.Close)
+	h.mustPublish(strings.Replace(groupWorkflow, "URL", server.URL, 1))
+	h.startWorkers(1)
+	runID := h.start("uses-group", nil)
+	if status := h.waitStatus(runID, 15*time.Second, "succeeded", "failed"); status != "succeeded" {
+		t.Fatalf("run = %s, nodes %v", status, h.nodeStatuses(runID))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if auth != "Bearer "+apiKeyValue || !strings.Contains(body, `"effort":"high"`) || !strings.Contains(body, `"temperature":0.3`) {
+		t.Fatalf("the upstream received %q and %s, want the group's key, effort and numeric temperature", auth, body)
+	}
+	if n := h.occurrences(apiKeyValue); n != 0 {
+		t.Fatalf("the group's api_key appears in %d stored row(s)", n)
+	}
+	var input string
+	if err := h.pool.QueryRow(ctx, `select input::text from node_executions where run_id = $1 and node_id = 'call'`, runID).Scan(&input); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(input, "Bearer ***") || !strings.Contains(input, "high") {
+		t.Fatalf("stored input = %s, want the key masked and the short settings kept", input)
+	}
+
+	// A key the group lacks fails by its full name.
+	missing := strings.NewReplacer("URL", server.URL, "name: uses-group", "name: uses-missing-key", "api_key}", "nope}").Replace(groupWorkflow)
+	h.mustPublish(missing)
+	runID = h.start("uses-missing-key", nil)
+	h.waitStatus(runID, 15*time.Second, "failed")
+	if attempts := h.attempts(runID, "call"); len(attempts) != 1 || attempts[0]["code"] != "E_SECRET_MISSING" {
+		t.Fatalf("attempts = %v", attempts)
+	}
+	if e := h.nodeError(runID, "call"); !strings.Contains(e["message"].(string), "open_api_settings.nope") {
+		t.Fatalf("error = %v, want it to name open_api_settings.nope", e)
+	}
+}
+
+// Groups through the API: written together, listed by key, never clashing with
+// a plain secret of the same name, and deleted as a whole.
+func TestVaultGroupAPI(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, ctx)
+	h.useVault(ringOf(t, 1, 1))
+	base, ident := h.identityAPI()
+	if _, err := ident.Bootstrap(ctx, "root@example.com", adminPassword); err != nil {
+		t.Fatal(err)
+	}
+	root := newPerson(t, base)
+	root.mustLogin("root@example.com", adminPassword)
+	owner := newPerson(t, base)
+	accept(t, owner, inviteToOrg(t, root, "owner@example.com", "Group Co"), "owner-long-password", "Owner")
+
+	fields := map[string]any{"api_key": apiKeyValue, "effort": "high", "temperature": "0.3"}
+	status, put := owner.call("PUT", "/be/v1/secrets/open_api_settings", map[string]any{"fields": fields})
+	if status != 200 || len(put["references"].([]any)) != 3 || put["references"].([]any)[0] != "${secrets.open_api_settings.api_key}" {
+		t.Fatalf("put group = %d %v", status, put)
+	}
+	_, list := owner.call("GET", "/be/v1/secrets", nil)
+	names := []string{}
+	for _, item := range list["items"].([]any) {
+		names = append(names, item.(map[string]any)["name"].(string))
+	}
+	if strings.Join(names, ",") != "open_api_settings.api_key,open_api_settings.effort,open_api_settings.temperature" || strings.Contains(toJSON(list), apiKeyValue) {
+		t.Fatalf("list = %v", list)
+	}
+	for name, body := range map[string]map[string]any{
+		"open_api_settings":  {"value": apiKeyValue}, // a plain secret named like the group
+		"two.dots.in.a.name": {"value": apiKeyValue},
+	} {
+		if status, _ := owner.call("PUT", "/be/v1/secrets/"+name, body); status != 409 && status != 400 {
+			t.Fatalf("PUT %s = %d, want 409 or 400", name, status)
+		}
+	}
+	// A group is saved whole or not at all: one bad key keeps the others out.
+	if status, _ := owner.call("PUT", "/be/v1/secrets/open_api_settings", map[string]any{"fields": map[string]any{"added": "fine", "empty": ""}}); status != 400 {
+		t.Fatalf("a group key with no value = %d, want 400", status)
+	}
+	if _, list := owner.call("GET", "/be/v1/secrets", nil); strings.Contains(toJSON(list), "open_api_settings.added") {
+		t.Fatalf("a rejected group wrote some keys: %v", list)
+	}
+	if status, _ := owner.call("PUT", "/be/v1/secrets/PLAIN_KEY", map[string]any{"value": apiKeyValue}); status != 200 {
+		t.Fatalf("plain secret = %d", status)
+	}
+	if status, _ := owner.call("PUT", "/be/v1/secrets/PLAIN_KEY", map[string]any{"fields": map[string]any{"k": "v"}}); status != 409 {
+		t.Fatalf("a group named like a plain secret = %d, want 409", status)
+	}
+	// Deleting the group name removes every key of it and leaves other secrets.
+	if status, _ := owner.call("DELETE", "/be/v1/secrets/open_api_settings", nil); status != 204 {
+		t.Fatalf("delete group = %d", status)
+	}
+	_, list = owner.call("GET", "/be/v1/secrets", nil)
+	if items := list["items"].([]any); len(items) != 1 || items[0].(map[string]any)["name"] != "PLAIN_KEY" {
+		t.Fatalf("after deleting the group: %v", list)
 	}
 }

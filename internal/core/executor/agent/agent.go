@@ -24,21 +24,20 @@ const (
 // Executor is the agent node type.
 type Executor struct {
 	clients Clients
-	tools   *Tools
 	defs    Definitions
 	dynamic DynamicTools
 }
 
 var _ executor.Executor = (*Executor)(nil)
 
-// New builds the executor. A nil tools registry means no tools are available; a
-// nil clients means no provider is configured; a nil defs means a node cannot
-// refer to a stored agent by name (only inline configuration works).
-func New(clients Clients, tools *Tools, defs Definitions) *Executor {
+// New builds the executor. A nil clients means no provider is configured; a
+// nil defs means a node cannot refer to a stored agent by name (only inline
+// configuration works). Tools come from WithDynamicTools.
+func New(clients Clients, defs Definitions) *Executor {
 	if clients == nil {
 		clients = Unconfigured{}
 	}
-	return &Executor{clients: clients, tools: tools, defs: defs}
+	return &Executor{clients: clients, defs: defs}
 }
 
 func (*Executor) Type() string { return "agent" }
@@ -46,10 +45,12 @@ func (*Executor) Type() string { return "agent" }
 func (e *Executor) Describe() executor.Description {
 	return executor.Description{
 		Title: "Agent", Category: "ai",
-		Description: "Calls a language model, optionally letting it use registered tools in a loop capped by max_iterations. " +
+		Description: "Calls a language model in a loop capped by max_iterations. `tools` lists saved connectors the model may " +
+			"search with three read-only tools: glob lists what a connector holds, grep searches it, read opens one item " +
+			"(and mcp:<server> adds a saved MCP server's tools). " +
 			"Run a stored agent with `agent: <name>` and `input`, or configure model, prompt and limits inline. " +
 			"With an output schema the reply must be JSON that matches it; a violation fails the node permanently. " +
-			"429 and 5xx responses are retried. Available tools: " + toolList(e.tools) + ".",
+			"429 and 5xx responses are retried.",
 		Example: `- id: classify
   type: agent
   needs: [fetch_ticket]
@@ -75,41 +76,25 @@ func (e *Executor) Describe() executor.Description {
 	}
 }
 
-func toolList(tools *Tools) string {
-	names := tools.Names()
-	if len(names) == 0 {
-		return "none"
-	}
-	out := ""
-	for i, name := range names {
-		if i > 0 {
-			out += ", "
-		}
-		out += name
-	}
-	return out
-}
-
 type config struct {
 	// Agent mode: run a stored definition.
 	Agent string          `json:"agent"`
 	Input json.RawMessage `json:"input"`
 
 	// Inline mode: configure the call here.
-	Model              string          `json:"model"`
-	System             string          `json:"system"`
-	Prompt             json.RawMessage `json:"prompt"`
-	Tools              []string        `json:"tools"`
-	DatabaseConnection string          `json:"database_connection"`
-	MaxIterations      int             `json:"max_iterations"`
-	MaxTokens          int             `json:"max_tokens"`
-	Temperature        *float64        `json:"temperature"`
-	OutputSchema       json.RawMessage `json:"output_schema"`
+	Model         string          `json:"model"`
+	System        string          `json:"system"`
+	Prompt        json.RawMessage `json:"prompt"`
+	Tools         []string        `json:"tools"`
+	MaxIterations int             `json:"max_iterations"`
+	MaxTokens     int             `json:"max_tokens"`
+	Temperature   *float64        `json:"temperature"`
+	OutputSchema  json.RawMessage `json:"output_schema"`
 }
 
 // inlineOnly are the fields that, with `agent`, would conflict with the stored
 // definition.
-var inlineOnly = []string{"model", "system", "tools", "max_iterations", "max_tokens", "temperature", "output_schema", "database_connection"}
+var inlineOnly = []string{"model", "system", "tools", "max_iterations", "max_tokens", "temperature", "output_schema"}
 
 // ValidateConfig checks the shape at publish time. A node either names a stored
 // agent (`agent`, with optional `input` and `prompt`) or configures the call
@@ -157,7 +142,6 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 		{Name: "system", Kind: "string"},
 		{Name: "prompt", Kind: "any", Required: true},
 		{Name: "tools", Kind: "array"},
-		{Name: "database_connection", Kind: "string"},
 		{Name: "max_iterations", Kind: "integer", Required: true},
 		{Name: "max_tokens", Kind: "integer"},
 		{Name: "temperature", Kind: "number"},
@@ -179,11 +163,11 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 		for _, entry := range tools {
 			name, isString := entry.(string)
 			if !isString || executor.IsExpression(name) {
-				problems = append(problems, errors.New("tools must be a list of literal tool names"))
+				problems = append(problems, errors.New("tools must be a list of literal connector names"))
 				break
 			}
-			if _, registered := e.tools.Get(name); !registered && !IsDynamicReference(name) {
-				problems = append(problems, fmt.Errorf("unknown tool %q (available: %s)", name, toolList(e.tools)))
+			if !IsToolReference(name) {
+				problems = append(problems, fmt.Errorf("tool %q must name a saved connector, or mcp:<server>", name))
 			}
 		}
 	}
@@ -192,7 +176,6 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 			problems = append(problems, fmt.Errorf("output_schema: %w", err))
 		}
 	}
-	db, _ := c["database_connection"].(string)
 	var names []string
 	if entries, ok := c["tools"].([]any); ok {
 		for _, entry := range entries {
@@ -200,9 +183,6 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 				names = append(names, name)
 			}
 		}
-	}
-	if err := validateDatabaseTools(names, db); err != nil {
-		problems = append(problems, err)
 	}
 	if err := validateReferences(names); err != nil {
 		problems = append(problems, err)
@@ -229,14 +209,11 @@ func literalInt(config map[string]any, key string, lo, hi int) error {
 
 // validateResolved checks an inline configuration after its expressions are
 // resolved. Stored agents were validated when they were saved.
-func (c *config) validateResolved(tools *Tools) error {
-	if err := validateDatabaseTools(c.Tools, c.DatabaseConnection); err != nil {
-		return err
-	}
-	return validateLimits(c.Model, c.Prompt, true, c.MaxIterations, c.MaxTokens, c.Temperature, c.Tools, c.OutputSchema, tools)
+func (c *config) validateResolved() error {
+	return validateLimits(c.Model, c.Prompt, true, c.MaxIterations, c.MaxTokens, c.Temperature, c.Tools, c.OutputSchema)
 }
 
-func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, maxIterations, maxTokens int, temperature *float64, toolNames []string, outputSchema json.RawMessage, tools *Tools) error {
+func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, maxIterations, maxTokens int, temperature *float64, toolNames []string, outputSchema json.RawMessage) error {
 	switch {
 	case model == "":
 		return errors.New("model is required")
@@ -253,8 +230,8 @@ func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, ma
 		return err
 	}
 	for _, name := range toolNames {
-		if _, ok := tools.Get(name); !ok && !IsDynamicReference(name) {
-			return fmt.Errorf("unknown tool %q", name)
+		if !IsToolReference(name) {
+			return fmt.Errorf("tool %q must name a saved connector, or mcp:<server>", name)
 		}
 	}
 	if len(outputSchema) > 0 && string(outputSchema) != "null" {
@@ -272,11 +249,8 @@ func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, ma
 // ValidateDefinition checks a stored agent before it is saved, with the same
 // rules as an inline node plus the schemas. The agents service calls it.
 func (e *Executor) ValidateDefinition(d Definition) error {
-	if err := validateDatabaseTools(d.Tools, d.DatabaseConnection); err != nil {
-		return err
-	}
 	// A definition has no prompt of its own: each node supplies input.
-	if err := validateLimits(d.Model, nil, false, d.MaxIterations, d.MaxTokens, d.Temperature, d.Tools, d.OutputSchema, e.tools); err != nil {
+	if err := validateLimits(d.Model, nil, false, d.MaxIterations, d.MaxTokens, d.Temperature, d.Tools, d.OutputSchema); err != nil {
 		return err
 	}
 	if len(d.InputSchema) > 0 && string(d.InputSchema) != "null" {

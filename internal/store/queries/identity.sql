@@ -20,6 +20,12 @@ update users
                            then now() + @lock_for::interval else locked_until end
  where id = @id;
 
+-- name: EnsurePlatformAdmin :exec
+-- Restores the configured administrator's access without touching the password.
+update users
+   set platform_admin = true, disabled_at = null, failed_logins = 0, locked_until = null
+ where id = @id;
+
 -- name: ResetLoginFailures :exec
 update users set failed_logins = 0, locked_until = null where id = @id;
 

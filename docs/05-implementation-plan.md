@@ -838,6 +838,17 @@ Local implementation and verification are documented in [the runbook](06-runbook
 No provider/host has been selected and no remote deployment has been performed.
 Real OAuth, SMTP, LLM, S3, and Grafana Cloud account validation remains pending.
 
+### M20 — Custom code nodes (scoped, not started)
+
+A `code` node that runs Python, TypeScript or Go inside a sandbox outside the
+worker process. The full design, threat model, limits and sub-milestones C1–C5 are in
+[08 — Custom code in workflows](08-code-nodes.md). The sandbox backend decision
+(hosted microVM API, own runner, or another option) must be made before C3.
+
+**Acceptance:** see C1–C5 in the design document; the headline gate is that a
+second tenant's job cannot observe the first one's files, environment or network,
+and that timeouts, memory bombs, fork bombs and output floods are contained.
+
 ### Later
 
 Stripe billing and self sign-up; scheduled (cron) triggers; `human_task` (M8);
@@ -1041,7 +1052,7 @@ If you want a single sequence to follow without re-reading everything:
 points and API) → M11 (identity and plans) → M12 (vault) → M13 (agents) → M16
 (webhooks) → M18 (UI shell, built alongside each later milestone) → M14
 (integrations) → M15 (exploration agents and MCP) → M17 (assistant) → M19
-(production). Webhooks come early because they are small and make the engine
+(production) → M20 (custom code, after the backend decision). Webhooks come early because they are small and make the engine
 usable from other systems before the UI is complete.
 
 Step 7 is the moment the thing becomes real. Everything before it is scaffolding

@@ -13,31 +13,29 @@ import (
 
 const createAgent = `-- name: CreateAgent :one
 insert into agents (id, org_id, name, description, connection_id, model, system_prompt, input_schema, output_schema,
-                    tools, allowed_hosts, database_connection, max_iterations, max_tokens, temperature, updated_by)
+                    tools, max_iterations, max_tokens, temperature, updated_by)
 values ($1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10::text[], $11::text[], $12, $13, $14,
-        $15, $16)
+        $9, $10::text[], $11, $12,
+        $13, $14)
 on conflict (org_id, name) do nothing
 returning id, org_id, name, description, connection_id, model, system_prompt, input_schema, output_schema, tools, allowed_hosts, max_iterations, max_tokens, temperature, revision, created_at, updated_at, updated_by, database_connection
 `
 
 type CreateAgentParams struct {
-	ID                 pgtype.UUID   `json:"id"`
-	OrgID              pgtype.UUID   `json:"org_id"`
-	Name               string        `json:"name"`
-	Description        string        `json:"description"`
-	ConnectionID       pgtype.UUID   `json:"connection_id"`
-	Model              string        `json:"model"`
-	SystemPrompt       string        `json:"system_prompt"`
-	InputSchema        []byte        `json:"input_schema"`
-	OutputSchema       []byte        `json:"output_schema"`
-	Tools              []string      `json:"tools"`
-	AllowedHosts       []string      `json:"allowed_hosts"`
-	DatabaseConnection string        `json:"database_connection"`
-	MaxIterations      int32         `json:"max_iterations"`
-	MaxTokens          pgtype.Int4   `json:"max_tokens"`
-	Temperature        pgtype.Float8 `json:"temperature"`
-	UpdatedBy          pgtype.Text   `json:"updated_by"`
+	ID            pgtype.UUID   `json:"id"`
+	OrgID         pgtype.UUID   `json:"org_id"`
+	Name          string        `json:"name"`
+	Description   string        `json:"description"`
+	ConnectionID  pgtype.UUID   `json:"connection_id"`
+	Model         string        `json:"model"`
+	SystemPrompt  string        `json:"system_prompt"`
+	InputSchema   []byte        `json:"input_schema"`
+	OutputSchema  []byte        `json:"output_schema"`
+	Tools         []string      `json:"tools"`
+	MaxIterations int32         `json:"max_iterations"`
+	MaxTokens     pgtype.Int4   `json:"max_tokens"`
+	Temperature   pgtype.Float8 `json:"temperature"`
+	UpdatedBy     pgtype.Text   `json:"updated_by"`
 }
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error) {
@@ -52,8 +50,6 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.InputSchema,
 		arg.OutputSchema,
 		arg.Tools,
-		arg.AllowedHosts,
-		arg.DatabaseConnection,
 		arg.MaxIterations,
 		arg.MaxTokens,
 		arg.Temperature,
@@ -379,29 +375,27 @@ const updateAgent = `-- name: UpdateAgent :one
 update agents
    set description = $1, connection_id = $2, model = $3, system_prompt = $4,
        input_schema = $5, output_schema = $6,
-       tools = $7::text[], allowed_hosts = $8::text[], database_connection = $9, max_iterations = $10,
-       max_tokens = $11, temperature = $12,
-       revision = revision + 1, updated_at = now(), updated_by = $13
- where org_id = $14 and name = $15
+       tools = $7::text[], max_iterations = $8,
+       max_tokens = $9, temperature = $10,
+       revision = revision + 1, updated_at = now(), updated_by = $11
+ where org_id = $12 and name = $13
 returning id, org_id, name, description, connection_id, model, system_prompt, input_schema, output_schema, tools, allowed_hosts, max_iterations, max_tokens, temperature, revision, created_at, updated_at, updated_by, database_connection
 `
 
 type UpdateAgentParams struct {
-	Description        string        `json:"description"`
-	ConnectionID       pgtype.UUID   `json:"connection_id"`
-	Model              string        `json:"model"`
-	SystemPrompt       string        `json:"system_prompt"`
-	InputSchema        []byte        `json:"input_schema"`
-	OutputSchema       []byte        `json:"output_schema"`
-	Tools              []string      `json:"tools"`
-	AllowedHosts       []string      `json:"allowed_hosts"`
-	DatabaseConnection string        `json:"database_connection"`
-	MaxIterations      int32         `json:"max_iterations"`
-	MaxTokens          pgtype.Int4   `json:"max_tokens"`
-	Temperature        pgtype.Float8 `json:"temperature"`
-	UpdatedBy          pgtype.Text   `json:"updated_by"`
-	OrgID              pgtype.UUID   `json:"org_id"`
-	Name               string        `json:"name"`
+	Description   string        `json:"description"`
+	ConnectionID  pgtype.UUID   `json:"connection_id"`
+	Model         string        `json:"model"`
+	SystemPrompt  string        `json:"system_prompt"`
+	InputSchema   []byte        `json:"input_schema"`
+	OutputSchema  []byte        `json:"output_schema"`
+	Tools         []string      `json:"tools"`
+	MaxIterations int32         `json:"max_iterations"`
+	MaxTokens     pgtype.Int4   `json:"max_tokens"`
+	Temperature   pgtype.Float8 `json:"temperature"`
+	UpdatedBy     pgtype.Text   `json:"updated_by"`
+	OrgID         pgtype.UUID   `json:"org_id"`
+	Name          string        `json:"name"`
 }
 
 func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error) {
@@ -413,8 +407,6 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.InputSchema,
 		arg.OutputSchema,
 		arg.Tools,
-		arg.AllowedHosts,
-		arg.DatabaseConnection,
 		arg.MaxIterations,
 		arg.MaxTokens,
 		arg.Temperature,

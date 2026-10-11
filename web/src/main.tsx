@@ -1,4 +1,11 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import {
+  Component,
+  useEffect,
+  useState,
+  lazy,
+  Suspense,
+  type ReactNode,
+} from "react";
 import { createRoot } from "react-dom/client";
 import {
   Workflow,
@@ -13,14 +20,23 @@ import {
   ListTodo,
   LogOut,
   Menu,
-  ArrowUpRight,
+  Building2,
 } from "lucide-react";
 import { api, APIError, type RecordData } from "./api";
-import { ActionForm, Field, ResourceState, AsyncButton } from "./components";
+import {
+  ActionForm,
+  Field,
+  ResourceState,
+  AsyncButton,
+  Logo,
+  StoryGraph,
+  PRODUCT_NAME,
+} from "./components";
 const Workflows = lazy(() =>
   import("./workflows").then((m) => ({ default: m.Workflows })),
 );
 import { Runs } from "./runs";
+import { Platform } from "./platform";
 const Agents = lazy(() =>
   import("./agents").then((m) => ({ default: m.Agents })),
 );
@@ -35,17 +51,19 @@ import {
 } from "./settings";
 import "./style.css";
 const pages = [
-  ["workflows", "Workflows", Workflow],
-  ["runs", "Runs", Activity],
-  ["agents", "Agents", Bot],
-  ["tasks", "Human tasks", ListTodo],
-  ["connectors", "Connectors", Plug],
-  ["vault", "Vault", LockKeyhole],
-  ["webhooks", "Webhooks", Webhook],
-  ["team", "Team", Users],
-  ["api-keys", "API keys", KeyRound],
-  ["usage", "Usage & plans", ChartNoAxesCombined],
+  ["workflows", "Workflows", Workflow, "Build"],
+  ["agents", "Agents", Bot, "Build"],
+  ["runs", "Runs", Activity, "Operate"],
+  ["tasks", "Human tasks", ListTodo, "Operate"],
+  ["connectors", "Connectors", Plug, "Connect"],
+  ["vault", "Vault", LockKeyhole, "Connect"],
+  ["webhooks", "Webhooks", Webhook, "Connect"],
+  ["team", "Team", Users, "Manage"],
+  ["api-keys", "API keys", KeyRound, "Manage"],
+  ["usage", "Usage & plans", ChartNoAxesCombined, "Manage"],
+  ["platform", "Platform", Building2, "Platform"],
 ] as const;
+const groups = ["Build", "Operate", "Connect", "Manage", "Platform"] as const;
 function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
   const token =
     location.pathname === "/ui/accept-invite"
@@ -72,51 +90,45 @@ function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
     <main className="auth-shell">
       <section className="auth-story">
         <a className="brand" href="/ui/">
-          <Workflow />
-          <span>workflow</span>
+          <Logo />
+          <span>{PRODUCT_NAME}</span>
         </a>
         <div>
-          <span className="eyebrow">YOUR OPERATIONS, CONNECTED</span>
+          <span className="eyebrow">Durable workflows for teams</span>
           <h1>
-            Turn the work
+            Operations,
             <br />
-            into a workflow.
+            <em>woven together.</em>
           </h1>
           <p>
-            Bring your agents, tools, and people together.
-            <br />
-            Every step visible. Every run accounted for.
+            Connect your tools, AI agents and people in workflows that keep
+            running. Every step is visible and every run is accounted for.
           </p>
           <div className="story-graph">
-            <span>
-              <Plug />
-              Connect
-            </span>
-            <ArrowUpRight />
-            <span>
-              <Bot />
-              Think
-            </span>
-            <ArrowUpRight />
-            <span>
-              <Activity />
-              Run
-            </span>
+            <StoryGraph />
           </div>
         </div>
-        <small>Built for work that needs to get done.</small>
+        <small>
+          {PRODUCT_NAME} runs each step once, retries safely, and waits for
+          people as long as it takes.
+        </small>
       </section>
       <section className="auth-form">
         <div className="auth-card">
-          <span className="eyebrow">WELCOME {token ? "ABOARD" : "BACK"}</span>
+          <span className="eyebrow">
+            {token ? "You’re invited" : "Welcome back"}
+          </span>
           <h2>{token ? "Join your team" : "Sign in to your workspace"}</h2>
           {token && (
             <>
               <ResourceState error={error} loading={!invite && !error} />
               {invite && (
-                <p>
-                  {invite.email} · {invite.organization_name} · {invite.role}
-                </p>
+                <div className="invite-card">
+                  <strong>{invite.organization_name || "Your team"}</strong>
+                  <small>
+                    {invite.email} · <span className="cap">{invite.role}</span>
+                  </small>
+                </div>
               )}
             </>
           )}
@@ -184,6 +196,27 @@ function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
       </section>
     </main>
   );
+}
+// One page failing must not blank the whole workspace.
+class PageBoundary extends Component<
+  { children: ReactNode },
+  { error: string }
+> {
+  state = { error: "" };
+  static getDerivedStateFromError(e: Error) {
+    return { error: e.message };
+  }
+  render() {
+    return this.state.error ? (
+      <section className="panel" role="alert">
+        <h2>This page hit a problem</h2>
+        <p className="muted">{this.state.error}</p>
+        <button onClick={() => location.reload()}>Reload page</button>
+      </section>
+    ) : (
+      this.props.children
+    );
+  }
 }
 function App() {
   const [session, setSession] = useState<RecordData | null>(null),
@@ -257,6 +290,7 @@ function App() {
     editable = admin || role === "editor",
     currentPage = pages.find((p) => p[0] === page) || pages[0];
   const visible = pages
+    .filter((p) => p[0] !== "platform" || session.user.platform_admin)
     .filter((p) => admin || p[0] !== "api-keys")
     .filter(
       (p) => editable || !["connectors", "vault", "webhooks"].includes(p[0]),
@@ -280,8 +314,8 @@ function App() {
             navigate("workflows");
           }}
         >
-          <Workflow />
-          <span>workflow</span>
+          <Logo />
+          <span>{PRODUCT_NAME}</span>
         </a>
         <Field label="Organization">
           <select
@@ -308,21 +342,31 @@ function App() {
             ))}
           </select>
         </Field>
-        <span className="nav-label">WORKSPACE</span>
         <nav aria-label="Workspace">
-          {visible.map(([id, label, Icon]) => (
-            <button
-              key={id}
-              className={currentPage[0] === id ? "active" : ""}
-              onClick={() => {
-                if (id === "workflows") setAgentName("");
-                navigate(id);
-              }}
-            >
-              <Icon size={18} />
-              {label}
-            </button>
-          ))}
+          {groups.map((group) => {
+            const items = visible.filter((p) => p[3] === group);
+            return (
+              items.length > 0 && (
+                <div className="nav-group" key={group}>
+                  <span className="nav-label">{group}</span>
+                  {items.map(([id, label, Icon]) => (
+                    <button
+                      key={id}
+                      className={currentPage[0] === id ? "active" : ""}
+                      aria-current={currentPage[0] === id ? "page" : undefined}
+                      onClick={() => {
+                        if (id === "workflows") setAgentName("");
+                        navigate(id);
+                      }}
+                    >
+                      <Icon size={18} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           <div className="avatar">
@@ -360,8 +404,11 @@ function App() {
               <h1>{currentPage[1]}</h1>
             </div>
           </div>
-          <span className="workspace-badge">
-            <span /> Workspace
+          <span
+            className="workspace-badge"
+            title="Your role in this organization"
+          >
+            <span /> {role}
           </span>
         </header>
         {error && (
@@ -371,46 +418,50 @@ function App() {
           </p>
         )}
         <div key={session.organization.id} className="page-content">
-          <Suspense fallback={<p role="status">Opening page…</p>}>
-            {!allowed ? (
-              <p className="error">Your role does not allow this page.</p>
-            ) : currentPage[0] === "workflows" ? (
-              <Workflows
-                key={agentName}
-                editable={editable}
-                agentName={agentName}
-                organizationID={session.organization.id}
-                onRun={(id) => {
-                  setRunID(id);
-                  navigate("runs");
-                }}
-              />
-            ) : currentPage[0] === "runs" ? (
-              <Runs initialID={runID} editable={editable} />
-            ) : currentPage[0] === "agents" ? (
-              <Agents
-                editable={editable}
-                useAgent={(name) => {
-                  setAgentName(name);
-                  navigate("workflows");
-                }}
-              />
-            ) : currentPage[0] === "connectors" ? (
-              <Connections admin={admin} />
-            ) : currentPage[0] === "vault" ? (
-              <Vault admin={admin} />
-            ) : currentPage[0] === "webhooks" ? (
-              <Webhooks admin={admin} />
-            ) : currentPage[0] === "team" ? (
-              <Team admin={admin} selfID={session.user.id} />
-            ) : currentPage[0] === "api-keys" ? (
-              <APIKeys />
-            ) : currentPage[0] === "usage" ? (
-              <Usage />
-            ) : (
-              <Tasks editable={editable} />
-            )}
-          </Suspense>
+          <PageBoundary key={currentPage[0]}>
+            <Suspense fallback={<p role="status">Opening page…</p>}>
+              {!allowed ? (
+                <p className="error">Your role does not allow this page.</p>
+              ) : currentPage[0] === "workflows" ? (
+                <Workflows
+                  key={agentName}
+                  editable={editable}
+                  agentName={agentName}
+                  organizationID={session.organization.id}
+                  onRun={(id) => {
+                    setRunID(id);
+                    navigate("runs");
+                  }}
+                />
+              ) : currentPage[0] === "runs" ? (
+                <Runs initialID={runID} editable={editable} />
+              ) : currentPage[0] === "agents" ? (
+                <Agents
+                  editable={editable}
+                  useAgent={(name) => {
+                    setAgentName(name);
+                    navigate("workflows");
+                  }}
+                />
+              ) : currentPage[0] === "connectors" ? (
+                <Connections admin={admin} />
+              ) : currentPage[0] === "vault" ? (
+                <Vault admin={admin} />
+              ) : currentPage[0] === "webhooks" ? (
+                <Webhooks admin={admin} />
+              ) : currentPage[0] === "team" ? (
+                <Team admin={admin} selfID={session.user.id} />
+              ) : currentPage[0] === "api-keys" ? (
+                <APIKeys />
+              ) : currentPage[0] === "usage" ? (
+                <Usage />
+              ) : currentPage[0] === "platform" ? (
+                <Platform />
+              ) : (
+                <Tasks editable={editable} />
+              )}
+            </Suspense>
+          </PageBoundary>
         </div>
       </main>
     </div>

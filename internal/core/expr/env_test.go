@@ -21,7 +21,7 @@ func TestEnvCompileAndEval(t *testing.T) {
 		Input:   map[string]any{"count": int64(4), "name": "Alice"},
 		Nodes:   map[string]NodeView{"fetch": {Output: map[string]any{"id": "order-1"}, Status: "succeeded", Attempt: 2, Metrics: map[string]any{"tokens": int64(10)}}},
 		Run:     RunView{ID: "run-1", CorrelationID: "order-1", StartedAt: now.Add(-time.Minute), Attempt: 1},
-		Secrets: map[string]string{"TOKEN": "private-token"}, Now: now,
+		Secrets: map[string]string{"TOKEN": "private-token", "openai.api_key": "sk-group-key", "openai.temperature": "0.3"}, Now: now,
 	}
 	tests := []struct {
 		source string
@@ -41,6 +41,8 @@ func TestEnvCompileAndEval(t *testing.T) {
 		{"now", now},
 		{"now - run.started_at", time.Minute},
 		{"secrets.TOKEN", "private-token"},
+		{"secrets.openai.api_key", "sk-group-key"},
+		{"double(secrets.openai.temperature)", 0.3},
 		{"[input.count, 2].size()", int64(2)},
 		{`{"name": input.name}.name`, "Alice"},
 		{"has(input.missing)", false},

@@ -1,4 +1,4 @@
-# workflow_service — design documents
+# Weft (workflow_service) — design documents
 
 A YAML-configured, durable DAG execution engine in Go. One engine, many domains:
 agentic workflows, delivery/logistics orchestration, and long-running healthcare
@@ -18,6 +18,7 @@ or compliance processes all run on the same seven tables.
 | 05 | [Implementation plan](05-implementation-plan.md) | Product scope and decisions, repo layout, engine M0–M9 and product M10–M19 with acceptance criteria, testing, ops, hosting |
 | 06 | [Operations runbook](06-runbook.md) | Local UI, deployment baseline, releases, backups, restore, observability and key rotation |
 | 07 | [Deployment guide](07-deployment.md) | Hosting cost, Neon, GoDaddy DNS, environment separation and CI/CD setup |
+| 08 | [Custom code nodes](08-code-nodes.md) | Scope, contract, sandbox options, threat model and milestones for running Python, TypeScript and Go in a workflow |
 
 If you only read two: **01** for the schema and **03 §5** for the resolver. Those
 two are where correctness lives; everything else is plumbing around them.
@@ -86,9 +87,9 @@ Connections (`04 §4e`) seal their credentials with the vault key too. `RESEND_B
 routes Resend through a proxy. Key rotation (`04 §4c`) re-seals vault secrets, provider
 keys and connection credentials together.
 
-Agents can explore a saved PostgreSQL/MySQL connection with `database_connection`
-and `tools: [list_tables, describe_table, run_query]`. These tools enforce read-only
-transactions, row/size caps and statement timeouts. MCP servers are saved as
+Agents search the connectors listed in `tools` with three read-only tools, `glob`,
+`grep` and `read` (`02 §4.14`); SQL runs in read-only transactions with row, size and
+time caps. MCP servers are saved as
 connections with kind `mcp`, `config: {url, transport: streamable_http}` (or `sse`)
 and optional `secret: {token}`. Agents use `tools: ["mcp:server-name"]`; workflows
 can call a tool directly with `mcp.call` (`02 §4.14`). Public DeepWiki was smoke-tested

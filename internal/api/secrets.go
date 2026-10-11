@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -33,16 +34,32 @@ func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request, p auth.Pri
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// putSecret is PUT /be/v1/secrets/{name} with {"value": "..."}: creates or replaces.
+// putSecret is PUT /be/v1/secrets/{name}: {"value": "..."} creates or replaces
+// one secret; {"fields": {"key": "value", ...}} creates or replaces keys of the
+// group {name}, read as ${secrets.NAME.key}.
 func (h *Handler) putSecret(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	var req struct {
-		Value string `json:"value"`
+		Value  string            `json:"value"`
+		Fields map[string]string `json:"fields"`
 	}
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 	name := r.PathValue("name")
+	if req.Fields != nil {
+		if err := h.services.Vault.PutGroup(r.Context(), p.TenantID, name, req.Fields, p.Actor()); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		references := make([]string, 0, len(req.Fields))
+		for key := range req.Fields {
+			references = append(references, "${secrets."+name+"."+key+"}")
+		}
+		sort.Strings(references)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "references": references})
+		return
+	}
 	if err := h.services.Vault.Put(r.Context(), p.TenantID, name, req.Value, p.Actor()); err != nil {
 		h.writeError(w, r, err)
 		return

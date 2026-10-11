@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/services/agents"
 	"github.com/kartikey/workflow_service/pkg/auth"
 	"github.com/kartikey/workflow_service/pkg/httpx"
@@ -13,25 +14,23 @@ import (
 
 // agentRequest is the body of POST /be/v1/agents and PUT /be/v1/agents/{name}.
 type agentRequest struct {
-	Name               string          `json:"name"`
-	Description        string          `json:"description"`
-	Connection         string          `json:"connection"`
-	Model              string          `json:"model"`
-	System             string          `json:"system_prompt"`
-	InputSchema        json.RawMessage `json:"input_schema"`
-	OutputSchema       json.RawMessage `json:"output_schema"`
-	Tools              []string        `json:"tools"`
-	DatabaseConnection string          `json:"database_connection"`
-	AllowedHosts       []string        `json:"allowed_hosts"`
-	MaxIterations      int             `json:"max_iterations"`
-	MaxTokens          *int            `json:"max_tokens"`
-	Temperature        *float64        `json:"temperature"`
+	Name          string          `json:"name"`
+	Description   string          `json:"description"`
+	Connection    string          `json:"connection"`
+	Model         string          `json:"model"`
+	System        string          `json:"system_prompt"`
+	InputSchema   json.RawMessage `json:"input_schema"`
+	OutputSchema  json.RawMessage `json:"output_schema"`
+	Tools         []string        `json:"tools"`
+	MaxIterations int             `json:"max_iterations"`
+	MaxTokens     *int            `json:"max_tokens"`
+	Temperature   *float64        `json:"temperature"`
 }
 
 func (a agentRequest) input() agents.Input {
 	return agents.Input{
 		Name: a.Name, Description: a.Description, Connection: a.Connection, Model: a.Model, System: a.System,
-		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts, DatabaseConnection: a.DatabaseConnection,
+		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools,
 		MaxIterations: a.MaxIterations, MaxTokens: a.MaxTokens, Temperature: a.Temperature,
 	}
 }
@@ -40,7 +39,7 @@ func agentView(a agents.Agent) map[string]any {
 	view := map[string]any{
 		"id": uid.String(a.ID), "name": a.Name, "description": a.Description, "connection": nil, "model": a.Model,
 		"system_prompt": a.System, "input_schema": httpx.Raw(a.InputSchema), "output_schema": httpx.Raw(a.OutputSchema),
-		"database_connection": a.DatabaseConnection, "tools": a.Tools, "allowed_hosts": a.AllowedHosts, "max_iterations": a.MaxIterations,
+		"tools": a.Tools, "max_iterations": a.MaxIterations,
 		"max_tokens": a.MaxTokens, "temperature": a.Temperature, "revision": a.Revision,
 		"created_at": a.CreatedAt.UTC().Format(time.RFC3339), "updated_at": a.UpdatedAt.UTC().Format(time.RFC3339),
 		"updated_by": nil,
@@ -54,13 +53,17 @@ func agentView(a agents.Agent) map[string]any {
 	return view
 }
 
-func (h *Handler) listAgentTools(w http.ResponseWriter, r *http.Request, _ auth.Principal) {
-	tools := h.services.Agents.Tools()
-	items := make([]map[string]any, 0, len(tools))
-	for _, tool := range tools {
-		items = append(items, map[string]any{"name": tool.Name, "description": tool.Description, "input_schema": httpx.Raw(tool.InputSchema)})
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+// listAgentTools is GET /be/v1/agents/tools: the three tools every agent gets
+// and the connector kinds they can search, for the editor.
+func (h *Handler) listAgentTools(w http.ResponseWriter, _ *http.Request, _ auth.Principal) {
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"items": []map[string]string{
+			{"name": "glob", "description": "Lists what a connector holds: tables, collections, recent messages, events or pages."},
+			{"name": "grep", "description": "Searches a connector: SQL for databases, search syntax for mail, text elsewhere."},
+			{"name": "read", "description": "Opens one item by the id glob or grep returned."},
+		},
+		"searchable_kinds": agent.SearchableKinds(),
+	})
 }
 
 func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request, p auth.Principal) {

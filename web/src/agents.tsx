@@ -1,5 +1,5 @@
-import { connectorActions, connectorReference } from "./connectors";
 import { useState } from "react";
+import { Bot } from "lucide-react";
 import { api, enc, pretty, type RecordData } from "./api";
 import {
   useResource,
@@ -33,8 +33,7 @@ export function Agents({
   const list = useResource("/agents"),
     tools = useResource("/agent-tools"),
     providers = useResource(editable ? "/providers" : null),
-    connections = useResource(editable ? "/connections" : null),
-    kinds = useResource(editable ? "/integrations" : null);
+    connections = useResource(editable ? "/connections" : null);
   const [edit, setEdit] = useState<RecordData | null>(null),
     [test, setTest] = useState<RecordData | null>(null),
     [result, setResult] = useState<RecordData | null>(null),
@@ -48,7 +47,7 @@ export function Agents({
     <>
       <div className="toolbar">
         <p className="muted">
-          Reusable agents with explicit tools and bounded execution.
+          Reusable AI steps that search your connectors and answer.
         </p>
         {editable && (
           <button className="primary" onClick={() => editing(fresh)}>
@@ -60,11 +59,19 @@ export function Agents({
       <div className="cards">
         {list.data?.items?.map((a: RecordData) => (
           <article className="panel card" key={a.name}>
-            <span className="eyebrow">AGENT · REVISION {a.revision}</span>
-            <h2>{a.name}</h2>
+            <div className="card-head">
+              <span className="card-icon">
+                <Bot size={18} aria-hidden="true" />
+              </span>
+              <div>
+                <h2>{a.name}</h2>
+                <small>Revision {a.revision}</small>
+              </div>
+            </div>
             <p>{a.description || a.system_prompt}</p>
             <small>
-              {a.model} · {a.connection || "Platform provider"}
+              {a.model} on {a.connection || "the platform provider"}
+              {a.tools?.length ? `, searches ${a.tools.join(", ")}` : ""}
             </small>
             <div className="row">
               {editable && (
@@ -123,11 +130,6 @@ export function Agents({
                 model: data.get("model"),
                 system_prompt: data.get("system_prompt"),
                 tools: chosenTools,
-                allowed_hosts: String(data.get("allowed_hosts") || "")
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-                database_connection: data.get("database_connection"),
                 max_iterations: Number(data.get("max_iterations")),
                 max_tokens: data.get("max_tokens")
                   ? Number(data.get("max_tokens"))
@@ -233,154 +235,62 @@ export function Agents({
                     defaultValue={edit.temperature ?? ""}
                   />
                 </Field>
-                <Field
-                  label="Allowed HTTP hosts"
-                  hint="Comma-separated host names for the HTTP tool."
-                >
-                  <input
-                    name="allowed_hosts"
-                    defaultValue={edit.allowed_hosts?.join(", ") || ""}
-                  />
-                </Field>
               </div>
             </details>
             <fieldset>
-              <legend>Tools</legend>
+              <legend>Connectors it can search</legend>
               <p className="muted">
-                Choose exactly which saved connector actions this agent can use.
-                For analytics, select only read actions.
+                The agent searches what you attach with three read-only tools:{" "}
+                {tools.data?.items?.map((t: RecordData) => t.name).join(", ") ||
+                  "glob, grep, read"}
+                . To send or save something, add a workflow step after it.
               </p>
               <ResourceState
-                error={connections.error || kinds.error}
-                loading={!connections.data || !kinds.data}
+                error={connections.error || tools.error}
+                loading={!connections.data || !tools.data}
               />
               {connections.data?.items
-                .filter((c: RecordData) => c.kind !== "mcp")
-                .map((c: RecordData) => (
-                  <fieldset key={c.name}>
-                    <legend>
-                      {c.name} · {c.kind}
-                    </legend>
-                    {connectorActions(kinds.data?.items, c.kind).map(
-                      (action) => {
-                        const ref = connectorReference(c.name, action.name);
-                        return (
-                          <label className="check" key={ref}>
-                            <input
-                              type="checkbox"
-                              checked={chosenTools.includes(ref)}
-                              onChange={(e) =>
-                                setTools((old) =>
-                                  e.target.checked
-                                    ? [...old, ref]
-                                    : old.filter((t) => t !== ref),
-                                )
-                              }
-                            />
-                            <span>
-                              <strong>{action.title}</strong>
-                              <small>
-                                {action.read_only
-                                  ? "Read only"
-                                  : "Writes to this service"}
-                              </small>
-                            </span>
-                          </label>
-                        );
-                      },
-                    )}
-                  </fieldset>
-                ))}
-              {tools.data?.items
                 .filter(
-                  (tool: RecordData) =>
-                    !["list_tables", "describe_table", "run_query"].includes(
-                      tool.name,
-                    ),
+                  (c: RecordData) =>
+                    c.kind === "mcp" ||
+                    tools.data?.searchable_kinds?.includes(c.kind),
                 )
-                .map((tool: RecordData) => (
-                  <label className="check" key={tool.name}>
-                    <input
-                      type="checkbox"
-                      checked={chosenTools.includes(tool.name)}
-                      onChange={(e) =>
-                        setTools((old) =>
-                          e.target.checked
-                            ? [...old, tool.name]
-                            : old.filter((t) => t !== tool.name),
-                        )
-                      }
-                    />
-                    <span>
-                      <strong>{tool.name}</strong>
-                      <small>{tool.description}</small>
-                    </span>
-                  </label>
-                ))}
-              <details>
-                <summary>Legacy database tool binding</summary>
-                {tools.data?.items
-                  .filter((tool: RecordData) =>
-                    ["list_tables", "describe_table", "run_query"].includes(
-                      tool.name,
-                    ),
-                  )
-                  .map((tool: RecordData) => (
-                    <label className="check" key={tool.name}>
-                      <input
-                        type="checkbox"
-                        checked={chosenTools.includes(tool.name)}
-                        onChange={(e) =>
-                          setTools((old) =>
-                            e.target.checked
-                              ? [...old, tool.name]
-                              : old.filter((t) => t !== tool.name),
-                          )
-                        }
-                      />
-                      {tool.name}
-                    </label>
-                  ))}
-                <Field
-                  label="Database connection"
-                  hint="Read-only tools use this database connection."
-                >
-                  <select
-                    name="database_connection"
-                    defaultValue={edit.database_connection || ""}
-                  >
-                    <option value="">None</option>
-                    {connections.data?.items
-                      .filter((c: RecordData) =>
-                        ["postgres", "mysql"].includes(c.kind),
-                      )
-                      .map((c: RecordData) => (
-                        <option key={c.name}>{c.name}</option>
-                      ))}
-                  </select>
-                </Field>
-              </details>
-              {connections.data?.items
-                .filter((c: RecordData) => c.kind === "mcp")
                 .map((c: RecordData) => {
-                  const name = `mcp:${c.name}`;
+                  const ref = c.kind === "mcp" ? `mcp:${c.name}` : c.name;
                   return (
-                    <label className="check" key={name}>
+                    <label className="check" key={ref}>
                       <input
                         type="checkbox"
-                        checked={chosenTools.includes(name)}
+                        checked={chosenTools.includes(ref)}
                         onChange={(e) =>
                           setTools((old) =>
                             e.target.checked
-                              ? [...old, name]
-                              : old.filter((t) => t !== name),
+                              ? [...old, ref]
+                              : old.filter((t) => t !== ref),
                           )
                         }
                       />
-                      <span>MCP tools from {c.name}</span>
+                      <span>
+                        <strong>{c.name}</strong>
+                        <small>
+                          {c.kind === "mcp" ? "MCP server tools" : c.kind}
+                        </small>
+                      </span>
                     </label>
                   );
                 })}
+              {connections.data &&
+                tools.data &&
+                !connections.data.items.some(
+                  (c: RecordData) =>
+                    c.kind === "mcp" ||
+                    tools.data?.searchable_kinds?.includes(c.kind),
+                ) && (
+                  <p className="muted">
+                    No searchable connectors yet. Add a database, Gmail, Notion
+                    or Slack connector under Settings.
+                  </p>
+                )}
             </fieldset>
           </ActionForm>
         </section>
@@ -394,6 +304,7 @@ export function Agents({
           <p className="muted">This calls the provider and uses tokens.</p>
           <ActionForm
             label="Run agent test"
+            done=""
             submit={async (data) => {
               setResult(
                 await api(
@@ -415,10 +326,28 @@ export function Agents({
             )}
           </ActionForm>
           {result && (
-            <>
+            <div className="test-result">
               <h3>{result.ok ? "Agent completed" : "Agent failed"}</h3>
-              <JSONView value={result} />
-            </>
+              {result.ok && typeof result.output?.text === "string" ? (
+                <p className="answer">{result.output.text}</p>
+              ) : result.ok ? (
+                <JSONView value={result.output} />
+              ) : (
+                <p className="error">{result.error?.message}</p>
+              )}
+              {result.metrics && (
+                <small>
+                  {result.metrics.iterations} model{" "}
+                  {result.metrics.iterations === 1 ? "call" : "calls"},{" "}
+                  {result.metrics.tool_calls} tool{" "}
+                  {result.metrics.tool_calls === 1 ? "call" : "calls"},{" "}
+                  {result.metrics.tokens_in + result.metrics.tokens_out} tokens
+                  {result.metrics.cost_known
+                    ? `, $${result.metrics.cost_usd.toFixed(4)}`
+                    : ""}
+                </small>
+              )}
+            </div>
           )}
         </section>
       )}

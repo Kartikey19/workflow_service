@@ -330,7 +330,10 @@ invite and API-key tokens are random and stored only as SHA-256 hashes.
 ## 4c. Secrets (M12)
 
 A vault of per-organization credentials that workflows reference as
-`${secrets.NAME}`, for example `Authorization: "Bearer ${secrets.API_KEY}"`.
+`${secrets.NAME}`, for example `Authorization: "Bearer ${secrets.API_KEY}"`. Related
+keys can live in a **group** and are read as `${secrets.GROUP.key}`, for example
+`${secrets.open_api_settings.api_key}`, `${secrets.open_api_settings.effort}` and
+`${double(secrets.open_api_settings.temperature)}` (every value is a string).
 Values are encrypted with AES-256-GCM before they are stored, bound to their
 organization and name, and are **write-only**: nothing returns a value, and the
 list shows names only.
@@ -338,13 +341,16 @@ list shows names only.
 | Endpoint | Role | Purpose |
 |---|---|---|
 | `GET /be/v1/secrets` | editor | names and metadata, plus the `${secrets.NAME}` reference to paste |
-| `PUT /be/v1/secrets/{name}` | admin | `{"value": "..."}` creates or replaces; takes effect on the next node |
-| `DELETE /be/v1/secrets/{name}` | admin | workflows that still use it fail with `E_SECRET_MISSING` |
+| `PUT /be/v1/secrets/{name}` | admin | `{"value": "..."}` creates or replaces one secret; `{"fields": {"api_key": "...", "effort": "high"}}` creates or replaces keys of the group `{name}`. Takes effect on the next node |
+| `DELETE /be/v1/secrets/{name}` | admin | `{name}` removes a secret, or a whole group and its keys; `group.key` removes one key. Workflows that still use it fail with `E_SECRET_MISSING` |
 | `GET /be/v1/admin/vault` | platform admin | how many secrets use each master-key version |
 | `POST /be/v1/admin/vault/rotate` | platform admin | re-seal every secret under the current master key |
 
-Names are `[A-Z][A-Z0-9_]{0,63}`; values are 8 bytes to 64 KiB (short values could
-not be scrubbed reliably). Without `VAULT_MASTER_KEY` the vault is off and these
+Names are a letter then letters, digits and underscores (at most 64), and a group
+key is `group.key`; a name cannot be both a secret and a group. A plain secret value is
+8 bytes to 64 KiB (short values could not be scrubbed reliably). A key inside a group
+may be shorter, for an effort or a temperature: values under 8 characters are treated
+as settings, so they are not masked in stored input, logs or events. Without `VAULT_MASTER_KEY` the vault is off and these
 routes answer `501 vault_not_configured`.
 
 **What a workflow run does with a secret.** The worker decrypts the organization's
@@ -352,8 +358,11 @@ secrets only when a node's config mentions `secrets`, hands the real value to th
 executor, and stores the node input with the value replaced by `***`. The value is
 also scrubbed from the node's stored output and error, so an upstream that echoes a
 header back, or a transport error that quotes a URL, cannot leak it. Secrets never
-reach logs or run events. Referring to a secret that does not exist fails the node
-once, permanently, with `E_SECRET_MISSING` and the secret's name.
+reach logs or run events. Group keys under 8 characters are the exception above:
+they are kept as written. Referring to a secret that does not exist, only inside
+`${...}` (plain text such as `secrets.md` is not a reference), fails the node
+once, permanently, with `E_SECRET_MISSING` and the secret's name, or
+`group.key` for a missing key of a group.
 
 **Rotating the master key** needs no downtime: (1) generate a new 32-byte key;
 (2) deploy **every** process (API and workers) with it as `VAULT_MASTER_KEY`, a
@@ -385,8 +394,8 @@ goes through the egress guard, since a base URL is chosen by the tenant.
 
 **Agents** are named, reusable definitions: which connection and model, the system
 prompt, an `input_schema` and `output_schema` (the JSON Schema subset used by
-`wait_event`), `tools`, `allowed_hosts`, `max_iterations` (required, 1 to 50),
-`max_tokens`, `temperature` and optional `database_connection`. Leave `connection` empty to use the platform's own
+`wait_event`), `tools` (the connectors it may search), `max_iterations` (required,
+1 to 50), `max_tokens` and `temperature`. Leave `connection` empty to use the platform's own
 provider (`ANTHROPIC_API_KEY`). Saving validates everything; editing bumps `revision`,
 which each run's node metrics record.
 
@@ -395,7 +404,7 @@ which each run's node metrics record.
 | `GET /be/v1/agents`, `GET /be/v1/agents/{name}` | viewer | read |
 | `POST /be/v1/agents`, `PUT /be/v1/agents/{name}`, `DELETE /be/v1/agents/{name}` | editor | manage (the name in the path is the identity) |
 | `POST /be/v1/agents/{name}/test` | editor | run once with `{input?, prompt?}`; spends real tokens, creates no run; a failing agent is a 200 with `ok: false` and the reason |
-| `GET /be/v1/agent-tools` | viewer | tools an agent can be given |
+| `GET /be/v1/agent-tools` | viewer | the three tools every agent gets, and `searchable_kinds` |
 
 Use an agent in a workflow with `type: agent, config: {agent: <name>, input: {...}}`
 (`02 §4.6`). The input is checked against `input_schema` and passed to the model as
@@ -403,31 +412,17 @@ JSON; the reply is validated against `output_schema`, and a violation is a perma
 failure. A missing agent or connection fails the node by name (`E_AGENT_NOT_FOUND`,
 `E_PROVIDER_NOT_FOUND`).
 
-**Tools.** `current_time`, and `http_request`, which is fail-closed: it works only
-for hosts in the agent's own `allowed_hosts` (exact names or `*.example.com`), goes
-through the egress guard, never follows redirects, and returns a truncated body.
-Without `allowed_hosts` every request is refused, and the model is told why.
-
-`list_tables`, `describe_table` and `run_query` require `database_connection` to
-name a PostgreSQL/MySQL connection in the same organization. This binding is
-saved with the definition and returned by agent reads. Database tools receive
-no connection name or credentials from the model (see `02 §4.14`).
-
-Saved connector tool references use `connector:<connection-name>:<action>` in
-`tools`, for example `connector:warehouse:db.query` or
-`connector:analytics:mongo.find`. Save-time validation checks the organization's
-connector and its action's accepted kinds. The model receives only action
-arguments; it cannot replace the connection or credentials. Tools have a 30s
-execution budget and a 32 KiB result budget. SQL and MongoDB finds retain valid
-JSON and mark trimmed rows as `truncated`. Grant only actions marked `read_only`
-to exploration agents. There are at most 64 references in one agent definition.
-The older `database_connection` binding remains supported through the same
-executors. The UI lists available actions from `/be/v1/integrations`.
+**Tools.** `tools` names saved connectors in the same organization, which the agent
+searches with `glob`, `grep` and `read` (`02 §4.14`). Saving checks that each one
+exists and is a kind an agent can search (`searchable_kinds`): a database, MongoDB,
+Gmail, Calendar, Docs, Sheets, Slack or Notion. The model chooses only among the
+attached connectors and never sees credentials. Tools have a 30s execution budget and
+a 32 KiB result budget, and only read: writes are workflow steps. There are at most
+64 references in one agent definition.
 
 MCP tool references use `"mcp:<connection-name>"` in `tools`. Saving checks that
 each name belongs to this organization and has kind `mcp`; discovery happens
-at execution time. `GET /be/v1/agent-tools` lists built-ins, including database
-tools; remote catalogs come from the selected servers. Duplicate tool references
+at execution time; remote catalogs come from the selected servers. Duplicate tool references
 and more than eight MCP server references are rejected.
 
 ---

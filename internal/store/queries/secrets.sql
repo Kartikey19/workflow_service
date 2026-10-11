@@ -11,7 +11,8 @@ select name, key_version, created_at, updated_at, updated_by
   from secrets where org_id = @org_id order by name;
 
 -- name: DeleteSecret :execrows
-delete from secrets where org_id = @org_id and name = @name;
+-- A name also removes the keys of the group of that name ("group.key").
+delete from secrets where org_id = @org_id and (name = @name or starts_with(name, @name || '.'));
 
 -- name: ListSecretsForOrg :many
 select id, name, ciphertext, nonce, key_version from secrets where org_id = @org_id;

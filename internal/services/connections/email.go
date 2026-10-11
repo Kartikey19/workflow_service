@@ -141,7 +141,7 @@ func resendKind() kind {
 			req.Header.Set("Authorization", "Bearer "+secret["api_key"])
 			res, err := s.policy.Client(20 * time.Second).Do(req)
 			if err != nil {
-				return fmt.Errorf("Resend could not be reached")
+				return fmt.Errorf("could not reach Resend")
 			}
 			defer res.Body.Close()
 			body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
@@ -149,9 +149,9 @@ func resendKind() kind {
 			case res.StatusCode == http.StatusUnauthorized && strings.Contains(string(body), "restricted_api_key"):
 				return nil // a sending-only key is valid; it just may not list domains
 			case res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden:
-				return fmt.Errorf("Resend rejected the API key (HTTP %d)", res.StatusCode)
+				return fmt.Errorf("connection test: Resend rejected the API key (HTTP %d)", res.StatusCode)
 			case res.StatusCode >= 400:
-				return fmt.Errorf("Resend answered HTTP %d", res.StatusCode)
+				return fmt.Errorf("response from Resend: HTTP %d", res.StatusCode)
 			}
 			return nil
 		},

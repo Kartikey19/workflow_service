@@ -78,7 +78,7 @@ func (s *Server) authed(role string, platformAdmin bool, h api.HandlerFunc) http
 			return
 		}
 		r.Body = http.MaxBytesReader(recorder, r.Body, maxBodyBytes)
-		h(recorder, r.WithContext(auth.WithPrincipal(r.Context(), principal)), principal)
+		h(recorder, r, principal)
 	})
 }
 
