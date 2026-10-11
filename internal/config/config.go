@@ -43,6 +43,10 @@ type AppConfig struct {
 	ServiceName   string        `env:"SERVICE_NAME" envDefault:"workflow-service"`
 	BuildVersion  string        `env:"BUILD_VERSION" envDefault:"dev"`
 	ShutdownGrace time.Duration `env:"SHUTDOWN_GRACE" envDefault:"30s"`
+	// MigrateOnStart applies pending migrations before the api starts, for
+	// platforms without a separate release step. A session lock keeps
+	// overlapping instances from migrating twice.
+	MigrateOnStart bool `env:"MIGRATE_ON_START" envDefault:"false"`
 }
 
 type LogConfig struct {
@@ -70,6 +74,14 @@ type WorkerConfig struct {
 	MetricsAddress string `env:"WORKER_METRICS_ADDRESS"`
 	// MaxNodesPerRun bounds node executions per run (E_RUN_BUDGET).
 	MaxNodesPerRun int `env:"MAX_NODES_PER_RUN" envDefault:"1000"`
+	// InAPI also runs the worker inside the api process, so a small
+	// deployment needs one container instead of two.
+	InAPI bool `env:"API_RUNS_WORKER" envDefault:"false"`
+}
+
+// RunsWorker says whether this process claims and executes nodes.
+func (c Config) RunsWorker() bool {
+	return c.App.Mode == "worker" || (c.App.Mode == "api" && c.Worker.InAPI)
 }
 
 // EgressConfig widens internal/netguard for outbound calls made on a tenant's
@@ -225,11 +237,11 @@ func (c *Config) Validate() error {
 		add("DB_CONNECT_TIMEOUT must be greater than 0")
 	}
 	if c.App.Mode != "worker" && strings.TrimSpace(c.App.HTTPAddress) == "" {
-		add("HTTP_ADDRESS is required for api/all mode")
+		add("HTTP_ADDRESS is required in api mode")
 	}
-	if c.App.Mode != "api" {
+	if c.RunsWorker() {
 		if strings.TrimSpace(c.Worker.ID) == "" {
-			add("WORKER_ID is required for worker/all mode")
+			add("WORKER_ID is required when the worker runs")
 		}
 		if c.Worker.Concurrency <= 0 {
 			add("WORKER_CONCURRENCY must be greater than 0")

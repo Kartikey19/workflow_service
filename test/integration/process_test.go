@@ -86,7 +86,7 @@ func (h *harness) spawn(binary string, env ...string) *process {
 		"DATABASE_URL="+h.schemaURL(), "APP_ENV=testing", "LOG_LEVEL=error",
 		"WORKER_LEASE_TTL=2s", "WORKER_POLL_INTERVAL=50ms", "WORKER_SWEEP_INTERVAL=200ms",
 		"WORKER_CONCURRENCY=8", "WORKER_BATCH_SIZE=4", "SHUTDOWN_GRACE=300ms", "EGRESS_ALLOW_PRIVATE=true",
-		"DB_MAX_CONNS=8")
+		"DB_MAX_CONNS=8", "WORKER_METRICS_ADDRESS=", "API_RUNS_WORKER=false", "MIGRATE_ON_START=false")
 	cmd.Env = append(cmd.Env, env...)
 	p := &process{cmd: cmd, output: &bytes.Buffer{}, done: make(chan struct{})}
 	cmd.Stdout, cmd.Stderr = p.output, p.output
@@ -307,6 +307,79 @@ outputs: {sum: '${nodes.d.output}'}
 		t.Fatal("API /metrics is missing request metrics")
 	}
 	_ = json.Valid
+}
+
+// App Platform's single process must migrate an empty schema, serve HTTP and
+// execute nodes, then do the same after a restart without reapplying migrations.
+func TestCombinedAPIWorkerMigratesAndRestarts(t *testing.T) {
+	ctx := context.Background()
+	h := &harness{t: t, pool: newEmptyPool(t, ctx), tenant: newUUID(t)}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	listener.Close()
+	client := &http.Client{Timeout: time.Second}
+	c := apiClient{t: t, base: "http://" + address, tenant: h.tenant}
+	for restart := range 2 {
+		p := h.spawn("api", "HTTP_ADDRESS="+address, "API_RUNS_WORKER=true",
+			"MIGRATE_ON_START=true", "WORKER_ID=combined")
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			res, err := client.Get(c.base + "/readyz")
+			if err == nil {
+				res.Body.Close()
+				if res.StatusCode == http.StatusOK {
+					break
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("combined API process never became ready")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if restart == 0 {
+			status, body := c.yaml("/be/v1/workflows", `
+apiVersion: workflow/v1
+name: combined
+nodes:
+  - {id: first, type: transform, config: {value: 2}}
+  - {id: second, type: transform, needs: [first], config: {value: '${nodes.first.output + 3.0}'}}
+outputs: {sum: '${nodes.second.output}'}
+`)
+			if status != http.StatusCreated {
+				t.Fatalf("publish = %d %v", status, body)
+			}
+		}
+		status, body := c.json(http.MethodPost, "/be/v1/runs", map[string]any{"workflow": "combined"})
+		if status != http.StatusCreated {
+			t.Fatalf("create run = %d %v", status, body)
+		}
+		id := mustParse(t, body["id"].(string))
+		if got := h.waitStatus(id, 10*time.Second, "succeeded", "failed"); got != "succeeded" {
+			_, runError := h.runOutput(id)
+			t.Fatalf("run = %s, error = %v", got, runError)
+		}
+		output, _ := h.runOutput(id)
+		if output["sum"] != float64(5) {
+			t.Fatalf("output = %v", output)
+		}
+		if workers := nodeWorkers(t, h, id); len(workers) != 2 || workers[0] != "combined" || workers[1] != "combined" {
+			t.Fatalf("node workers = %v, want the in-process worker for both steps", workers)
+		}
+		p.signal(t, syscall.SIGTERM)
+		if !p.cmd.ProcessState.Success() {
+			t.Fatal("combined process failed during graceful shutdown")
+		}
+		count := embeddedMigrationCount(t)
+		if restart != 0 {
+			count = 0
+		}
+		if !strings.Contains(p.output.String(), fmt.Sprintf("Applied %d migration(s)", count)) {
+			t.Fatal("startup did not report the expected migration count")
+		}
+	}
 }
 
 func receive(t *testing.T, ch <-chan string, failure string) string {

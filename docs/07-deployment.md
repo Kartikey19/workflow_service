@@ -1,290 +1,169 @@
-# Deployment: low cost, separate environments
+# Deployment: DigitalOcean App Platform and Container Registry
 
-The prepared default is a small DigitalOcean Droplet, Neon PostgreSQL, GHCR
-images, and Caddy for HTTPS. Production runs one API and one worker. Staging
-has its own configuration and database and starts only when requested.
-The React UI is already embedded in the Go API image, so it needs no separate
-frontend hosting. This guide prepares the setup; no cloud resources have been
-created or deployed by the local development work.
+The default deployment is DigitalOcean **App Platform** with an image in
+DigitalOcean Container Registry (DOCR). GitHub Actions tests the project, builds
+`deploy/Dockerfile` for `linux/amd64`, pushes a commit-tagged image, and deploys
+its immutable digest directly to production on every push to `main`.
 
-## Budget and hosting choice
+One container serves the embedded React UI and API and runs the queue worker:
+`API_RUNS_WORKER=true`. `MIGRATE_ON_START=true` applies pending migrations before
+HTTP startup. PostgreSQL is external; this guide uses Neon. App Platform owns
+HTTPS and ingress. No SSH host, Caddy, Node runtime or separate UI service is
+needed for this path. The template is [.do/app.yaml](../.do/app.yaml).
 
-Prices checked 11 October 2026, in USD before taxes, LLM calls, email, backup
-storage and additional transfer:
+## 1. Prepare the registry and database
 
-| Option | Application hosting estimate | What you operate |
+Create a primary Container Registry in the same DigitalOcean team as the app.
+Choose its name yourself; registry names are globally unique. Select a plan
+with room for release history, and retain previous successful digests for
+rollback. CI does not delete images or run registry garbage collection.
+[Registry setup](https://docs.digitalocean.com/products/container-registry/how-to/create-registry/)
+
+Create a Neon project/database near your App Platform region. In **Connect**,
+turn pooling off and use the direct hostname (no `-pooler` suffix), with
+`sslmode=verify-full`. Migrations use a session advisory lock and the engine
+uses persistent `LISTEN` connections, so transaction pooling is unsuitable.
+The database role must be able to create the schema for migrations.
+[Neon pooling](https://neon.com/docs/connect/connection-pooling)
+
+Save the database URL privately. Generate a persistent 32-byte base64 vault key
+(`openssl rand -base64 32`) and store it in your password manager alongside the
+vault key version. Preserve the keyring with database backups.
+
+## 2. Configure GitHub and publish the first image
+
+Under **Settings → Secrets and variables → Actions**, configure:
+
+| Kind | Name | Value |
 | --- | --- | --- |
-| 1 GiB Basic Droplet | $6/month | One API, worker and Caddy; a demo starting point requiring memory measurements |
-| 2 GiB Basic Droplet | $12/month | More room for production and temporary staging on one host |
-| App Platform, API + worker | $10/month per active environment at 512 MiB each | DigitalOcean operates containers, ingress and TLS |
-| App Platform, staging + production | $20/month while both are active at those minimum sizes | Separate apps and credentials |
+| Repository secret | `DIGITALOCEAN_ACCESS_TOKEN` | A DigitalOcean token with `registry:read`, `registry:update`, `app:read` and `app:update` scopes, plus required supporting read scopes |
+| Repository variable | `DO_REGISTRY_NAME` | Your primary registry's name, without `registry.digitalocean.com/` |
+| Repository variable, optional | `DO_IMAGE_REPOSITORY` | `workflow-service` by default; a single lowercase repository name |
 
-These component totals are calculated from [Droplet pricing](https://www.digitalocean.com/pricing/droplets)
-and [App Platform pricing](https://docs.digitalocean.com/products/app-platform/details/pricing/).
-Start with a 2 GiB Droplet if staging will run alongside production. A 1 GiB
-host can be evaluated for production alone; the application's memory limits
-are starting settings, not measured capacity guarantees. Build images in CI,
-so Node and Go build memory is never charged to the runtime host.
+Use a token belonging to the team that owns both resources. CI logs into DOCR
+with credentials expiring after one hour. Application database/vault credentials
+stay in App Platform, not in the build. See
+[DigitalOcean tokens](https://docs.digitalocean.com/reference/api/create-personal-access-token/).
+These resource-type scopes cover the team; they are not restricted to one
+project. Renew expiring tokens and update the GitHub secret before expiry.
 
-GHCR container image storage and bandwidth are currently free, including
-private container images. This pipeline uses GHCR and retains immutable
-digests for rollback. GitHub Actions minutes and build cache have their own
-allowances. [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-packages)
-DO Container Registry also has a free 500 MiB/one-repository tier, but image
-history can outgrow it; its Basic tier is $5/month. It is optional here.
-[DO registry plans](https://www.digitalocean.com/products/container-registry)
+Create a GitHub environment named **production**. Later, set its `DO_APP_ID`
+variable to the production app UUID and optionally `DEPLOY_URL` to the public
+HTTPS URL. Keep `DO_APP_ID` environment-specific; do not put it at repository
+scope, where staging could inherit production's ID. Environment reviewers are
+optional: configuring them makes automatic releases wait for review.
 
-Functions do not run this existing long-lived queue worker and SSE API as a
-drop-in deployment. App Platform can run the API service and worker using this
-same image, with a migration job, but its deployment integration would need
-an App Platform spec and API deployment job; the provided SSH workflows target
-Droplets. Choose that managed option if reduced host administration is worth
-its component pricing.
+Once these repository changes are on GitHub, run **Build and deploy App
+Platform** manually on `main` with **deploy unchecked**. This runs all checks
+and publishes the initial image without requiring an existing app. Copy the
+release image from the workflow summary:
 
-### Neon Free and always-on workers
-
-Neon Free currently includes 100 CU-hours and 1 GB of database storage per
-project. A continuously active 0.25 CU database consumes 180 CU-hours in a
-30-day month (186 in 31 days), exceeding the free allowance. On Launch,
-180 CU-hours at $0.106/CU-hour is about $19.08 in database compute, plus
-storage/history and any other metered usage. This is a minimum-size estimate;
-autoscaling can increase it. [Neon plan details](https://neon.com/docs/introduction/plans)
-The storage allowance was increased in October.
-[Neon's update](https://neon.com/blog/neon-free-plan-1-gb-per-project)
-
-This engine normally polls every 200 ms. The remote template reduces polling
-to 1 second and worker concurrency to four, but polling, sweeping and readiness
-checks still keep the database active. Raising the poll interval slightly
-does not produce five minutes of inactivity. Neon identifies periodic database
-activity as a cause of continuous compute usage.
-[Neon compute behavior](https://neon.com/docs/manage/endpoints/)
-Keep staging stopped when testing ends. If the Neon organization uses a paid
-plan, staging activity is also metered under that plan. Free Neon is suitable for local/demo
-sessions and intermittent staging; it cannot be promised for this unchanged
-always-on production queue. For continuous production, plan roughly $25–31/month
-for a $6–12 Droplet plus minimum Launch compute before the other costs above.
-Changing the worker to sleep/wake on demand would be a separate engine change.
-
-## What is isolated
-
-| Environment | Deployment | Runtime configuration | Database | Public URL |
-| --- | --- | --- | --- | --- |
-| Local | `dev/compose.yaml` + local Go processes | repository `.env` | local PostgreSQL | `http://localhost:8080/ui/` |
-| Staging | Compose project `workflow-staging` | `deploy/environments/staging/.env` | separate Neon project and role | `https://staging.example.com/ui/` |
-| Production | Compose project `workflow-production` | `deploy/environments/production/.env` | separate Neon project and role | `https://app.example.com/ui/` |
-
-Both remote environments set `APP_ENV=production`, enforcing secure cookies
-and disabling development tenant-header authentication. `DEPLOY_ENV` controls
-the Compose project, service label and edge alias. Credentials, accounts,
-connectors, OAuth registrations, bootstrap passwords and vault keys must be
-different between staging and production. Never clone production connector
-tokens into staging. Use fixtures or dedicated test accounts there.
-
-The starter saves money by sharing one host and Caddy. Docker projects and
-backend networks are separate; API containers join the common ingress network.
-Host access, CPU, memory, disk and ingress remain shared. When customer traffic
-warrants stronger isolation, assign staging a second host and keep the same
-environment workflows and secrets. A single host has a single failure domain
-and this one-replica layout has a short API interruption during replacement.
-
-## 1. Create the Neon databases
-
-In your existing Neon account:
-
-1. Create separate `workflow-staging` and `workflow-production` projects, in a
-   region near the selected Droplet. Start with the smallest compute and check
-   each project's usage after testing.
-2. Create a database named `workflow` and a distinct role in each project.
-   The migration role needs schema creation privileges. This baseline uses that
-   environment's role for migrations and runtime; split roles later if needed.
-3. In **Connect**, select the project/branch/database/role and turn **connection
-   pooling off**. Copy the direct PostgreSQL URL privately to its environment
-   file; set `sslmode=verify-full`. Percent-encode any password URL characters.
-4. The hostname must have no `-pooler` suffix. This application uses persistent
-   `LISTEN` sessions and advisory locks; transaction pooling cannot preserve
-   those sessions. The deployment validator rejects pooled URLs and weaker TLS.
-   [Neon connection guidance](https://neon.com/docs/connect/connection-pooling)
-5. Record the project/branch/role names and recovery retention. Start staging
-   from an empty database or synthetic fixtures rather than production data.
-
-Use the direct URL for **every** API, worker and migration process in that
-environment. `DB_MAX_CONNS=4` and `DB_MIN_CONNS=0` limit each pool initially;
-dedicated listeners also use connections. Measure the total before scaling.
-
-## 2. Prepare the host and private configuration
-
-After selecting and approving the host/region, install Docker Engine, Compose
-v2.24+, Python 3, rsync, and util-linux (`flock`) on the Linux host. Configure a
-non-root operator with Docker access and SSH keys. Allow 80/TCP and 443/TCP+UDP
-for Caddy; restrict SSH to operators. Application/database ports are unpublished.
-The deployment does not install PostgreSQL on this host.
-
-Copy the repository's `deploy/` directory to `/opt/workflow/deploy`, owned by
-the deployment operator. Do this once from a reviewed checkout:
-
-```sh
-# On the host, in /opt/workflow/deploy:
-cp environments/staging/env.example environments/staging/.env
-cp environments/production/env.example environments/production/.env
-cp edge/env.example edge/.env
-chmod 600 environments/staging/.env environments/production/.env edge/.env
+```text
+registry.digitalocean.com/<registry>/workflow-service@sha256:<digest>
 ```
 
-Edit each environment file privately. Set its domain, direct Neon URL,
-bootstrap email/password and a **different persistent vault key**. Generate
-each key with `openssl rand -base64 32` and save it directly in your password
-manager/environment file. Set `VAULT_KEY_VERSION=1`. Replace the example image
-with the release digest produced by CI. Add LLM, OAuth and pricing settings as
-needed; tenant LLM providers can also be configured through the UI. Back up
-these vault keys separately from database backups. The files are ignored by
-Git and excluded from workflow uploads.
+The registry also contains a tag equal to the workflow's full commit SHA.
+Ordinary pushes to `main` deploy automatically after bootstrap; manual runs on
+other branches only publish images.
 
-For a private GHCR image, authenticate Docker on the host as the deployment
-operator using a GitHub credential with `read:packages`; use `docker login
-ghcr.io --username <github-user> --password-stdin`. The build's short-lived
-`GITHUB_TOKEN` is used only by CI and is not stored on the host.
+## 3. Create the App Platform app once
 
-## 3. Point the GoDaddy domain when ready
+In DigitalOcean, create an App Platform app from **DigitalOcean Container
+Registry**, selecting the published repository and commit tag. Grant the app
+access to the registry and disable registry auto-deploy. GitHub Actions is the
+release controller. Configure the service as **web**, port **8080**, one
+instance, using `.do/app.yaml` as the configuration template.
+For this deployment, select the existing **shopxp** project.
 
-Keep GoDaddy as registrar/DNS provider. In its DNS editor, add `A` records:
-`app` and `staging` pointing to the Droplet's IPv4 address. An existing website
-can keep its current root and `www` records. Add `AAAA` records only if this
-host's IPv6 routing is configured. Set the exact hostnames and ACME contact in
-`edge/.env`, and the matching `DOMAIN` in each application file.
+The template app name is `weft` and region is `blr` (Bengaluru, India).
+Use Bengaluru for DOCR as well. The Neon console currently offers Singapore
+as the nearest database region for this deployment.
+Its `image.repository` must match `DO_IMAGE_REPOSITORY`. Replace the template's
+`REPLACE_WITH_FIRST_RELEASE_COMMIT_SHA` tag with the published SHA, or remove
+`tag` and set `digest` to the published `sha256:…` value. DOCR uses the team's
+primary registry with the `registry` field omitted.
+[App spec reference](https://docs.digitalocean.com/products/app-platform/reference/app-spec/)
 
-Wait for DNS propagation and verify with `dig +short app.example.com` and
-`dig +short staging.example.com`. Start the shared ingress once:
+Set these **runtime** environment values in App Platform before launching:
 
-```sh
-cd /opt/workflow/deploy/edge
-docker compose config --quiet
-docker compose up -d
-```
+| Variable | Value |
+| --- | --- |
+| `DATABASE_URL` (secret) | The direct PostgreSQL URL with verified TLS |
+| `VAULT_MASTER_KEY` (secret) | Your saved 32-byte base64 key |
+| `VAULT_KEY_VERSION` | `1` initially |
+| `BOOTSTRAP_ADMIN_EMAIL` | Your administrator email |
+| `BOOTSTRAP_ADMIN_PASSWORD` (secret) | A strong initial password |
+| `APP_ENV` | `production` |
+| `COOKIE_SECURE` | `true` |
+| `PUBLIC_URL` | `${APP_URL}` initially, or your custom HTTPS origin |
+| `API_RUNS_WORKER` | `true` |
+| `MIGRATE_ON_START` | `true` |
 
-Caddy creates the `workflow-edge` network and obtains HTTPS certificates when
-DNS and ports are reachable. An environment without running containers returns
-a gateway error at its hostname. Edge configuration is managed separately and
-is excluded from releases. After an edge/domain edit, run `docker compose exec
--T caddy caddy reload --config /etc/caddy/Caddyfile` from this directory.
-OAuth callback URLs are `https://<environment-domain>/be/v1/oauth/callback`.
-UI routes begin `/ui/`; API routes begin `/be/v1/`; hooks use `/hooks/{token}`.
+The remaining sizing, worker and health-check settings are in the template.
+Optional provider/OAuth variables can be configured now or later. Do not submit
+the template's empty secret fields over an already-configured app: they are
+placeholders, not a release configuration. For CLI creation, use a private,
+completed copy of the spec with real runtime values and run
+`doctl apps create --spec /private/path/app.yaml`; never commit that copy.
 
-## 4. Configure GitHub environments
+The distroless image starts `/app/api` through its Docker entrypoint. Leave
+`run_command` unset. Startup migrations use a two-minute timeout and PostgreSQL
+session lock, including during deployment overlap. The readiness check is
+`/readyz`, with a two-minute initial delay. Container termination allows 60
+seconds for the app's 30-second graceful shutdown.
 
-In repository **Settings → Environments**, create exactly `staging` and
-`production`. Add the following **to each environment**, not as shared repository
-credentials:
+After creation, copy the app UUID into **GitHub → Environments → production →
+Variables → DO_APP_ID**. Open the app's HTTPS URL at `/ui/`, sign in and remove
+**both** bootstrap email and password from the app once the admin exists.
 
-| Type | Name | Value |
-| --- | --- | --- |
-| Variable | `DEPLOY_HOST` | host IP or hostname |
-| Variable | `DEPLOY_USER` | SSH/Docker operator |
-| Variable | `DEPLOY_PATH` | `/opt/workflow/deploy` |
-| Variable | `DEPLOY_URL` | that environment's `https://.../ui/` URL |
-| Secret | `DEPLOY_SSH_KEY` | dedicated deployment private SSH key |
-| Secret | `DEPLOY_KNOWN_HOSTS` | host public key verified through a trusted host console |
+## 4. Automatic releases and rollback
 
-Restrict production deployment branches to `main` and configure required
-reviewers where your GitHub plan supports them. Without environment reviewers,
-production still requires an explicit manual workflow dispatch; access to that
-dispatch is controlled by repository permissions. Keep `STAGING_AUTO_DEPLOY`
-unset/false. It is an optional **repository variable** that enables staging
-deployment after successful main-branch builds when set to `true`.
+Each push to `main` runs the reusable CI (Go, integration, UI and container
+acceptance), builds and pushes the image, then deploys production. The deploy
+job retrieves the app's current spec, changes only `web.image` to the release
+digest, disables registry auto-deploy, and calls `doctl apps update
+--update-sources --wait`. Runtime secrets, domains, sizing and other settings
+configured in DigitalOcean are preserved. Encrypted values are passed directly
+over stdin; no app-spec artifacts are uploaded.
+[doctl app updates](https://docs.digitalocean.com/reference/doctl/reference/apps/update/)
 
-Database URLs and vault keys stay in the environment's private host `.env`.
-Changing them is a separate operator configuration step. The CI upload cannot
-overwrite these files. On the shared budget host, workflow concurrency and
-`flock` serialize releases. Staging/production application settings and data
-remain distinct.
+The workflow succeeds only when App Platform finishes the deployment. Check
+`/readyz`, sign-in, a small workflow and its events after the first release.
+Use App Platform's deployment and runtime logs to diagnose failures. If a CI
+job times out, check the cloud deployment status before starting another one.
 
-## 5. Build once, test staging, promote production
+For rollback or a manual redeploy, run **Deploy production** with a retained
+DOCR `image@sha256:digest`. Migrations remain forward-only and must be compatible
+with the previous application image; a code rollback does not undo schema
+changes. Releases are serialized per environment. CI updates images only:
+apply subsequent runtime/spec changes through App Platform separately.
 
-1. Merge a reviewed change to `main`, or run **Build release image** manually
-   against a reviewed ref. The workflow calls the full CI suite, builds the
-   embedded UI and Go binaries, and pushes one Linux/amd64 image to GHCR.
-   Main runs that CI through the build workflow, avoiding a second push CI run.
-2. Copy the full `ghcr.io/<owner>/<repository>@sha256:<digest>` from its summary.
-   This image includes both API and worker binaries. Environment configuration
-   is injected at runtime; environment images are not rebuilt separately.
-3. Run **Deploy staging**, action `deploy`, with that digest. The reusable
-   deployment job uploads reviewed deployment code, validates the configuration,
-   pulls the digest, runs migrations and waits for API/worker readiness.
-4. Sign in at staging `/ui/`, create a workflow, run it, verify events, and test
-   required connectors using dedicated test credentials.
-5. Run **Deploy production** with the **same** digest. Its job uses production's
-   environment variables/secrets and waits for configured reviewers. Sign in,
-   run a small known workflow and verify events after deployment.
-6. Run **Deploy staging**, action `stop`. This gracefully stops only staging's
-   API and worker. It retains configuration/database/container definitions and
-   leaves production/Caddy running. With staging activity stopped, Neon can
-   suspend that project's compute. Do not keep external probes querying it.
+Optional staging uses a separate App Platform app and PostgreSQL database,
+with distinct credentials and vault key. Create a **staging** GitHub environment
+with its own `DO_APP_ID` and `DEPLOY_URL`, then run **Deploy staging** with the
+same immutable image. There is no automatic staging release or Droplet `stop`
+action in the App Platform workflows.
 
-Equivalent host commands:
+## Costs and operations
 
-```sh
-cd /opt/workflow/deploy
-./env-deploy.sh staging ghcr.io/<owner>/<repository>@sha256:<digest>
-./env-deploy.sh production ghcr.io/<owner>/<repository>@sha256:<same-digest>
-./env-deploy.sh staging stop
-```
+The template starts with one 512 MiB container. Confirm current
+[App Platform pricing](https://docs.digitalocean.com/products/app-platform/details/pricing/)
+and [registry plans](https://www.digitalocean.com/products/container-registry)
+before choosing resources. Size the service from actual workload measurements.
+The worker polls every second and readiness checks also touch PostgreSQL;
+continuous operation keeps Neon active, so budget for always-on database compute
+rather than assuming it will suspend. See [Neon compute behavior](https://neon.com/docs/manage/endpoints/).
 
-For direct Compose operations, set the environment and file explicitly first:
+App Platform does not run the repository's Docker Compose backup or Alloy
+services. Configure database recovery/backups and cloud logs/alerts separately.
+Read [the operations runbook](06-runbook.md) for restore and vault rotation.
 
-```sh
-cd /opt/workflow/deploy
-DEPLOY_ENV=production WORKFLOW_ENV_FILE="$PWD/environments/production/.env" \
-  docker compose --project-name workflow-production \
-  --env-file environments/production/.env -f compose.neon.yaml ps
-```
+## Retained Droplet tooling
 
-Never print expanded Compose configuration containing secrets; use
-`config --quiet`. The deployment script also strips inherited shell application
-settings, so a shell's staging database URL cannot override production's file.
-
-## Release failure, rollback and recovery
-
-Migrations run before application replacement and must be forward-only,
-additive and compatible with the previous image. A failed migration prevents
-API/worker replacement. Health failure after replacement stops the release and
-leaves the last successful digest recorded in `.env`, but the containers may
-already be running the failed image; inspect them and redeploy that previous
-digest if its schema compatibility is known.
-The script records successful digests and their predecessors in the selected
-environment's `.release-history`. It does not automatically undo schema or
-external connector side effects.
-
-Roll back code through the same environment workflow using the previous digest.
-Retain published release images needed for recovery. After initial account
-creation, remove `BOOTSTRAP_ADMIN_PASSWORD` from the private file and redeploy.
-Keep all active/historical vault keys required for encrypted backups; see
-[vault rotation and recovery](06-runbook.md#vault-rotation).
-
-Neon's short Free restore history is useful for tests but is not a complete
-backup plan. For production, choose restore retention and independent encrypted
-off-host dumps based on your recovery requirements. The existing backup scripts
-accept normal `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE`
-environment variables; use the direct Neon host, verified TLS, separate
-environment prefixes and a compatible `pg_dump` version. The original backup
-Compose profile targets local PostgreSQL, so it must not be used unchanged
-against Neon. See [the runbook](06-runbook.md#backups-and-restore) for checksum,
-empty-database restore and vault-key verification. A Neon backup destination
-and production restore drill remain setup steps, not already deployed services.
-
-## Verification before the first remote release
-
-```sh
-go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-bash -n deploy/env-deploy.sh
-python3 deploy/test-runtime.py
-EDGE_ENV_FILE=env.example docker compose --env-file deploy/edge/env.example \
-  -f deploy/edge/compose.yaml config --quiet
-docker build -f deploy/Dockerfile -t workflow-service:acceptance .
-python3 deploy/test-local.py
-```
-
-CI checks workflow syntax, the actual resolved environment Compose configs,
-direct/TLS/vault validation, migration/health failures, environment-scoped
-stopping, and Caddy configuration. The existing local HTTPS drill verifies
-application packaging, replacement and backup recovery with disposable local
-PostgreSQL. No live Neon, public certificate, SSH host or real cloud connector
-account is contacted by these checks.
+`deploy/compose.yaml`, `bootstrap.sh`, `deploy.sh`, `env-deploy.sh`, `edge/`,
+backup scripts and observability assets remain for self-hosting and CI's local
+HTTPS/rolling-replacement/restore drill. The GitHub release workflows now target
+App Platform and DOCR; they no longer publish GHCR images or upload files over
+SSH. A Droplet operator must supply a compatible image and use the host scripts
+manually. Removing that alternative and changing the acceptance drill can be a
+separate cleanup.

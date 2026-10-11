@@ -104,24 +104,25 @@ docker build -f deploy/Dockerfile -t workflow-service:acceptance .
 python3 deploy/test-local.py
 ```
 
-Follow [the deployment guide](docs/07-deployment.md) for the cost comparison,
-Neon setup, GoDaddy DNS, environment-specific secrets and the staging/production
-CI/CD workflows. The release process is:
+Follow [the deployment guide](docs/07-deployment.md) for DigitalOcean App
+Platform, Container Registry, Neon and the one-time GitHub settings. The default
+release path is:
 
-1. Prepare the host, separate Neon databases and private configuration for
-   `staging` and `production`, following the guide's one-time setup.
-2. Configure the two GitHub environments with their own deployment variables
-   and SSH secrets; add production reviewers if your GitHub plan supports them.
-3. Run **Build release image**. CI checks the code and publishes an immutable
-   GHCR image digest with the React UI embedded in the API binary.
-4. Run **Deploy staging** with that digest and verify sign-in, connectors and
-   workflow execution. Run **Deploy production** with the same tested digest.
-5. Use **Deploy staging → stop** after testing. For a code rollback, deploy the
-   previous digest; database migrations remain forward-only.
+1. Configure `DIGITALOCEAN_ACCESS_TOKEN` and `DO_REGISTRY_NAME` in GitHub. Run
+   **Build and deploy App Platform** with deployment disabled to publish the
+   first image.
+2. Create the App Platform app using [.do/app.yaml](.do/app.yaml), fill its
+   runtime secrets privately, and set `DO_APP_ID` in GitHub's **production**
+   environment.
+3. Every push to `main` passes CI, builds the embedded UI/API/worker image,
+   pushes it to DOCR and deploys its exact digest to App Platform. One container
+   runs the API and worker and applies migrations at startup.
+4. Use **Deploy production** with a previous retained DOCR digest for rollback.
+   Optional **Deploy staging** targets a separate app and database.
 
 [The operations runbook](docs/06-runbook.md) covers migrations,
-rollback, backups and key rotation. Production hosting is prepared for review;
-no remote server has been provisioned or deployed. Real OAuth, SMTP, LLM, S3,
+rollback, backups and key rotation. The repository deployment setup is ready;
+cloud resources and GitHub credentials still need the one-time setup. Real OAuth, SMTP, LLM, S3,
 and Grafana Cloud account checks remain separate acceptance work. Preserve the
 vault keyring with database backups, including historical keys needed by older
 snapshots. Non-Anthropic pricing needs `LLM_PRICING_JSON`.

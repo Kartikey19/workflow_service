@@ -17,7 +17,8 @@ import (
 )
 
 // Run constructs dependencies, serves, then releases resources in reverse order.
-// Mode api serves HTTP; mode worker runs the claim loop and sweeper.
+// Mode api serves HTTP; mode worker runs the claim loop and sweeper; with
+// API_RUNS_WORKER the api process does both.
 func Run(ctx context.Context, cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("validate configuration: %w", err)
@@ -31,7 +32,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	defer func() { _ = log.Sync() }()
 	serveAPI := cfg.App.Mode == "api"
-	runWorker := cfg.App.Mode == "worker"
+	runWorker := cfg.RunsWorker()
 
 	// Reserve addresses synchronously, before opening expensive dependencies.
 	var lc net.ListenConfig

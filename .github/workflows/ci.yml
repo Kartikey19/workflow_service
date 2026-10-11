@@ -2,7 +2,7 @@ name: CI
 on:
   workflow_call:
   push:
-    branches-ignore: [main] # Build release image calls this same CI once for main.
+    branches-ignore: [main] # Build and deploy App Platform calls this CI for main.
   pull_request:
 permissions:
   contents: read
@@ -64,6 +64,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Validate GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Check App Platform release safeguards
+        run: python3 deploy/test-app-platform.py
       - run: make ui-install ui-check
       - run: npx --prefix web playwright install --with-deps chromium
       - run: make check

@@ -1,4 +1,4 @@
-name: Deploy environment (reusable)
+name: Deploy App Platform environment (reusable)
 on:
   workflow_call:
     inputs:
@@ -11,58 +11,46 @@ on:
 permissions:
   contents: read
 concurrency:
-  # The budget starter shares a host and deployment scripts across environments.
-  group: deploy-workflow-host
+  group: app-platform-deploy-${{ inputs.environment }}
   cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: ${{ inputs.environment }}
       url: ${{ vars.DEPLOY_URL }}
     steps:
       - uses: actions/checkout@v4
-      - name: Upload deployment code and release the immutable image
+      - name: Check deployment settings
         env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-          RELEASE_IMAGE: ${{ inputs.image }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          REPOSITORY: ${{ github.repository }}
-        shell: bash
+          DO_APP_ID: ${{ vars.DO_APP_ID }}
+          RELEASE_IMAGE: ${{ inputs.image }}
+          REGISTRY: ${{ vars.DO_REGISTRY_NAME }}
+          REPOSITORY: ${{ vars.DO_IMAGE_REPOSITORY || 'workflow-service' }}
         run: |
           set -euo pipefail
           [[ "$DEPLOY_ENVIRONMENT" == staging || "$DEPLOY_ENVIRONMENT" == production ]]
-          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
-          [[ "$DEPLOY_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]
-          [[ "$DEPLOY_PATH" =~ ^/[a-zA-Z0-9_/-]+$ && "$DEPLOY_PATH" != *..* && "$DEPLOY_PATH" != / ]]
-          if [[ "$RELEASE_IMAGE" == stop ]]; then
-            [[ "$DEPLOY_ENVIRONMENT" == staging ]]
-          else
-            [[ "$RELEASE_IMAGE" =~ ^ghcr.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]]
-            [[ "$RELEASE_IMAGE" == "ghcr.io/${REPOSITORY,,}@sha256:"* ]]
-          fi
-          [[ -n "$SSH_KEY" && -n "$SSH_KNOWN_HOSTS" ]]
-          umask 077
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          trap 'rm -f ~/.ssh/id_ed25519' EXIT
-          target="$DEPLOY_USER@$DEPLOY_HOST"
-          # The env-specific directories must already contain private .env files.
-          # No secret values or edge changes are uploaded by a release.
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" "test -d '$DEPLOY_PATH/environments/$DEPLOY_ENVIRONMENT'"
-          rsync -a --exclude='.env' --exclude='.env.*' --exclude='.deploy.lock' \
-            --exclude='.release-history' --exclude='__pycache__' --exclude='edge/' \
-            -e 'ssh -o BatchMode=yes -o StrictHostKeyChecking=yes' deploy/ "$target:$DEPLOY_PATH/"
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
-            "cd '$DEPLOY_PATH' && ./env-deploy.sh '$DEPLOY_ENVIRONMENT' '$RELEASE_IMAGE'"
-      - name: Record deployment
+          [[ -n "$DO_APP_ID" ]] || { echo 'Set DO_APP_ID in this GitHub environment'; exit 1; }
+          [[ "$RELEASE_IMAGE" == "registry.digitalocean.com/$REGISTRY/$REPOSITORY@sha256:"* ]]
+      - uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Deploy the digest and wait for App Platform readiness
+        env:
+          DO_APP_ID: ${{ vars.DO_APP_ID }}
+          RELEASE_IMAGE: ${{ inputs.image }}
+          REGISTRY: ${{ vars.DO_REGISTRY_NAME }}
+        run: |
+          set -euo pipefail
+          [[ "$(doctl registry get --format Name --no-header)" == "$REGISTRY" ]]
+          python3 deploy/app-platform.py "$DO_APP_ID" "$RELEASE_IMAGE"
+      - name: Record successful deployment
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DO_APP_ID: ${{ vars.DO_APP_ID }}
           RELEASE_IMAGE: ${{ inputs.image }}
         run: |
-          printf '%s release: `%s`\n' "$DEPLOY_ENVIRONMENT" "$RELEASE_IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s release: `%s`\n\n[App Platform](https://cloud.digitalocean.com/apps/%s)\n' \
+            "$DEPLOY_ENVIRONMENT" "$RELEASE_IMAGE" "$DO_APP_ID" >> "$GITHUB_STEP_SUMMARY"

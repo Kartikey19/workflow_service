@@ -1,0 +1,101 @@
+# DigitalOcean App Platform spec for production (docs/07-deployment.md).
+#
+# CI builds deploy/Dockerfile, pushes to DigitalOcean Container Registry and
+# deploys an immutable digest after checks pass. One 512 MiB container serves the
+# UI and API, runs the worker in the same process (API_RUNS_WORKER) and applies
+# pending migrations before it starts (MIGRATE_ON_START). The database is Neon.
+#
+# First publish an image with Build and deploy App Platform (deploy=false),
+# then create an app from that DOCR image. Use this spec as the configuration
+# template: replace the tag with that commit SHA and fill the runtime values
+# in the control panel before the first deployment. DOCR uses the team's
+# primary registry; its name is deliberately omitted per the app spec reference.
+# Never commit real values to this file.
+# Create the production app in the existing shopxp project.
+name: weft
+region: blr # Bengaluru, India; Neon currently offers nearby Singapore
+ingress:
+  rules:
+    - match:
+        path:
+          prefix: /
+      component:
+        name: web
+services:
+  - name: web
+    image:
+      registry_type: DOCR
+      repository: workflow-service # must match DO_IMAGE_REPOSITORY in GitHub
+      tag: REPLACE_WITH_FIRST_RELEASE_COMMIT_SHA
+      deploy_on_push:
+        enabled: false # CI deploys explicitly; no competing registry trigger
+    http_port: 8080
+    instance_count: 1 # low-cost baseline; workers have unique IDs during overlap
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /readyz
+      initial_delay_seconds: 120 # migrations have a two-minute startup timeout
+      period_seconds: 15
+      timeout_seconds: 5
+      failure_threshold: 4
+    termination:
+      drain_seconds: 15
+      grace_period_seconds: 60 # longer than SHUTDOWN_GRACE
+    envs:
+      - key: APP_ENV
+        value: production
+      - key: PUBLIC_URL # the browser origin check needs the public HTTPS URL
+        value: ${APP_URL}
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: API_RUNS_WORKER
+        value: "true"
+      - key: MIGRATE_ON_START
+        value: "true"
+      # Neon direct connection: pooling off (no -pooler in the host) and
+      # sslmode=verify-full. Persistent LISTEN sessions need a direct URL.
+      - key: DATABASE_URL
+        type: SECRET
+        scope: RUN_TIME
+      # openssl rand -base64 32; keep a copy in your password manager. Losing
+      # it makes every stored credential unreadable.
+      - key: VAULT_MASTER_KEY
+        type: SECRET
+        scope: RUN_TIME
+      - key: VAULT_KEY_VERSION
+        value: "1"
+      # The first platform administrator. Remove both bootstrap variables
+      # after the first sign-in.
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        scope: RUN_TIME
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        type: SECRET
+        scope: RUN_TIME
+      # Small, steady settings for one container and a Neon database.
+      - key: DB_MAX_CONNS
+        value: "6"
+      - key: DB_MIN_CONNS
+        value: "0"
+      - key: WORKER_CONCURRENCY
+        value: "4"
+      - key: WORKER_BATCH_SIZE
+        value: "2"
+      - key: WORKER_POLL_INTERVAL
+        value: "1s"
+      - key: SHUTDOWN_GRACE
+        value: "30s"
+      # Optional: the workflow assistant and the default agent provider. Model
+      # providers can also be added per organization on the AI providers page.
+      - key: ANTHROPIC_API_KEY
+        type: SECRET
+        scope: RUN_TIME
+      - key: ASSISTANT_PROVIDER
+        value: anthropic
+      - key: ASSISTANT_MODEL
+        scope: RUN_TIME
+      # Optional OAuth apps; their callback is ${APP_URL}/be/v1/oauth/callback.
+      - key: GOOGLE_CLIENT_ID
+        scope: RUN_TIME
+      - key: GOOGLE_CLIENT_SECRET
+        type: SECRET
+        scope: RUN_TIME

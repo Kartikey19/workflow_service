@@ -2,15 +2,10 @@ name: Deploy staging
 on:
   workflow_dispatch:
     inputs:
-      action:
-        description: Deploy for testing or stop staging to save compute
-        type: choice
-        options: [deploy, stop]
-        default: deploy
       image:
-        description: Exact GHCR image@sha256:digest from Build release image (unused for stop)
+        description: Exact DOCR image@sha256:digest from Build and deploy App Platform
         type: string
-        required: false
+        required: true
 permissions:
   contents: read
 jobs:
@@ -18,5 +13,5 @@ jobs:
     uses: ./.github/workflows/deploy-environment.yml
     with:
       environment: staging
-      image: ${{ inputs.action == 'stop' && 'stop' || inputs.image }}
+      image: ${{ inputs.image }}
     secrets: inherit

@@ -1,12 +1,17 @@
-name: Build release image
+name: Build and deploy App Platform
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy to production after publishing (disable for the first image)
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
-  group: image-release-${{ github.ref }}
+  group: app-platform-release
   cancel-in-progress: false
 jobs:
   quality:
@@ -14,24 +19,31 @@ jobs:
   image:
     needs: quality
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     outputs:
-      image: ${{ steps.name.outputs.image }}
-      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.name.outputs.image }}@${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - id: name
+      - name: Set the registry image name
+        id: name
         env:
-          REPOSITORY: ${{ github.repository }}
-        run: echo "image=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
+          REGISTRY: ${{ vars.DO_REGISTRY_NAME }}
+          REPOSITORY: ${{ vars.DO_IMAGE_REPOSITORY || 'workflow-service' }}
+        run: |
+          set -euo pipefail
+          [[ "$REGISTRY" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo 'Set DO_REGISTRY_NAME to your primary DOCR registry name'; exit 1; }
+          [[ "$REPOSITORY" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || { echo 'Invalid DO_IMAGE_REPOSITORY'; exit 1; }
+          echo "image=registry.digitalocean.com/$REGISTRY/$REPOSITORY" >> "$GITHUB_OUTPUT"
+      - uses: digitalocean/action-doctl@v2
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Authenticate to the primary Container Registry
+        env:
+          REGISTRY: ${{ vars.DO_REGISTRY_NAME }}
+        run: |
+          set -euo pipefail
+          [[ "$(doctl registry get --format Name --no-header)" == "$REGISTRY" ]]
+          doctl registry login --expiry-seconds 3600
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -45,16 +57,19 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Record the immutable release for environment promotion
+      - name: Record the immutable release
         env:
           IMAGE: ${{ steps.name.outputs.image }}@${{ steps.build.outputs.digest }}
         run: |
-          printf 'Release image: `%s`\n\nPromote this same digest with Deploy staging, then Deploy production.\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
-  staging:
-    if: ${{ github.event_name == 'push' && vars.STAGING_AUTO_DEPLOY == 'true' }}
+          printf 'Release image: `%s`\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove registry credentials
+        if: always()
+        run: docker logout registry.digitalocean.com
+  production:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.deploy) }}
     needs: image
     uses: ./.github/workflows/deploy-environment.yml
     with:
-      environment: staging
-      image: ${{ needs.image.outputs.image }}@${{ needs.image.outputs.digest }}
+      environment: production
+      image: ${{ needs.image.outputs.image }}
     secrets: inherit

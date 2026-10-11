@@ -818,14 +818,17 @@ plan and usage.
 - [x] Chromium acceptance: a new user can go from invite to a successful run with an agent node
       without touching YAML by hand.
 
-### M19 — Production (packaging complete; hosting decision pending)
+### M19 — Production (App Platform selected; cloud setup pending)
 
 Multi-stage Dockerfile (UI build, Go build, distroless); `deploy/compose.yaml`
 with Caddy (automatic HTTPS), `migrate` one-shot, `api`, `worker`
 (scalable), PostgreSQL 16 with tuned settings, nightly `pg_dump` to S3-compatible
 storage with retention, and Grafana Alloy shipping metrics and logs to Grafana
-Cloud; dashboards and the two alerts from §6; a GitHub Actions workflow that
-builds and pushes images to GHCR and deploys over SSH; runbook updates.
+Cloud; dashboards and the two alerts from §6. These self-hosted assets remain
+for the local acceptance drill. The default GitHub Actions release now builds
+and pushes images to DigitalOcean Container Registry and deploys their exact
+digest to App Platform. One container serves the UI/API, runs the worker and
+applies migrations at startup; runtime secrets stay in App Platform.
 
 **Acceptance**
 - [ ] Fresh host to a working HTTPS deployment with one documented command.
@@ -835,7 +838,7 @@ builds and pushes images to GHCR and deploys over SSH; runbook updates.
 - [ ] Verify rolling deployment on the chosen production host.
 
 Local implementation and verification are documented in [the runbook](06-runbook.md).
-No provider/host has been selected and no remote deployment has been performed.
+DigitalOcean App Platform has been selected; no remote deployment has been performed.
 Real OAuth, SMTP, LLM, S3, and Grafana Cloud account validation remains pending.
 
 ### M20 — Custom code nodes (scoped, not started)
