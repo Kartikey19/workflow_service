@@ -1,6 +1,6 @@
 package spec
 
-import "github.com/kartikey/workflow_service/internal/expr"
+import "github.com/kartikey/workflow_service/internal/core/expr"
 
 // Compiled separates serializable workflow data from reusable in-memory programs.
 // Executor-specific validation and hashing must precede publication (not yet wired).

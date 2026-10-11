@@ -1,6 +1,6 @@
 # 04 — HTTP API
 
-Small surface. Nine endpoints ship v1. Everything is JSON except workflow
+Small surface. Nine tenant endpoints ship v1, plus a small admin surface (§5.1). Everything is JSON except workflow
 publishing, which takes YAML.
 
 Base path `/v1`. Auth is out of scope for this document — assume middleware
@@ -271,6 +271,24 @@ for the worklist.
 `GET /v1/executors` is what lets an editor or docs page stay in sync with the
 binary. It costs nothing — you already have the registry.
 
+### 5.1 Admin API (operators only)
+
+Manual interventions for stuck work, so nobody hand-writes UPDATEs in production.
+Every route requires a principal with the platform-admin flag
+(`auth.Principal.PlatformAdmin`); tenant roles, including `owner`, are not enough.
+Responses use the same problem+json errors as the rest of the API. Each call
+writes a `run_events` row recording the actor.
+
+| Endpoint | Effect |
+|---|---|
+| `POST /v1/admin/node-executions/{id}/retry` | insert attempt+1 as `ready` |
+| `POST /v1/admin/node-executions/{id}/skip` | force-skip a wedged node, then advance the run |
+| `POST /v1/admin/workers/{worker_id}/release-leases` | release a crashed worker's leases so rows are reclaimed now rather than at `LeaseTTL` |
+
+These go through the same fenced SQL as the engine: a zero-row write means the
+node moved on and the call returns `409`, never a forced update. Run
+cancellation and signals stay on the tenant API (§3.6, §4.1).
+
 ---
 
 ## 6. Handler skeleton
@@ -280,20 +298,20 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
     tenant := auth.TenantFrom(r.Context())
 
     var req CreateRunRequest
-    if err := decodeJSON(r, &req); err != nil { problem.Write(w, problem.BadRequest(err)); return }
+    if err := decodeJSON(r, &req); err != nil { exception.Write(w, exception.BadRequest(err)); return }
 
     wf, ver, err := h.specs.Resolve(r.Context(), tenant, req.Workflow, req.Version)
-    if err != nil { problem.Write(w, problem.From(err)); return }
+    if err != nil { exception.Write(w, exception.From(err)); return }
 
     input, verrs := spec.ValidateInput(ver.Spec, req.Input)
-    if len(verrs) > 0 { problem.Write(w, problem.InputInvalid(verrs)); return }
+    if len(verrs) > 0 { exception.Write(w, exception.InputInvalid(verrs)); return }
 
     run, created, err := h.runs.Create(r.Context(), runs.CreateParams{
         TenantID: tenant, Workflow: wf, Version: ver,
         Input: input, CorrelationID: req.CorrelationID,
         IdempotencyKey: r.Header.Get("Idempotency-Key"),
     })
-    if err != nil { problem.Write(w, problem.From(err)); return }
+    if err != nil { exception.Write(w, exception.From(err)); return }
 
     writeJSON(w, statusFor(created), runView(run))   // 201 or 200
 }
@@ -301,7 +319,7 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 
 Handlers stay this thin. All logic lives in `runs`/`spec` services so it is
 testable without an HTTP layer, and so the same code is reachable from a future
-gRPC or CLI entry point.
+gRPC entry point.
 
 ---
 
@@ -315,7 +333,9 @@ gRPC or CLI entry point.
   pause point is.
 - **No bulk run creation.** Callers loop. If throughput becomes a problem, add a
   batch endpoint then — not before you have the numbers.
-- **No GraphQL.** Nine endpoints.
+- **No CLI.** Everything, including operator interventions, is reachable over
+  HTTP; use `curl` or any HTTP client.
+- **No GraphQL.** Nine tenant endpoints.
 
 ---
 

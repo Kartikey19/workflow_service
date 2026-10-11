@@ -17,8 +17,16 @@
 ## Layout
 
 - Standard Go application layout: each binary is `cmd/<name>/main.go` and only
-  calls `internal/app.Main`; everything else lives under `internal/`. There is
-  no `pkg/`: nothing here is a library for other modules.
+  calls `internal/app.Main` (two binaries: `api`, which also runs
+  `api migrate`, and `worker`). Generic, domain-free helpers (auth, exception,
+  httpx, uid, logger, db, jsonschema, netguard, cache, obs, events) live in `pkg/` and must never
+  import `internal/`. Everything that knows about workflows, runs or nodes lives
+  under `internal/`.
+- `internal/api` contains HTTP handlers only; server lifecycle and middleware
+  belong in `internal/server`. Handlers call services (`internal/services/runs`,
+  `internal/services/workflows`) through small interfaces defined in `api`; they never
+  run sqlc queries themselves. `internal/core` holds the engine, `expr` and the single `executor` tree: the
+  contract at its root, node types in subdirectories.
 - Prefer well-known libraries over hand-written infrastructure: configuration
   uses `caarlos0/env` struct tags plus `joho/godotenv`, migrations use
   `pressly/goose`, logging uses `zap`.

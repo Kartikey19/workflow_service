@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kartikey/workflow_service/internal/expr"
+	"github.com/kartikey/workflow_service/internal/core/expr"
 )
 
 func TestSupportTicketExample(t *testing.T) {

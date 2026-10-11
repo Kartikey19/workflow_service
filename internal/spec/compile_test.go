@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kartikey/workflow_service/internal/expr"
+	"github.com/kartikey/workflow_service/internal/core/expr"
 )
 
 func TestCompileAndResolveWorkflow(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/kartikey/workflow_service/internal/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor"
 )
 
 // validateTargets requires every control-transfer target to name its source in

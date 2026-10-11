@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/kartikey/workflow_service/internal/executor"
-	"github.com/kartikey/workflow_service/internal/expr"
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/expr"
 )
 
 // Options configures the compiler stages that depend on the running binary.

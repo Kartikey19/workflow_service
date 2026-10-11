@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kartikey/workflow_service/internal/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/services/workflows"
 	"github.com/kartikey/workflow_service/internal/spec"
-	"github.com/kartikey/workflow_service/internal/workflows"
 )
 
 // M4: join: all after a branch is skipped (and the compiler warned), while the

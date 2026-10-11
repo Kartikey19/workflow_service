@@ -17,14 +17,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/kartikey/workflow_service/internal/config"
-	"github.com/kartikey/workflow_service/internal/engine"
-	"github.com/kartikey/workflow_service/internal/executor"
-	"github.com/kartikey/workflow_service/internal/executors/core"
-	"github.com/kartikey/workflow_service/internal/executors/httpexec"
-	"github.com/kartikey/workflow_service/internal/flow"
-	"github.com/kartikey/workflow_service/internal/netguard"
-	"github.com/kartikey/workflow_service/internal/workflows"
+	"github.com/kartikey/workflow_service/internal/core/engine"
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
+	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
+	"github.com/kartikey/workflow_service/internal/services/runs"
+	"github.com/kartikey/workflow_service/internal/services/workflows"
+	"github.com/kartikey/workflow_service/pkg/netguard"
 )
 
 // scripted runs a per-node behaviour so engine tests can fail, hang or count.
@@ -70,7 +69,7 @@ func (s *scripted) callCount(nodeID string) int {
 type harness struct {
 	t        *testing.T
 	pool     *pgxpool.Pool
-	flow     *flow.Flow
+	flow     *runs.Service
 	script   *scripted
 	tenant   pgtype.UUID
 	registry *executor.Registry
@@ -81,13 +80,13 @@ type harness struct {
 func newHarness(t *testing.T, ctx context.Context) *harness {
 	t.Helper()
 	pool := newIsolatedPool(t, ctx)
-	f, err := flow.New(pool, zap.NewNop())
+	f, err := runs.New(pool, zap.NewNop())
 	if err != nil {
 		t.Fatal(err)
 	}
 	script := newScripted()
 	registry := executor.NewRegistry()
-	registry.MustRegister(core.All()...)
+	registry.MustRegister(builtin.All()...)
 	registry.MustRegister(script)
 	// httptest upstreams listen on loopback, which the default policy blocks.
 	registry.MustRegister(httpexec.New(netguard.Policy{AllowPrivate: true}))
@@ -96,8 +95,8 @@ func newHarness(t *testing.T, ctx context.Context) *harness {
 	return h
 }
 
-func workerConfig(id string) config.WorkerConfig {
-	return config.WorkerConfig{
+func workerConfig(id string) engine.Config {
+	return engine.Config{
 		ID: id, Concurrency: 8, BatchSize: 4, PollInterval: 50 * time.Millisecond,
 		LeaseTTL: 3 * time.Second, SweepInterval: 200 * time.Millisecond,
 	}
@@ -140,7 +139,7 @@ func (h *harness) mustPublish(source string) {
 
 func (h *harness) start(workflow string, input map[string]any) pgtype.UUID {
 	h.t.Helper()
-	result, err := h.flow.Start(context.Background(), flow.StartParams{TenantID: h.tenant, Workflow: workflow, Input: input})
+	result, err := h.flow.Start(context.Background(), runs.StartParams{TenantID: h.tenant, Workflow: workflow, Input: input})
 	if err != nil {
 		h.t.Fatalf("start run: %v", err)
 	}
@@ -461,7 +460,7 @@ outputs:
 			time.Sleep(25 * time.Millisecond)
 		}
 	}
-	if _, err := h.flow.Signal(ctx, h.tenant, "approval:R-2", json.RawMessage(`{}`)); !errors.Is(err, flow.ErrNoWaiter) {
+	if _, err := h.flow.Signal(ctx, h.tenant, "approval:R-2", json.RawMessage(`{}`)); !errors.Is(err, runs.ErrNoWaiter) {
 		t.Fatalf("signal to unknown key err = %v, want ErrNoWaiter", err)
 	}
 	if _, err := h.flow.Signal(ctx, h.tenant, "approval:R-1", json.RawMessage(`{"by":"grace"}`)); err != nil {
@@ -489,20 +488,23 @@ nodes:
   - {id: hang, type: script, config: {}}
   - {id: next, type: script, needs: [hang], config: {}}
 `)
+	entered := make(chan struct{})
 	stopped := make(chan struct{})
 	h.script.set("hang", func(ctx context.Context, _ executor.Request) (executor.Result, error) {
+		close(entered)
 		<-ctx.Done()
 		close(stopped)
 		return executor.Result{}, ctx.Err()
 	})
 	h.startWorkers(1)
 	runID := h.start("slow", nil)
-	deadline := time.Now().Add(5 * time.Second)
-	for h.nodeStatuses(runID)["hang"] != "running" {
-		if time.Now().After(deadline) {
-			t.Fatal("hang never started")
-		}
-		time.Sleep(20 * time.Millisecond)
+	// "running" is set when the node is claimed, before the executor is called;
+	// cancelling in that window drops the node without ever invoking it. Wait
+	// until the executor is really executing.
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("hang never started")
 	}
 	if err := h.flow.Cancel(ctx, h.tenant, runID, "test"); err != nil {
 		t.Fatal(err)
@@ -512,14 +514,14 @@ nodes:
 	case <-time.After(5 * time.Second):
 		t.Fatal("running node was not cancelled within a heartbeat")
 	}
-	deadline = time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for h.nodeStatuses(runID)["hang"] != "cancelled" {
 		if time.Now().After(deadline) {
 			t.Fatalf("nodes = %v, want hang cancelled", h.nodeStatuses(runID))
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if err := h.flow.Cancel(ctx, h.tenant, runID, "again"); !errors.Is(err, flow.ErrRunTerminal) {
+	if err := h.flow.Cancel(ctx, h.tenant, runID, "again"); !errors.Is(err, runs.ErrRunTerminal) {
 		t.Fatalf("second cancel err = %v", err)
 	}
 	h.checkInvariants(runID)
@@ -538,7 +540,7 @@ correlation: ${input.order}
 nodes:
   - {id: a, type: script, config: {}}
 `)
-	params := flow.StartParams{TenantID: h.tenant, Workflow: "idem", Input: map[string]any{"order": "O-1"}, IdempotencyKey: "k1"}
+	params := runs.StartParams{TenantID: h.tenant, Workflow: "idem", Input: map[string]any{"order": "O-1"}, IdempotencyKey: "k1"}
 	first, err := h.flow.Start(ctx, params)
 	if err != nil || !first.Created || first.Run.CorrelationID.String != "O-1" {
 		t.Fatalf("first = %+v, %v", first, err)
@@ -548,11 +550,11 @@ nodes:
 		t.Fatalf("second = %+v, %v", second, err)
 	}
 	params.Input = map[string]any{"order": "O-2"}
-	if _, err := h.flow.Start(ctx, params); !errors.Is(err, flow.ErrIdempotencyConflict) {
+	if _, err := h.flow.Start(ctx, params); !errors.Is(err, runs.ErrIdempotencyConflict) {
 		t.Fatalf("conflicting reuse err = %v", err)
 	}
-	var inputErr *flow.InputError
-	_, err = h.flow.Start(ctx, flow.StartParams{TenantID: h.tenant, Workflow: "idem", Input: map[string]any{"qty": 0}})
+	var inputErr *runs.InputError
+	_, err = h.flow.Start(ctx, runs.StartParams{TenantID: h.tenant, Workflow: "idem", Input: map[string]any{"qty": 0}})
 	if !errors.As(err, &inputErr) || len(inputErr.Fields) != 2 {
 		t.Fatalf("input err = %v", err)
 	}

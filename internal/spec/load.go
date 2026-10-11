@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/kartikey/workflow_service/internal/expr"
+	"github.com/kartikey/workflow_service/internal/core/expr"
 )
 
 // Load rebuilds programs from a published spec. Scope and type checks already

@@ -15,12 +15,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/kartikey/workflow_service/internal/executor"
-	"github.com/kartikey/workflow_service/internal/flow"
-	"github.com/kartikey/workflow_service/internal/ids"
-	"github.com/kartikey/workflow_service/internal/obs"
-	"github.com/kartikey/workflow_service/internal/store"
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/store/gen"
+	"github.com/kartikey/workflow_service/pkg/db"
+	"github.com/kartikey/workflow_service/pkg/obs"
+	"github.com/kartikey/workflow_service/pkg/uid"
 )
 
 // M2 fencing: the lease is lost mid-execution. The stale worker's result is
@@ -108,7 +108,7 @@ nodes:
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			run, err := h.flow.Start(ctx, flow.StartParams{TenantID: h.tenant, Workflow: "populations"})
+			run, err := h.flow.Start(ctx, runs.StartParams{TenantID: h.tenant, Workflow: "populations"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -129,13 +129,13 @@ nodes:
 					idempotency_key, lease_owner, lease_expires_at, ended_at, error)
 					values ($1, $2, $3, $4, 'script', $5, $6, $7, case when $7::text is null then null else now() + interval '1 minute' end, $8,
 					case when $5 = 'failed' then '{"code":"boom","message":"boom"}'::jsonb end)`,
-					ids.New(), runID, h.tenant, node, status, ids.NodeKey(runID, node, ""), owner, ended); err != nil {
+					uid.New(), runID, h.tenant, node, status, runs.NodeKey(runID, node, ""), owner, ended); err != nil {
 					t.Fatal(err)
 				}
 			}
-			err = store.InTx(ctx, h.pool, func(tx pgx.Tx) error {
+			err = db.InTx(ctx, h.pool, func(tx pgx.Tx) error {
 				q := h.flow.Q.WithTx(tx)
-				locked, err := flow.LockRun(ctx, q, runID)
+				locked, err := runs.LockRun(ctx, q, runID)
 				if err != nil {
 					return err
 				}

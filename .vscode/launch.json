@@ -6,12 +6,19 @@
       "type": "go",
       "request": "launch",
       "mode": "debug",
-      "program": "${workspaceFolder}/cmd/workflowd",
+      "program": "${workspaceFolder}/cmd/api",
       "cwd": "${workspaceFolder}",
       "env": {
-        "APP_MODE": "api",
         "HTTP_ADDRESS": "127.0.0.1:8081"
       }
+    },
+    {
+      "name": "Workflow worker",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/worker",
+      "cwd": "${workspaceFolder}"
     },
     {
       "name": "Support ticket compiler",

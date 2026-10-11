@@ -103,7 +103,7 @@ and finance will require it; build it in v1 when it is free.
 
 ```
                  ┌──────────────────────────────────────────┐
-   YAML ────────▶│  API server  (cmd/workflowd -mode=api)    │
+   YAML ────────▶│  API server  (cmd/api)                   │
    HTTP clients  │                                          │
    signals ─────▶│  ├─ POST /v1/workflows   → compile+store  │
                  │  ├─ POST /v1/runs        → create run     │
@@ -122,7 +122,7 @@ and finance will require it; build it in v1 when it is free.
                           └───────────▲────────────┘
                                       │
                  ┌────────────────────┴─────────────────────┐
-                 │  Worker  (cmd/workflowd -mode=worker)     │
+                 │  Worker  (cmd/worker)                │
                  │                                          │
                  │  claim loop ──▶ dispatcher ──▶ Executor   │
                  │       ▲                          registry │

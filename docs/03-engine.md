@@ -46,7 +46,7 @@ and stateless; scaling is `replicas: N`.
 ## 2. Package layout
 
 ```
-internal/engine/
+internal/core/engine/
   worker.go       // lifecycle: start claim loop + sweeper + shutdown
   claim.go        // ClaimReady loop, LISTEN/NOTIFY wakeup
   dispatch.go     // the per-node pipeline (§4)

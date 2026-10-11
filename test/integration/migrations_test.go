@@ -17,8 +17,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/kartikey/workflow_service/internal/db"
 	"github.com/kartikey/workflow_service/migrations"
+	"github.com/kartikey/workflow_service/pkg/db"
 )
 
 func TestMigrationsConcurrentAndRepeat(t *testing.T) {
@@ -114,7 +114,7 @@ func TestMigrationCommand(t *testing.T) {
 	}
 	_, file, _, _ := runtime.Caller(0)
 	for _, want := range []string{fmt.Sprintf("Applied %d migration(s)", embeddedMigrationCount(t)), "Applied 0 migration(s)"} {
-		cmd := exec.CommandContext(ctx, "go", "run", "./cmd/migrate")
+		cmd := exec.CommandContext(ctx, "go", "run", "./cmd/api", "migrate")
 		cmd.Dir = filepath.Join(filepath.Dir(file), "../..")
 		cmd.Env = append(os.Environ(), "DATABASE_URL="+databaseURL)
 		output, err := cmd.CombinedOutput()

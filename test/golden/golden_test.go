@@ -13,11 +13,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kartikey/workflow_service/internal/executor"
-	"github.com/kartikey/workflow_service/internal/executors/core"
-	"github.com/kartikey/workflow_service/internal/executors/httpexec"
-	"github.com/kartikey/workflow_service/internal/netguard"
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
+	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	"github.com/kartikey/workflow_service/internal/spec"
+	"github.com/kartikey/workflow_service/pkg/netguard"
 )
 
 var update = flag.Bool("update", false, "rewrite the expected .json files from the current compiler")
@@ -25,7 +25,7 @@ var update = flag.Bool("update", false, "rewrite the expected .json files from t
 func registry(t *testing.T) *executor.Registry {
 	t.Helper()
 	r := executor.NewRegistry()
-	r.MustRegister(core.All()...)
+	r.MustRegister(builtin.All()...)
 	r.MustRegister(httpexec.New(netguard.Policy{}))
 	return r
 }

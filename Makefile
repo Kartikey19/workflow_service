@@ -1,7 +1,7 @@
 .PHONY: migrate test test-integration fmt check-fmt generate check-generated vet check check-mod
 
 migrate:
-	go run ./cmd/migrate
+	go run ./cmd/api migrate
 
 test:
 	go test ./...

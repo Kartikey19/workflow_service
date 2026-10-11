@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	workflowstore "github.com/kartikey/workflow_service/internal/store"
 	"github.com/kartikey/workflow_service/internal/store/gen"
+	"github.com/kartikey/workflow_service/pkg/db"
 )
 
 func TestCompleteNodeFencing(t *testing.T) {
@@ -266,7 +266,7 @@ func TestInTxRollsBackOnErrorAndPanic(t *testing.T) {
 	t.Run("error", func(t *testing.T) {
 		pool := newIsolatedPool(t, ctx)
 		want := errors.New("stop transaction")
-		err := workflowstore.InTx(ctx, pool, func(tx pgx.Tx) error {
+		err := db.InTx(ctx, pool, func(tx pgx.Tx) error {
 			insertWorkflow(t, ctx, tx, "tx-error")
 			return want
 		})
@@ -285,7 +285,7 @@ func TestInTxRollsBackOnErrorAndPanic(t *testing.T) {
 			assertWorkflowCount(t, ctx, pool, 0)
 		}()
 
-		_ = workflowstore.InTx(ctx, pool, func(tx pgx.Tx) error {
+		_ = db.InTx(ctx, pool, func(tx pgx.Tx) error {
 			insertWorkflow(t, ctx, tx, "tx-panic")
 			panic("stop transaction")
 		})

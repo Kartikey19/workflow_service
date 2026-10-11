@@ -25,7 +25,7 @@ type Config struct {
 
 type AppConfig struct {
 	Environment   string        `env:"APP_ENV" envDefault:"development"` // development | testing | production
-	Mode          string        `env:"APP_MODE" envDefault:"all"`        // api | worker | all
+	Mode          string        `env:"-"`                                // api | worker; set by the binary
 	HTTPAddress   string        `env:"HTTP_ADDRESS" envDefault:":8080"`
 	ServiceName   string        `env:"SERVICE_NAME" envDefault:"workflow-service"`
 	BuildVersion  string        `env:"BUILD_VERSION" envDefault:"dev"`
@@ -75,14 +75,9 @@ func LoadEnv() error {
 	return nil
 }
 
-// LoadConfig reads .env and the environment, applies defaults and validates.
-func LoadConfig() (*Config, error) {
-	return LoadConfigMode("")
-}
-
-// LoadConfigMode is LoadConfig for a dedicated entry point (cmd/api,
-// cmd/worker): a non-empty mode replaces APP_MODE.
-func LoadConfigMode(mode string) (*Config, error) {
+// LoadConfig reads .env and the environment for a dedicated entry point
+// (cmd/api, cmd/worker): mode is "api" or "worker".
+func LoadConfig(mode string) (*Config, error) {
 	if err := LoadEnv(); err != nil {
 		return nil, err
 	}
@@ -90,9 +85,7 @@ func LoadConfigMode(mode string) (*Config, error) {
 	if err := env.Parse(&cfg); err != nil {
 		return nil, fmt.Errorf("parse environment: %w", err)
 	}
-	if mode != "" {
-		cfg.App.Mode = mode
-	}
+	cfg.App.Mode = mode
 	if strings.TrimSpace(cfg.Worker.ID) == "" {
 		cfg.Worker.ID = defaultWorkerID()
 	}
@@ -123,9 +116,9 @@ func (c *Config) Validate() error {
 		add("APP_ENV must be development, testing, or production")
 	}
 	switch c.App.Mode {
-	case "api", "worker", "all":
+	case "api", "worker":
 	default:
-		add("APP_MODE must be api, worker, or all")
+		add("mode must be api or worker")
 	}
 	switch c.Log.LogLevel {
 	case "debug", "info", "warn", "error":

@@ -18,8 +18,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/kartikey/workflow_service/internal/api"
-	"github.com/kartikey/workflow_service/internal/auth"
-	"github.com/kartikey/workflow_service/internal/ids"
+	"github.com/kartikey/workflow_service/internal/server"
+	"github.com/kartikey/workflow_service/pkg/auth"
+	"github.com/kartikey/workflow_service/pkg/uid"
 )
 
 type apiClient struct {
@@ -33,13 +34,13 @@ func (h *harness) apiServer(authenticator auth.Authenticator) string {
 	if authenticator == nil {
 		authenticator = auth.DevHeader{}
 	}
-	server, err := api.New(api.Config{Address: "127.0.0.1:0", Services: &api.Services{
-		Pool: h.pool, Flow: h.flow, Workflows: h.publish, Registry: h.registry, Auth: authenticator,
+	srv, err := server.New(server.Config{Address: "127.0.0.1:0", API: &api.Services{
+		Pool: h.pool, Workflows: h.publish, Runs: h.flow, Executors: h.registry, Auth: authenticator,
 	}}, h.pool, zap.NewNop())
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	ts := httptest.NewServer(server.Handler())
+	ts := httptest.NewServer(srv.Handler())
 	h.t.Cleanup(ts.Close)
 	return ts.URL
 }
@@ -53,7 +54,7 @@ func (c apiClient) do(method, path, contentType string, body []byte, headers ...
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	req.Header.Set("X-Tenant-ID", ids.String(c.tenant))
+	req.Header.Set("X-Tenant-ID", uid.String(c.tenant))
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}
@@ -201,7 +202,7 @@ func TestAPIRunsSignalsEventsAndCancel(t *testing.T) {
 	go func() {
 		req, _ := http.NewRequest(http.MethodGet, c.base+"/v1/runs/"+runID+"/events", nil)
 		req.Header.Set("Accept", "text/event-stream")
-		req.Header.Set("X-Tenant-ID", ids.String(h.tenant))
+		req.Header.Set("X-Tenant-ID", uid.String(h.tenant))
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			streamed <- nil
@@ -356,7 +357,7 @@ func waitNode(t *testing.T, h *harness, runID, nodeID, status string) {
 
 func mustParse(t *testing.T, text string) pgtype.UUID {
 	t.Helper()
-	id, err := ids.Parse(text)
+	id, err := uid.Parse(text)
 	if err != nil {
 		t.Fatal(err)
 	}

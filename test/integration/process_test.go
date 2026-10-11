@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kartikey/workflow_service/internal/ids"
+	"github.com/kartikey/workflow_service/pkg/uid"
 )
 
 var (
@@ -282,7 +282,7 @@ outputs: {sum: '${nodes.d.output}'}
 	seen := map[string]int{}
 	for _, id := range runIDs {
 		if got := h.waitStatus(id, 20*time.Second, "succeeded", "failed"); got != "succeeded" {
-			t.Fatalf("run %s = %s", ids.String(id), got)
+			t.Fatalf("run %s = %s", uid.String(id), got)
 		}
 		output, _ := h.runOutput(id)
 		if output["sum"] != float64(5) {

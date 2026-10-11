@@ -11,9 +11,9 @@ import (
 )
 
 // Main is the body of every service binary: it loads configuration, owns OS
-// signals and returns the exit status. mode "" reads APP_MODE.
+// signals and returns the exit status. mode is "api" or "worker".
 func Main(name, mode string) int {
-	cfg, err := config.LoadConfigMode(mode)
+	cfg, err := config.LoadConfig(mode)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: load configuration: %v\n", name, err)
 		return 1

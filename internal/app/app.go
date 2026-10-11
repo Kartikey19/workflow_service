@@ -6,29 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"sync"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/kartikey/workflow_service/internal/api"
-	"github.com/kartikey/workflow_service/internal/auth"
 	"github.com/kartikey/workflow_service/internal/config"
-	"github.com/kartikey/workflow_service/internal/db"
-	"github.com/kartikey/workflow_service/internal/engine"
-	"github.com/kartikey/workflow_service/internal/executor"
-	"github.com/kartikey/workflow_service/internal/executors/core"
-	"github.com/kartikey/workflow_service/internal/executors/httpexec"
-	"github.com/kartikey/workflow_service/internal/flow"
-	"github.com/kartikey/workflow_service/internal/logger"
-	"github.com/kartikey/workflow_service/internal/netguard"
-	"github.com/kartikey/workflow_service/internal/obs"
-	"github.com/kartikey/workflow_service/internal/workflows"
+	"github.com/kartikey/workflow_service/internal/server"
+	"github.com/kartikey/workflow_service/pkg/db"
+	"github.com/kartikey/workflow_service/pkg/logger"
+	"github.com/kartikey/workflow_service/pkg/obs"
 	"go.uber.org/zap"
 )
 
 // Run constructs dependencies, serves, then releases resources in reverse order.
-// APP_MODE=api serves HTTP, worker runs the claim loop and sweeper, and all runs
-// both in one process for local development.
+// Mode api serves HTTP; mode worker runs the claim loop and sweeper.
 func Run(ctx context.Context, cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("validate configuration: %w", err)
@@ -41,8 +30,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("construct logger: %w", err)
 	}
 	defer func() { _ = log.Sync() }()
-	serveAPI := cfg.App.Mode != "worker"
-	runWorker := cfg.App.Mode != "api"
+	serveAPI := cfg.App.Mode == "api"
+	runWorker := cfg.App.Mode == "worker"
 
 	// Reserve addresses synchronously, before opening expensive dependencies.
 	var lc net.ListenConfig
@@ -53,7 +42,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		}
 		defer listener.Close()
 	}
-	if runWorker && !serveAPI && cfg.Worker.MetricsAddress != "" {
+	if runWorker && cfg.Worker.MetricsAddress != "" {
 		if metricsListener, err = lc.Listen(ctx, "tcp", cfg.Worker.MetricsAddress); err != nil {
 			return fmt.Errorf("bind worker metrics listener: %w", err)
 		}
@@ -76,13 +65,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 	var components []func(context.Context) error
 	if serveAPI {
-		server, err := api.New(api.Config{Address: cfg.App.HTTPAddress, Services: deps.Services()}, pool, log)
+		srv, err := server.New(server.Config{Address: cfg.App.HTTPAddress, API: deps.Services()}, pool, log)
 		if err != nil {
 			return fmt.Errorf("construct API: %w", err)
 		}
 		log.Info("HTTP server listening", zap.String("address", listener.Addr().String()))
 		components = append(components, func(ctx context.Context) error {
-			if err := server.Run(ctx, listener, cfg.App.ShutdownGrace); err != nil {
+			if err := srv.Run(ctx, listener, cfg.App.ShutdownGrace); err != nil {
 				return err
 			}
 			log.Info("HTTP server stopped")
@@ -103,13 +92,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	if metricsListener != nil {
 		// The worker's own /metrics and /healthz (WORKER_METRICS_ADDRESS).
-		server, err := api.New(api.Config{Address: cfg.Worker.MetricsAddress, Metrics: true}, pool, log)
+		srv, err := server.New(server.Config{Address: cfg.Worker.MetricsAddress, Metrics: true}, pool, log)
 		if err != nil {
 			return fmt.Errorf("construct worker metrics server: %w", err)
 		}
 		log.Info("worker metrics listening", zap.String("address", metricsListener.Addr().String()))
 		components = append(components, func(ctx context.Context) error {
-			return server.Run(ctx, metricsListener, cfg.App.ShutdownGrace)
+			return srv.Run(ctx, metricsListener, cfg.App.ShutdownGrace)
 		})
 	}
 	return runAll(ctx, components)
@@ -129,70 +118,4 @@ func runAll(ctx context.Context, components []func(context.Context) error) error
 	}
 	wg.Wait()
 	return errors.Join(errs...)
-}
-
-// Deps are the process-wide services shared by the API and the worker.
-type Deps struct {
-	Pool      *pgxpool.Pool
-	Log       *zap.Logger
-	Registry  *executor.Registry
-	Flow      *flow.Flow
-	Workflows *workflows.Service
-	Auth      auth.Authenticator
-	Plans     api.Plans
-	Secrets   engine.SecretSource
-	Extra     []func(*http.ServeMux, api.Router)
-}
-
-// Build wires the shared services from configuration.
-func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.Logger) (*Deps, error) {
-	policy, err := EgressPolicy(cfg.Egress)
-	if err != nil {
-		return nil, err
-	}
-	registry := executor.NewRegistry()
-	for _, e := range append(core.All(), httpexec.New(policy)) {
-		if err := registry.Register(e); err != nil {
-			return nil, err
-		}
-	}
-	f, err := flow.New(pool, log)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.Worker.MaxNodesPerRun > 0 {
-		f.MaxNodesPerRun = cfg.Worker.MaxNodesPerRun
-	}
-	deps := &Deps{
-		Pool: pool, Log: log, Registry: registry, Flow: f,
-		Workflows: workflows.NewService(pool, registry),
-	}
-	if cfg.App.Environment == "production" {
-		return nil, errors.New("production requires authentication; development header auth is disabled")
-	}
-	deps.Auth = auth.DevHeader{}
-	return deps, nil
-}
-
-// EgressPolicy builds the netguard policy for every outbound tenant call.
-func EgressPolicy(cfg config.EgressConfig) (netguard.Policy, error) {
-	allow, err := netguard.ParseAllow(cfg.AllowCIDRs)
-	if err != nil {
-		return netguard.Policy{}, fmt.Errorf("EGRESS_ALLOW_CIDRS: %w", err)
-	}
-	return netguard.Policy{AllowPrivate: cfg.AllowPrivate, Allow: allow}, nil
-}
-
-// Services returns the API dependencies.
-func (d *Deps) Services() *api.Services {
-	return &api.Services{
-		Pool: d.Pool, Flow: d.Flow, Workflows: d.Workflows, Registry: d.Registry,
-		Auth: d.Auth, Plans: d.Plans, Extra: d.Extra,
-	}
-}
-
-// Worker builds one worker sharing the process flow and registry.
-func (d *Deps) Worker(cfg config.WorkerConfig) *engine.Worker {
-	dispatcher := engine.NewDispatcher(cfg, d.Flow, d.Registry, d.Secrets, d.Log)
-	return engine.NewWorker(cfg, d.Log, d.Pool, d.Flow, dispatcher.Run)
 }

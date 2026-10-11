@@ -67,7 +67,7 @@ The engine (M0–M9) is the core. The product built around it must let people:
   tenant-supplied commands on our hosts.
 - **Egress.** Every outbound connection made on a tenant's behalf (http nodes,
   MCP, OpenAI-compatible base URLs, database connectors) goes through
-  `internal/netguard`. It blocks loopback, private, link-local and metadata
+  `pkg/netguard`. It blocks loopback, private, link-local and metadata
   addresses unless they are allowed by `EGRESS_ALLOW_CIDRS`.
 - **UI.** React, Vite and TypeScript, built into `web/dist` and embedded in the API
   binary with `go:embed`, so one image serves both. Same-origin session cookies
@@ -94,65 +94,55 @@ workflow_service/
   .github/workflows/ci.yml       // checks with a PostgreSQL 16 service
 
   cmd/                          // one directory per binary; main.go stays tiny
-    workflowd/main.go           // APP_MODE=api|worker|all (all = local dev)
-    api/main.go                 // HTTP API + UI                   (M10)
+    api/main.go                 // HTTP API + UI; `api migrate` applies migrations (M10)
     worker/main.go              // claim loop, dispatcher, sweeper (M10)
-    migrate/main.go             // forward-only embedded SQL migrations (goose)
-    wfctl/main.go               // CLI: publish, lint, run, tail  (M6)
 
-  internal/
-    app/          app.go main.go        // composition root, signals, exit status
-    config/       config.go             // env struct tags (caarlos0/env) + .env
+  pkg/                          // generic, domain-free packages; no import of internal/
+    auth/         principal.go          // Principal, roles, Authenticator, DevHeader
+    exception/    exception.go          // HTTP-aware exceptions, RFC 7807 bodies
+    httpx/        json.go recorder.go   // JSON read/write helpers, status recorder
+    uid/          uid.go                // UUIDv7 generation, parse, format
     logger/       logger.go             // zap JSON logger construction
-    db/           db.go migrate.go      // pgxpool construction, goose migrations
-    spec/         doc.go
-                  document.go           // the YAML structs
-                  compile.go            // decode → normalise → validate → graph → cel
-                  validate.go           // the rule table from 02 §6.2
-                  graph.go              // adjacency, topo sort, cycle detect, reachability
-                  spec.go               // the compiled Spec type + accessors
-                  input.go              // input schema validation
-                  cache.go              // LRU by workflow_version_id (immutable ⇒ trivial)
-
-    expr/         env.go                // CEL environment construction + bindings
-                  resolve.go            // the ${...} template walker (02 §6.3)
-                  funcs.go              // the closed function library
-
-    executor/     executor.go           // Executor, Request, Result, Control, errors
-                  registry.go
-
-    executors/    core/     (noop, transform, branch, sleep, wait_event)
-                  httpexec/ (http)
-                  agent/    (M13)    email/  gmail/  gdrive/  dropbox/
-                  onedrive/ dbquery/ mcp/    (M14, M15)
-                  humantask/                             // M8
-
-    flow/         cache.go start.go resolve.go control.go
-                  // run transitions shared by API and worker: start, advance,
-                  // recompute, cancel, signal, wake sleeps, deadlines
-    workflows/    publish.go            // compile → hash → version max+1
-    ids/          ids.go                // UUIDv7, node idempotency keys
+    db/           db.go migrate.go tx.go // pgxpool, goose migrations, InTx
     jsonschema/   jsonschema.go         // JSON Schema subset: wait payloads, agent output
     netguard/     netguard.go           // SSRF-safe dialer and HTTP client
-    obs/          metrics.go            // Prometheus registry
-    auth/         // users, orgs, sessions, API keys, invites, roles  (M11)
+    cache/        lru.go                // generic LRU: Get, Add, Len
+    obs/          metrics.go            // Prometheus registry and metrics
+    events/       hub.go                // shared LISTEN wf_events fan-out for SSE
+
+  internal/
+    app/          app.go dependencies.go main.go // composition root, wiring, signals
+    config/       config.go             // env struct tags (caarlos0/env) + .env
+    server/       server.go middleware.go // http.Server lifecycle, health, auth middleware
+    api/          handler.go errors.go  // /v1 handlers only: routes, domain→exception map;
+                  workflows.go runs.go signals.go events.go executors.go
+                  query.go views.go     // query-string/cursor helpers, JSON views
+                  // defines the service interfaces it consumes
+    spec/         document.go compile.go validate.go graph.go input.go ...
+                  // YAML structs → decode → normalise → validate → graph → cel
+    core/         // the workflow engine and what it executes
+      engine/     config.go worker.go claim.go dispatch.go persist.go lease.go retry.go sweep.go
+      expr/       env.go resolve.go funcs.go // CEL environment, ${...} walker (02 §6.3)
+      executor/   executor.go registry.go fields.go // Executor, Request, Result, Control, errors
+        builtin/  (noop, transform, branch, sleep, wait_event)
+        httpexec/ (http)
+        agent/ (M13)  email/ gmail/ gdrive/ dropbox/ onedrive/
+        dbquery/ mcp/ (M14, M15)   humantask/ (M8)
+    services/     // application use-cases shared by the API and the worker
+      runs/       service.go queries.go start.go resolve.go control.go specs.go nodekey.go
+                  // run transitions (start, advance, recompute, cancel, signal, wake
+                  // sleeps, deadlines) plus plan allowance, reads, retry
+      workflows/  publish.go query.go plans.go // publish (compile → hash → version max+1),
+                  // list/get/archive, plan limits
+    identity/     // users, orgs, sessions, API keys, invites, plans  (M11)
     vault/        // AES-GCM secret storage, SecretSource             (M12)
     llm/          // anthropic, openai, openaicompat, gemini clients  (M13)
     agents/       // agent definitions, test-connection               (M13)
     connections/  // integration credentials, OAuth flows             (M14)
     mcpclient/    // MCP over HTTP: initialize, tools/list, call      (M15)
     assistant/    // requirements → YAML generation loop              (M17)
-
-    engine/       worker.go  claim.go   dispatch.go
-                  lease.go   retry.go   sweep.go
-
     store/        queries/*.sql         // sqlc source of truth
                   gen/                  // sqlc output — never hand-edited
-                  store.go              // workflow persistence interfaces + InTx
-
-    api/          server.go  v1.go
-                  workflows.go  runs.go  signals.go  events.go
-                  problem/              // RFC 7807
 
   web/            // React + Vite SPA, embedded into the API binary   (M18)
   deploy/         // Dockerfile, compose, Caddyfile, Alloy, backups   (M19)
@@ -163,12 +153,18 @@ workflow_service/
     golden/       // workflow YAML fixtures + expected compiled specs
 ```
 
-**Layout (restructured 2026-10-10).** This follows the standard Go application
+**Layout (restructured 2026-10-11).** This follows the standard Go application
 layout: every binary is a directory under `cmd/` whose `main.go` only calls
-`internal/app.Main`, and all other code is under `internal/`, because this
-module is an application and nothing in it is meant to be imported by other
-modules. The former `pkg/` packages (config, logger, db, migrate) moved to
-`internal/`. Well-known libraries replace hand-written infrastructure:
+`internal/app.Main`. Generic, domain-free packages that could be reused unchanged
+(`auth`, `exception`, `httpx`, `uid`, `logger`, `db`, `jsonschema`, `netguard`,
+`cache`, `obs`, `events`) live
+in `pkg/` and never import `internal/`. Everything that knows about workflows,
+runs or nodes is under `internal/`. `internal/api` holds HTTP handlers only; the
+server lifecycle and authentication middleware are in `internal/server`, and
+`internal/core` groups the engine, the expression language and the single
+`executor` tree (contract at the top, node types in subdirectories), and
+`internal/services` holds the use-cases (`runs`, `workflows`) that the API and
+the worker share. There are two binaries, `api` and `worker`. Well-known libraries replace hand-written infrastructure:
 `caarlos0/env` reads configuration from struct tags, `joho/godotenv` loads
 `.env`, and `pressly/goose` applies migrations. `internal/app` is the
 composition root and wires packages together.
@@ -176,10 +172,15 @@ composition root and wires packages together.
 **Dependency direction is strictly one-way:**
 
 ```
-api ──▶ spec, store, events
-engine ──▶ spec, store, executor, events
-executors ──▶ executor          (never store, never engine)
-spec ──▶ expr, executor(registry, for ValidateConfig only)
+server ──▶ api, pkg/*
+api ──▶ pkg/*; talks to services/runs, services/workflows and core/executor
+        through interfaces it defines itself
+services/runs ──▶ core/expr, spec, store, pkg/*
+services/workflows ──▶ spec, core/executor, store, pkg/*
+core/engine ──▶ services/runs, spec, store, core/executor, core/expr
+core/executor/* ──▶ core/executor, pkg/*  (never store, never engine)
+spec ──▶ core/expr, core/executor(registry, for ValidateConfig only)
+pkg/* ──▶ nothing in internal/
 store ──▶ nothing
 ```
 
@@ -266,9 +267,9 @@ lint, test, integration test).
 - [x] Added unit tests for `pkg/config`, `pkg/db`, and `pkg/logger`; corrected
       the `testing` environment validation message and added positive
       `SHUTDOWN_GRACE` validation.
-- [x] Added the standard-library HTTP server in `internal/api`, with tested
+- [x] Added the standard-library HTTP server in `internal/server`, with tested
       `GET /healthz` and `GET /readyz` endpoints. `main.go` owns signals;
-      `internal/app` constructs dependencies and `internal/api.Server.Run` owns
+      `internal/app` constructs dependencies and `internal/server.Server.Run` owns
       graceful shutdown and connection closure using `SHUTDOWN_GRACE`. Readiness failures return `503` without exposing
       database errors.
 - [x] Verified the current code with `go test ./...`, `go vet ./...`, and
@@ -290,7 +291,7 @@ Export `DATABASE_URL` first; see [local development](README.md#local-development
 - [x] `InTx` rolls back on error and on panic.
 
 **M0 tooling completed (2026-09-06)**
-- [x] Added `cmd/migrate`, embedded SQL, and `pkg/migrate`: forward-only,
+- [x] Added `api migrate` (formerly `cmd/migrate`), embedded SQL, and `pkg/migrate`: forward-only,
       transactional application with an advisory lock, version/checksum ledger,
       and rejection of changed, missing, or out-of-order applied history.
 - [x] Added Makefile targets for migrations, formatting, sqlc generation freshness,
@@ -369,7 +370,7 @@ get all six errors in one response.
       min/max, pattern; undeclared fields pass through for webhook payloads).
 - [x] `Spec.Hash()` (sha256 of canonical JSON) and `spec.Load` (rebuild programs
       from the stored spec, not the YAML).
-- [x] `internal/workflows.Service.Publish`: row lock, hash dedupe
+- [x] `internal/services/workflows.Service.Publish`: row lock, hash dedupe
       (`unchanged`), version max+1, plan limits (workflows, steps).
 - [x] Expression library: CEL strings, encoders (base64), math, lists, sets,
       optional types and `list.sum()`.
@@ -400,7 +401,7 @@ and watch another finish it.
       at the end of **every** engine test. Write the helper once; use it everywhere.
 
 **M2–M5 progress (2026-10-10)**
-- [x] `internal/flow`: spec cache (LRU by version ID), `Start` (run plus roots,
+- [x] `internal/services/runs`: spec cache (LRU by version ID), `Start` (run plus roots,
       idempotency key with request-hash conflict detection, correlation,
       deadline), `Advance` (successors, joins, failure handlers, branch pruning,
       skip cascade, run budget), `Recompute` (run status, outputs, unhandled
@@ -487,10 +488,10 @@ workflow timing out into `reassign_rider`.
 ### M6 — Observability & polish (3–4 days)
 
 Build: `run_events` writer with gap-free seq, `GET /runs/{id}/events` + SSE,
-cancellation, Prometheus metrics, `wfctl`, graceful shutdown with lease release.
+cancellation, Prometheus metrics, the admin API (`04 §5.1`), graceful shutdown with lease release.
 
-**Demo:** `wfctl run order-fulfilment --input order_id=X --tail` streaming a live
-timeline.
+**Demo:** `POST /v1/runs` for `order-fulfilment`, then
+`curl -N /v1/runs/{id}/events` streaming a live timeline.
 
 **Acceptance**
 - [ ] `seq` is gap-free under 8 concurrent workers on one run (I6).
@@ -537,8 +538,7 @@ logs or events.
 
 ### M10 — Entry points, API surface, scaling (3–4 days)
 
-Build: `cmd/api` and `cmd/worker` (`cmd/workflowd` keeps `APP_MODE=all` for
-local development); `WORKER_ID` defaults to hostname plus a random suffix so
+Build: `cmd/api` and `cmd/worker` (run both for local development); `WORKER_ID` defaults to hostname plus a random suffix so
 `docker compose up --scale worker=N` works; worker `/metrics` and `/healthz` on
 `WORKER_METRICS_ADDRESS`. API: RFC 7807 errors; `POST /v1/workflows` (YAML or
 JSON, `?dry_run`), `GET /v1/workflows[/{name}[/versions/{n}]]`, archive;
@@ -842,15 +842,15 @@ pays for itself the first time someone asks why a run took nine minutes.
 | Signals 404-ing | `wf_signal_total{result="no_waiter"}` | Early signals (`03 §7.3`) — caller must retry, or implement option (b) |
 | DB CPU high | `pg_stat_statements` | Almost always a missing partial index; check `01 §2.5` |
 
-**Manual interventions**, as `wfctl` subcommands so nobody hand-writes UPDATEs
-against production at 3am:
+**Manual interventions**, as platform-admin API calls (`04 §5.1`) so nobody
+hand-writes UPDATEs against production at 3am:
 
 ```
-wfctl run cancel <run-id>
-wfctl node retry <node-execution-id>      -- insert attempt+1 as ready
-wfctl node skip  <node-execution-id>      -- force-skip a wedged node, then advance
-wfctl signal <key> --payload @file.json
-wfctl lease release --worker <id>         -- after a hard crash
+POST /v1/runs/{id}/cancel                         -- tenant API, editor role
+POST /v1/admin/node-executions/{id}/retry         -- insert attempt+1 as ready
+POST /v1/admin/node-executions/{id}/skip          -- force-skip a wedged node, then advance
+POST /v1/signals                                  -- tenant API, editor role
+POST /v1/admin/workers/{worker_id}/release-leases -- after a hard crash
 ```
 
 ---
@@ -875,7 +875,7 @@ If you want a single sequence to follow without re-reading everything:
 10. `http` executor, retries, idempotency keys.
 11. `branch` + skip cascade.
 12. `sleep`, `wait_event`, signals, sweeper passes 2–4.
-13. Events, SSE, cancellation, metrics, `wfctl`.
+13. Events, SSE, cancellation, metrics, admin API.
 14. Ship. Then `agent`.
 
 **Product order (from 2026-10-10):** finish M2–M5 verification → M10 (entry
@@ -924,7 +924,7 @@ production.
 - [ ] Rolling restart mid-run costs <1s, not a lease TTL.
 - [ ] A 30-day `sleep` holds one row, zero goroutines (asserted, not assumed).
 - [ ] `?dry_run=true` wired into CI as a workflow lint.
-- [ ] Runbook §7 written, and every `wfctl` command in it actually exists.
+- [ ] Runbook §7 written, and every admin endpoint in it actually exists.
 
 ---
 

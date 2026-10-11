@@ -60,15 +60,14 @@ root:
 
 ```sh
 make migrate                 # apply migrations (goose, embedded SQL)
-go run ./cmd/workflowd       # API and worker in one process (APP_MODE=all)
-go run ./cmd/api             # or run them separately
-go run ./cmd/worker
+go run ./cmd/api             # HTTP API
+go run ./cmd/worker          # claim loop, dispatcher, sweeper
 ```
 
 Only `DATABASE_URL` is required; every other setting has a default (see
 `internal/config/config.go`, where each field's `env` tag names its variable).
 
-`make migrate` runs `go run ./cmd/migrate`, which applies pending migrations
+`make migrate` runs `go run ./cmd/api migrate`, which applies pending migrations
 with goose. SQL is embedded in the binary. Versions are recorded in
 `goose_db_version`; a PostgreSQL session advisory lock serialises concurrent
 runners; each migration runs in its own transaction; an unapplied migration
@@ -99,8 +98,7 @@ will run on pushes and pull requests once this project is in a GitHub repository
 
 ## Application lifecycle
 
-`cmd/workflowd` reads `APP_MODE` (`api`, `worker` or `all`); `cmd/api` and
-`cmd/worker` fix the mode. Worker IDs default to the hostname plus a random
+`cmd/api` and `cmd/worker` are the two binaries; each fixes its mode. Worker IDs default to the hostname plus a random
 suffix, so `docker compose up --scale worker=N` works. A worker serves
 `/metrics` and `/healthz` on `WORKER_METRICS_ADDRESS` when it is set.
 
@@ -109,7 +107,7 @@ accepts a context and concrete configuration, constructs the logger, reserves th
 HTTP address, opens PostgreSQL, and constructs the API. It reports the actual bound
 address only after dependencies are ready. Startup failures release resources.
 
-`internal/api.Server.Run` owns serving and request draining. The first signal stops
+`internal/server.Server.Run` owns serving and request draining. The first signal stops
 accepting connections while allowing active requests to finish. If the grace period
 expires, it closes connections and reports the timeout. There is no custom handler tracking
 or waiting after forced closure; handlers should honor request cancellation. A second signal restores normal

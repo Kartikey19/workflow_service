@@ -14,10 +14,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/kartikey/workflow_service/internal/config"
-	"github.com/kartikey/workflow_service/internal/engine"
-	"github.com/kartikey/workflow_service/internal/executor"
-	"github.com/kartikey/workflow_service/internal/flow"
+	"github.com/kartikey/workflow_service/internal/core/engine"
+	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
+	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/spec"
 	"github.com/kartikey/workflow_service/internal/store/gen"
 )
@@ -157,7 +157,7 @@ func TestDispatcherRun(t *testing.T) {
 			var calls atomic.Int32
 			run := tc.execute(pool)
 			registry := executor.NewRegistry()
-			for _, ex := range []executor.Executor{executor.Noop{}, fakeExecutor{execute: func(ctx context.Context, req executor.Request) (executor.Result, error) {
+			for _, ex := range []executor.Executor{builtin.Noop{}, fakeExecutor{execute: func(ctx context.Context, req executor.Request) (executor.Result, error) {
 				calls.Add(1)
 				return run(ctx, req)
 			}}} {
@@ -166,11 +166,11 @@ func TestDispatcherRun(t *testing.T) {
 				}
 			}
 			logger := zaptest.NewLogger(t)
-			f, err := flow.New(pool, logger)
+			f, err := runs.New(pool, logger)
 			if err != nil {
 				t.Fatal(err)
 			}
-			dispatcher := engine.NewDispatcher(config.WorkerConfig{ID: "worker-a", LeaseTTL: 30 * time.Second}, f, registry, nil, logger)
+			dispatcher := engine.NewDispatcher(engine.Config{ID: "worker-a", LeaseTTL: 30 * time.Second}, f, registry, nil, logger)
 
 			dispatcher.Run(ctx, claimOne(t, ctx, gen.New(pool), "worker-a"))
 			tc.check(t, readTargetRows(t, ctx, pool), calls.Load())

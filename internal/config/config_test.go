@@ -10,7 +10,7 @@ import (
 func TestLoadConfig(t *testing.T) {
 	setValidEnvironment(t)
 
-	got, err := LoadConfig()
+	got, err := LoadConfig("api")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -18,8 +18,8 @@ func TestLoadConfig(t *testing.T) {
 	if got.App.Environment != "testing" {
 		t.Errorf("APP_ENV = %q, want testing", got.App.Environment)
 	}
-	if got.App.Mode != "all" {
-		t.Errorf("APP_MODE = %q, want all", got.App.Mode)
+	if got.App.Mode != "api" {
+		t.Errorf("mode = %q, want api", got.App.Mode)
 	}
 	if got.Database.MaxConns != 8 || got.Database.MinConns != 2 {
 		t.Errorf("database connections = (%d, %d), want (8, 2)", got.Database.MaxConns, got.Database.MinConns)
@@ -33,7 +33,7 @@ func TestLoadConfigRejectsInvalidEnvironmentValue(t *testing.T) {
 	setValidEnvironment(t)
 	t.Setenv("APP_ENV", "test")
 
-	_, err := LoadConfig()
+	_, err := LoadConfig("api")
 	if err == nil {
 		t.Fatal("LoadConfig() error = nil, want invalid APP_ENV error")
 	}
@@ -57,7 +57,7 @@ func TestConfigValidate(t *testing.T) {
 			configure: func(c *Config) {
 				c.App.Mode = "server"
 			},
-			wantError: "APP_MODE must be api, worker, or all",
+			wantError: "mode must be api or worker",
 		},
 	}
 
@@ -84,7 +84,6 @@ func setValidEnvironment(t *testing.T) {
 	t.Helper()
 	for name, value := range map[string]string{
 		"APP_ENV":              "testing",
-		"APP_MODE":             "all",
 		"HTTP_ADDRESS":         "127.0.0.1:8080",
 		"SERVICE_NAME":         "workflow-service",
 		"BUILD_VERSION":        "test",
@@ -109,7 +108,7 @@ func validConfig() Config {
 	return Config{
 		App: AppConfig{
 			Environment:   "testing",
-			Mode:          "all",
+			Mode:          "api",
 			HTTPAddress:   "127.0.0.1:0",
 			ShutdownGrace: 10 * time.Second,
 		},
@@ -132,14 +131,14 @@ func validConfig() Config {
 
 func TestLoadConfigDefaultsAndDedicatedMode(t *testing.T) {
 	t.Chdir(t.TempDir())
-	for _, key := range []string{"APP_ENV", "APP_MODE", "HTTP_ADDRESS", "SERVICE_NAME", "BUILD_VERSION", "LOG_LEVEL",
+	for _, key := range []string{"APP_ENV", "HTTP_ADDRESS", "SERVICE_NAME", "BUILD_VERSION", "LOG_LEVEL",
 		"LOG_ADD_SOURCE", "DB_MAX_CONNS", "DB_MIN_CONNS", "DB_CONNECT_TIMEOUT", "WORKER_ID", "WORKER_CONCURRENCY",
 		"WORKER_BATCH_SIZE", "WORKER_POLL_INTERVAL", "WORKER_LEASE_TTL", "SHUTDOWN_GRACE"} {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
 	}
 	t.Setenv("DATABASE_URL", "postgres://localhost/workflow")
-	got, err := LoadConfigMode("worker")
+	got, err := LoadConfig("worker")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +149,7 @@ func TestLoadConfigDefaultsAndDedicatedMode(t *testing.T) {
 	if !strings.Contains(got.Worker.ID, "-") {
 		t.Fatalf("WORKER_ID default = %q, want hostname plus suffix", got.Worker.ID)
 	}
-	other, err := LoadConfigMode("worker")
+	other, err := LoadConfig("worker")
 	if err != nil || other.Worker.ID == got.Worker.ID {
 		t.Fatalf("two replicas share WORKER_ID %q", got.Worker.ID)
 	}
@@ -159,7 +158,7 @@ func TestLoadConfigDefaultsAndDedicatedMode(t *testing.T) {
 func TestLoadConfigRequiresDatabaseURL(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("DATABASE_URL", "")
-	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+	if _, err := LoadConfig("api"); err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Fatalf("LoadConfig() = %v, want missing DATABASE_URL", err)
 	}
 }

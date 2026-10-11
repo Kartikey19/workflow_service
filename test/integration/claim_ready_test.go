@@ -16,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/kartikey/workflow_service/internal/db"
 	"github.com/kartikey/workflow_service/internal/store/gen"
 	"github.com/kartikey/workflow_service/migrations"
+	"github.com/kartikey/workflow_service/pkg/db"
 )
 
 const (

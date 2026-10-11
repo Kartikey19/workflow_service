@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kartikey/workflow_service/internal/expr"
+	"github.com/kartikey/workflow_service/internal/core/expr"
 )
 
 // wholeInputPattern matches an expression that passes the input map around
