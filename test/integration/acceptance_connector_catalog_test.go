@@ -176,41 +176,44 @@ func TestSavedConnectorWorkspaceActions(t *testing.T) {
 			}
 		})
 	}
-	// Bound tools use those same saved connectors and action implementations.
+	// An agent searches the same saved connectors with glob, grep and read.
+	searches := []struct{ verb, args, want string }{
+		{"glob", `{"connection":"gmail-shared","pattern":"label:inbox"}`, "gmail-next"},
+		{"grep", `{"connection":"gmail-shared","query":"label:inbox"}`, "gmail-next"},
+		{"read", `{"connection":"gmail-shared","id":"m1"}`, "hello mail"},
+		{"read", `{"connection":"gdocs-shared","id":"doc1"}`, "hello docs"},
+		{"read", `{"connection":"gsheets-shared","id":"sheet1","range":"Sheet1!A1:B2"}`, "sheets"},
+		{"glob", `{"connection":"gcalendar-shared"}`, "calendar-next"},
+		{"read", `{"connection":"slack-shared","id":"C1"}`, "slack-next"},
+		{"grep", `{"connection":"notion-shared","query":"Notes"}`, "notion-next"},
+		{"read", `{"connection":"notion-shared","id":"page1"}`, "hello"},
+	}
 	steps := []toolStep{}
-	refs := []string{}
-	for _, tt := range cases {
-		ref := "connector:" + tt.connection + ":" + tt.action
-		steps = append(steps, toolStep{"$connector:" + ref, tt.args})
-		refs = append(refs, ref)
+	for _, search := range searches {
+		steps = append(steps, toolStep{search.verb, search.args})
 	}
 	model, results := scriptedToolLLM(t, steps)
 	owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "connector-model", "provider": "openai_compatible", "base_url": model.URL, "api_key": "connector-test-llm-key"}, 201)
 	body := agentBody("connector-agent", "connector-model")
-	body["tools"] = refs
+	body["tools"] = []string{"gmail-shared", "gdocs-shared", "gsheets-shared", "gcalendar-shared", "slack-shared", "notion-shared"}
 	body["max_iterations"] = 20
 	owner.mustOK("POST", "/be/v1/agents", body, 201)
 	tested := owner.mustOK("POST", "/be/v1/agents/connector-agent/test", map[string]any{"input": map[string]any{}}, 200)
 	if tested["ok"] != true {
 		t.Fatalf("agent %v", tested)
 	}
-	if len(results()) != len(cases) {
-		t.Fatal("agent did not call all connector actions")
+	if len(results()) != len(searches) {
+		t.Fatal("agent did not run every search")
 	}
-	for i, tt := range cases {
-		if !strings.Contains(results()[i], tt.want) {
-			t.Errorf("agent result %s: %s", tt.action, results()[i])
+	for i, search := range searches {
+		if !strings.Contains(results()[i], search.want) {
+			t.Errorf("agent %s %s: %s", search.verb, search.args, results()[i])
 		}
-	}
-	body["name"] = "wrong-kind"
-	body["tools"] = []string{"connector:slack-shared:db.query"}
-	if status, _ := owner.call("POST", "/be/v1/agents", body); status != 400 {
-		t.Errorf("wrong-kind %d", status)
 	}
 	other := s.owner(t, "Other connector org")
 	body["connection"] = ""
 	body["name"] = "foreign"
-	body["tools"] = []string{"connector:slack-shared:slack.history"}
+	body["tools"] = []string{"slack-shared"}
 	if status, _ := other.call("POST", "/be/v1/agents", body); status != 400 {
 		t.Errorf("foreign connector %d", status)
 	}
@@ -270,10 +273,10 @@ func TestMongoSavedConnector(t *testing.T) {
 	if output["row_count"] != float64(1) || output["truncated"] != true || !strings.Contains(toJSON(output), "first") {
 		t.Fatalf("Mongo result %v", output)
 	}
-	model, results := scriptedToolLLM(t, []toolStep{{"$connector:connector:mongo-shared:mongo.list_collections", `{}`}, {"$connector:connector:mongo-shared:mongo.find", fmt.Sprintf(`{"collection":%q,"max_rows":1}`, collection)}})
+	model, results := scriptedToolLLM(t, []toolStep{{"glob", `{"connection":"mongo-shared"}`}, {"read", fmt.Sprintf(`{"connection":"mongo-shared","id":%q,"limit":1}`, collection)}})
 	owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "mongo-model", "provider": "openai_compatible", "base_url": model.URL, "api_key": "mongo-test-llm-key"}, 201)
 	body := agentBody("mongo-analyst", "mongo-model")
-	body["tools"] = []string{"connector:mongo-shared:mongo.list_collections", "connector:mongo-shared:mongo.find"}
+	body["tools"] = []string{"mongo-shared"}
 	owner.mustOK("POST", "/be/v1/agents", body, 201)
 	tested := owner.mustOK("POST", "/be/v1/agents/mongo-analyst/test", map[string]any{"input": map[string]any{}}, 200)
 	if tested["ok"] != true || len(results()) != 2 || !strings.Contains(results()[1], `"truncated":true`) {
@@ -320,12 +323,15 @@ func TestSQLSavedConnectorActions(t *testing.T) {
 		if _, run := runToEnd(t, owner, "shared-query"); run["status"] != "succeeded" {
 			t.Fatalf("query %v", run)
 		}
-		ref := "connector:" + connection + ":db.query"
-		model, results := scriptedToolLLM(t, []toolStep{{"$connector:" + ref, string(args)}, {"$connector:" + ref, `{"sql":"select 1","connection":"another"}`}, {"$connector:" + ref, `{"sql":"delete from ` + tb.events + `"}`}})
+		grep := func(connection, sql string) toolStep {
+			raw, _ := json.Marshal(map[string]any{"connection": connection, "query": sql})
+			return toolStep{"grep", string(raw)}
+		}
+		model, results := scriptedToolLLM(t, []toolStep{grep(connection, "select count(*) as n from "+tb.events), grep("another", "select 1"), grep(connection, "delete from "+tb.events)})
 		owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "shared-sql-model", "provider": "openai_compatible", "base_url": model.URL, "api_key": "shared-sql-test-key"}, 201)
 		body := agentBody("shared-sql-agent", "shared-sql-model")
 		body["max_iterations"] = 5
-		body["tools"] = []string{ref}
+		body["tools"] = []string{connection}
 		owner.mustOK("POST", "/be/v1/agents", body, 201)
 		tested := owner.mustOK("POST", "/be/v1/agents/shared-sql-agent/test", map[string]any{"input": map[string]any{}}, 200)
 		if tested["ok"] != true || len(results()) != 3 || !strings.Contains(results()[0], `"n":1`) || !strings.Contains(results()[1], "connection") || !strings.Contains(results()[2], "only read statements") {

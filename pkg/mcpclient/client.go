@@ -65,7 +65,7 @@ func Connect(ctx context.Context, cfg Config, client *http.Client) (*Session, er
 	} else {
 		transport = &mcp.StreamableClientTransport{Endpoint: cfg.URL, HTTPClient: &checked, MaxRetries: -1, DisableStandaloneSSE: true, MaxEventSize: MaxBytes}
 	}
-	clientMCP := mcp.NewClient(&mcp.Implementation{Name: "workflow-service", Version: "1"}, nil)
+	clientMCP := mcp.NewClient(&mcp.Implementation{Name: "weft", Version: "1"}, nil)
 	session, err := clientMCP.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, redact(err, cfg.Token)

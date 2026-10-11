@@ -12,6 +12,8 @@ import (
 	"sync"
 
 	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/core/expr"
+	"github.com/kartikey/workflow_service/pkg/vault"
 )
 
 // redactionMark replaces a secret value wherever it would otherwise be stored.
@@ -25,22 +27,83 @@ func (e *missingSecretError) Error() string {
 	return fmt.Sprintf("secret %s is not defined; add it under /v1/secrets", strings.Join(e.names, ", "))
 }
 
-// secretRef finds secrets.NAME and secrets["NAME"] in a config.
-var secretRef = regexp.MustCompile(`secrets(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[\\?"([A-Za-z_][A-Za-z0-9_]*)\\?"\])`)
+// secretRef finds secrets.NAME, secrets.GROUP.KEY and their secrets["NAME"]
+// forms in one expression; input.secrets.x and mysecrets.x are not references.
+var secretRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.])secrets(?:\.([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?|\[["']([A-Za-z_][A-Za-z0-9_]*)["']\](?:\[["']([A-Za-z_][A-Za-z0-9_]*)["']\])?)`)
 
-// missingSecrets lists the secret names config refers to that values lacks.
-func missingSecrets(config map[string]any, values map[string]string) []string {
-	raw, err := json.Marshal(config)
-	if err != nil {
-		return nil
+// hasSecret says whether a reference is satisfied. A plain secret satisfies
+// secrets.NAME and anything read from it; a group satisfies secrets.GROUP and
+// each of its keys by name.
+func hasSecret(values map[string]string, name, key string) bool {
+	if _, ok := values[name]; ok {
+		return true
 	}
-	seen := map[string]bool{}
-	for _, match := range secretRef.FindAllStringSubmatch(string(raw), -1) {
-		name := match[1]
-		if name == "" {
-			name = match[2]
+	if key != "" {
+		_, ok := values[name+"."+key]
+		return ok
+	}
+	for stored := range values {
+		if strings.HasPrefix(stored, name+".") {
+			return true
 		}
-		if _, ok := values[name]; !ok {
+	}
+	return false
+}
+
+// secretUse is one static reference: a secret's name, plus key for a group's key.
+type secretUse struct{ name, key string }
+
+// secretUses walks config's ${...} expressions. uses says whether any of them
+// mentions secrets at all (secrets[input.name] counts); refs lists the names
+// read statically. Literal text is ignored, so prose or code that mentions
+// secrets.x (Python's secrets module, say) neither loads the vault nor is
+// reported missing.
+func secretUses(config map[string]any) (uses bool, refs []secretUse) {
+	var walk func(any)
+	walk = func(value any) {
+		switch v := value.(type) {
+		case map[string]any:
+			for _, child := range v {
+				walk(child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(child)
+			}
+		case string:
+			segments, err := expr.ParseTemplate(v)
+			if err != nil {
+				return
+			}
+			for _, segment := range segments {
+				if !segment.IsExpression || !strings.Contains(segment.Text, "secrets") {
+					continue
+				}
+				uses = true
+				for _, match := range secretRef.FindAllStringSubmatch(segment.Text, -1) {
+					if match[1] != "" {
+						refs = append(refs, secretUse{match[1], match[2]})
+					} else {
+						refs = append(refs, secretUse{match[3], match[4]})
+					}
+				}
+			}
+		}
+	}
+	walk(config)
+	return uses, refs
+}
+
+// missingSecrets lists the references values cannot satisfy, as NAME or
+// group.key.
+func missingSecrets(refs []secretUse, values map[string]string) []string {
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		if !hasSecret(values, ref.name, ref.key) {
+			name := ref.name
+			if ref.key != "" {
+				name += "." + ref.key
+			}
 			seen[name] = true
 		}
 	}
@@ -52,12 +115,27 @@ func missingSecrets(config map[string]any, values map[string]string) []string {
 	return names
 }
 
-// secretValueList returns the non-empty secret values, longest first, so a
-// value that contains another is replaced whole.
+// maskSecrets is what stored node input sees in place of the vault: every
+// credential as ***, while short settings keep their value so an expression
+// such as double(secrets.group.temperature) still evaluates.
+func maskSecrets(values map[string]string) map[string]string {
+	masked := make(map[string]string, len(values))
+	for name, value := range values {
+		masked[name] = value
+		if len(value) >= vault.MinScrubLength {
+			masked[name] = redactionMark
+		}
+	}
+	return masked
+}
+
+// secretValueList returns the secret values worth masking, longest first, so a
+// value that contains another is replaced whole. Short values (a group's
+// "high" or "0.3") are settings and would mangle the text around them.
 func secretValueList(values map[string]string) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
-		if value != "" {
+		if len(value) >= vault.MinScrubLength {
 			out = append(out, value)
 		}
 	}

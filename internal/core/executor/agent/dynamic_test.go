@@ -26,7 +26,7 @@ func TestDynamicSessionsCloseAndToolsRemainScoped(t *testing.T) {
 		t.Run(map[bool]string{false: "model reply", true: "discovery error"}[fail], func(t *testing.T) {
 			tool := &echoTool{}
 			client := &scripted{replies: []any{toolUse("1", "echo", `{}`), text("done", 1, 1)}}
-			e := New(NewStatic("anthropic", client, nil), nil, nil) // echo is deliberately absent from the static registry
+			e := New(NewStatic("anthropic", client, nil), nil)
 			source := &dynamicSource{tool: tool}
 			if fail {
 				source.err = executor.Permanent("mcp_protocol", errors.New("discovery failed"))
@@ -38,9 +38,6 @@ func TestDynamicSessionsCloseAndToolsRemainScoped(t *testing.T) {
 			}
 			if source.closed != 1 {
 				t.Fatalf("closed %d times", source.closed)
-			}
-			if _, ok := e.tools.Get("echo"); ok {
-				t.Fatal("discovered tool leaked into shared registry")
 			}
 			if !fail && len(tool.calls) != 1 {
 				t.Fatalf("calls: %v", tool.calls)

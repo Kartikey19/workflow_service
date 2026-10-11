@@ -186,8 +186,8 @@ func TestIdentityInviteAcceptLoginSwitch(t *testing.T) {
 	if created, err := ident.Bootstrap(ctx, "root@example.com", adminPassword); err != nil || !created {
 		t.Fatalf("bootstrap = %v, %v", created, err)
 	}
-	if created, err := ident.Bootstrap(ctx, "other@example.com", adminPassword); err != nil || created {
-		t.Fatalf("a second bootstrap must do nothing: %v, %v", created, err)
+	if created, err := ident.Bootstrap(ctx, "root@example.com", "a-different-password-1"); err != nil || created {
+		t.Fatalf("bootstrapping an existing admin must do nothing: %v, %v", created, err)
 	}
 	root := newPerson(t, base)
 	root.mustLogin("root@example.com", adminPassword)
@@ -615,5 +615,65 @@ func TestConcurrentAdministratorBootstrap(t *testing.T) {
 	}
 	if created != 1 {
 		t.Fatalf("created %d administrators", created)
+	}
+}
+
+// The configured administrator is ensured on every start, even when other users
+// exist, and an existing account's password is never reset from the environment.
+func TestBootstrapKeepsAdministratorAlongsideOtherUsers(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, ctx)
+	base, ident := h.identityAPI()
+	if created, err := ident.Bootstrap(ctx, "other@example.com", adminPassword); err != nil || !created {
+		t.Fatalf("first bootstrap = %v, %v", created, err)
+	}
+	other := newPerson(t, base)
+	other.mustLogin("other@example.com", adminPassword)
+	member := newPerson(t, base)
+	if status, body := accept(t, member, inviteToOrg(t, other, "alice@example.com", "Acme Inc"), "alice-long-password", "Alice"); status != 201 {
+		t.Fatalf("accept = %d %v", status, body)
+	}
+	if created, err := ident.Bootstrap(ctx, "root@example.com", adminPassword); err != nil || !created {
+		t.Fatalf("an administrator must be created although other users exist: %v, %v", created, err)
+	}
+	if created, err := ident.Bootstrap(ctx, "root@example.com", "a-different-password-1"); err != nil || created {
+		t.Fatalf("a repeat start must do nothing: %v, %v", created, err)
+	}
+	root := newPerson(t, base)
+	if status, _ := root.login("root@example.com", "a-different-password-1"); status == 200 {
+		t.Fatal("the environment password replaced an existing account's password")
+	}
+	root.mustLogin("root@example.com", adminPassword)
+}
+
+// If the configured administrator's email was taken by an ordinary account (an
+// invite accepted first), or the account was locked, the next start restores
+// platform-admin access without changing the password.
+func TestBootstrapRestoresExistingAdministrator(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, ctx)
+	base, ident := h.identityAPI()
+	if _, err := ident.Bootstrap(ctx, "other@example.com", adminPassword); err != nil {
+		t.Fatal(err)
+	}
+	other := newPerson(t, base)
+	other.mustLogin("other@example.com", adminPassword)
+	root := newPerson(t, base)
+	if status, body := accept(t, root, inviteToOrg(t, other, "root@example.com", "Acme Inc"), "root-long-password", "Root"); status != 201 {
+		t.Fatalf("accept = %d %v", status, body)
+	}
+	for range 5 {
+		newPerson(t, base).login("root@example.com", "wrong password")
+	}
+	if status, _ := newPerson(t, base).login("root@example.com", "root-long-password"); status != 429 {
+		t.Fatalf("a locked account signed in: %d", status)
+	}
+	if created, err := ident.Bootstrap(ctx, "root@example.com", adminPassword); err != nil || created {
+		t.Fatalf("bootstrap = %v, %v", created, err)
+	}
+	again := newPerson(t, base)
+	again.mustLogin("root@example.com", "root-long-password")
+	if _, me := again.call("GET", "/be/v1/auth/me", nil); me["user"].(map[string]any)["platform_admin"] != true {
+		t.Fatalf("the administrator was not restored: %v", me)
 	}
 }

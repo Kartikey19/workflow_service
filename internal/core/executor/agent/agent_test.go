@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -68,14 +69,26 @@ func (e *echoTool) Call(_ context.Context, _ Call, in json.RawMessage) (json.Raw
 	return json.RawMessage(`{"echoed":true}`), nil
 }
 
+// toolSource resolves each reference to the tool of that name, as a connector
+// would resolve to glob, grep and read.
+type toolSource map[string]Tool
+
+func (s toolSource) Resolve(_ context.Context, _ uuid.UUID, refs []string) ([]Tool, func(), error) {
+	out := []Tool{}
+	for _, ref := range refs {
+		tool, ok := s[ref]
+		if !ok {
+			return nil, nil, executor.Permanent("connector_tools", fmt.Errorf("connector %q is not defined", ref))
+		}
+		out = append(out, tool)
+	}
+	return out, func() {}, nil
+}
+
 func newExecutor(t *testing.T, client llm.Client, tool Tool) *Executor {
 	t.Helper()
-	tools, err := NewTools(tool, CurrentTime{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	pricing := llm.Pricing{"claude-sonnet": {InputPerMTok: 3, OutputPerMTok: 15}}
-	return New(NewStatic("anthropic", client, pricing), tools, nil)
+	return New(NewStatic("anthropic", client, pricing), nil).WithDynamicTools(toolSource{"echo": tool})
 }
 
 func run(t *testing.T, e *Executor, config string) (executor.Result, error) {
@@ -154,9 +167,8 @@ func TestMaxIterationsIsEnforcedAndReported(t *testing.T) {
 func TestModelMistakesGoBackToTheModel(t *testing.T) {
 	tool := &echoTool{err: errors.New("boom")}
 	client := &scripted{replies: []any{
-		toolUse("a", "missing", `{}`),      // unknown tool
-		toolUse("b", "current_time", `{}`), // registered, but not enabled for this node
-		toolUse("c", "echo", `{}`),         // enabled, but fails
+		toolUse("a", "missing", `{}`), // unknown tool
+		toolUse("c", "echo", `{}`),    // enabled, but fails
 		text("recovered", 1, 1),
 	}}
 	result, err := run(t, newExecutor(t, client, tool), `{"model":"claude-sonnet-5-5","prompt":"p","tools":["echo"],"max_iterations":5}`)
@@ -166,8 +178,8 @@ func TestModelMistakesGoBackToTheModel(t *testing.T) {
 	if string(result.Output) != `{"text":"recovered"}` {
 		t.Fatalf("output = %s", result.Output)
 	}
-	last := client.requests[3].Messages
-	for i, want := range []string{`tool "missing" is not available`, `tool "current_time" is not available`, "boom"} {
+	last := client.requests[2].Messages
+	for i, want := range []string{`tool "missing" is not available`, "boom"} {
 		block := last[2+2*i].Content[0]
 		if !block.IsError || block.ToolContent != want {
 			t.Fatalf("tool result %d = %+v, want error %q", i, block, want)
@@ -252,7 +264,7 @@ func TestProviderErrorsFollowTheRetryModel(t *testing.T) {
 }
 
 func TestNotConfiguredAndBadResolvedConfig(t *testing.T) {
-	_, err := run(t, New(nil, nil, nil), `{"model":"m","prompt":"p","max_iterations":1}`)
+	_, err := run(t, New(nil, nil), `{"model":"m","prompt":"p","max_iterations":1}`)
 	var permanent *executor.PermanentError
 	if !errors.As(err, &permanent) || permanent.Code != "llm_not_configured" {
 		t.Fatalf("err = %v", err)
@@ -262,7 +274,7 @@ func TestNotConfiguredAndBadResolvedConfig(t *testing.T) {
 		`{"model":"m","max_iterations":1}`,
 		`{"model":"m","prompt":"p"}`,
 		`{"model":"m","prompt":"p","max_iterations":99}`,
-		`{"model":"m","prompt":"p","max_iterations":1,"tools":["nope"]}`,
+		`{"model":"m","prompt":"p","max_iterations":1,"tools":["Not A Connector"]}`,
 	} {
 		_, err := run(t, newExecutor(t, &scripted{replies: []any{text("x", 1, 1)}}, &echoTool{}), config)
 		if !errors.As(err, &permanent) || permanent.Code != "bad_config" {
@@ -285,8 +297,9 @@ func TestValidateConfigAtPublishTime(t *testing.T) {
 		"zero iterations":                 {`{"model":"m","prompt":"p","max_iterations":0}`, "between 1 and 50"},
 		"model is required":               {`{"prompt":"p","max_iterations":1}`, "model is required"},
 		"prompt is required":              {`{"model":"m","max_iterations":1}`, "prompt is required"},
-		"unknown tool":                    {`{"model":"m","prompt":"p","max_iterations":1,"tools":["search_kb"]}`, `unknown tool "search_kb"`},
-		"tools are literal":               {`{"model":"m","prompt":"p","max_iterations":1,"tools":["${input.t}"]}`, "literal tool names"},
+		"tools name connectors":           {`{"model":"m","prompt":"p","max_iterations":1,"tools":["http_request()"]}`, "must name a saved connector"},
+		"tools are literal":               {`{"model":"m","prompt":"p","max_iterations":1,"tools":["${input.t}"]}`, "literal connector names"},
+		"no database_connection":          {`{"model":"m","prompt":"p","max_iterations":1,"database_connection":"db"}`, `unknown field "database_connection"`},
 		"temperature range":               {`{"model":"m","prompt":"p","max_iterations":1,"temperature":1.5}`, "between 0 and 1"},
 		"unsupported schema keyword":      {`{"model":"m","prompt":"p","max_iterations":1,"output_schema":{"oneOf":[]}}`, "output_schema"},
 		"unknown field":                   {`{"model":"m","prompt":"p","max_iterations":1,"top_k":3}`, `unknown field "top_k"`},
@@ -304,16 +317,12 @@ func TestToolsRegistry(t *testing.T) {
 	if _, err := NewTools(&echoTool{}, &echoTool{}); err == nil {
 		t.Fatal("duplicate tool names accepted")
 	}
-	tools, _ := NewTools(CurrentTime{Now: func() time.Time { return time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC) }})
-	tool, ok := tools.Get("current_time")
-	if !ok {
-		t.Fatal("current_time missing")
-	}
-	out, err := tool.Call(context.Background(), Call{}, nil)
-	if err != nil || string(out) != `{"now":"2026-10-11T09:00:00Z"}` {
-		t.Fatalf("current_time = %s, %v", out, err)
-	}
-	if got := tools.Names(); len(got) != 1 || got[0] != "current_time" {
-		t.Fatalf("names = %v", got)
+}
+
+func TestUnknownConnectorFailsPermanently(t *testing.T) {
+	_, err := run(t, newExecutor(t, &scripted{replies: []any{text("x", 1, 1)}}, &echoTool{}), `{"model":"m","prompt":"p","max_iterations":1,"tools":["gone"]}`)
+	var permanent *executor.PermanentError
+	if !errors.As(err, &permanent) || permanent.Code != "connector_tools" {
+		t.Fatalf("err = %v, want connector_tools", err)
 	}
 }

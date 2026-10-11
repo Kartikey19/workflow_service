@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"uuid"
 
 	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/pkg/llm"
-	"github.com/kartikey/workflow_service/pkg/netguard"
 )
 
 type fakeDefs map[string]Definition
@@ -41,12 +38,8 @@ func (r *recordingClients) Client(_ context.Context, _ uuid.UUID, ref ProviderRe
 
 func namedExecutor(t *testing.T, client llm.Client, defs Definitions) (*Executor, *recordingClients) {
 	t.Helper()
-	tools, err := NewTools(CurrentTime{}, &echoTool{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	clients := &recordingClients{client: client}
-	return New(clients, tools, defs), clients
+	return New(clients, defs).WithDynamicTools(toolSource{"echo": &echoTool{}}), clients
 }
 
 func TestNamedAgentRunsItsDefinition(t *testing.T) {
@@ -97,7 +90,7 @@ func TestNamedAgentFailuresArePermanent(t *testing.T) {
 		"unknown agent":    {`{"agent":"nobody","input":{}}`, "E_AGENT_NOT_FOUND"},
 		"input violates":   {`{"agent":"strict","input":{"text":5}}`, "invalid_input"},
 		"input is missing": {`{"agent":"strict","input":{}}`, "invalid_input"},
-		"removed tool":     {`{"agent":"stale","input":{}}`, "bad_config"},
+		"removed tool":     {`{"agent":"stale","input":{}}`, "connector_tools"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			client := &scripted{replies: []any{text("x", 1, 1)}}
@@ -166,7 +159,7 @@ func TestValidateDefinition(t *testing.T) {
 		"model required":      func(d *Definition) { d.Model = "" },
 		"iterations required": func(d *Definition) { d.MaxIterations = 0 },
 		"iterations capped":   func(d *Definition) { d.MaxIterations = 51 },
-		"unknown tool":        func(d *Definition) { d.Tools = []string{"nope"} },
+		"not a connector":     func(d *Definition) { d.Tools = []string{"http_request()"} },
 		"bad temperature":     func(d *Definition) { t := 2.0; d.Temperature = &t },
 		"bad output schema":   func(d *Definition) { d.OutputSchema = json.RawMessage(`{"oneOf":[]}`) },
 		"bad input schema":    func(d *Definition) { d.InputSchema = json.RawMessage(`{"oneOf":[]}`) },
@@ -177,75 +170,5 @@ func TestValidateDefinition(t *testing.T) {
 		if err := e.ValidateDefinition(d); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
-	}
-}
-
-func TestHTTPRequestToolIsFailClosed(t *testing.T) {
-	var redirects int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/redirect":
-			redirects++
-			http.Redirect(w, r, "http://169.254.169.254/latest/meta-data", http.StatusFound)
-		case "/big":
-			_, _ = w.Write([]byte(strings.Repeat("x", httpToolMaxBody+10)))
-		default:
-			body := make([]byte, 20)
-			n, _ := r.Body.Read(body)
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = w.Write([]byte(r.Method + " " + string(body[:n])))
-		}
-	}))
-	defer server.Close()
-	tool := NewHTTPRequest(netguard.Policy{AllowPrivate: true})
-	call := func(allowed []string, input string) (map[string]any, error) {
-		out, err := tool.Call(context.Background(), Call{AllowedHosts: allowed}, json.RawMessage(input))
-		if err != nil {
-			return nil, err
-		}
-		var decoded map[string]any
-		_ = json.Unmarshal(out, &decoded)
-		return decoded, nil
-	}
-	if _, err := call(nil, `{"url":"`+server.URL+`"}`); err == nil || !strings.Contains(err.Error(), "no allowed_hosts") {
-		t.Fatalf("no allow-list = %v, want a refusal", err)
-	}
-	if _, err := call([]string{"example.com"}, `{"url":"`+server.URL+`"}`); err == nil || !strings.Contains(err.Error(), "not in this agent's allowed_hosts") {
-		t.Fatalf("a host outside the list = %v", err)
-	}
-	got, err := call([]string{"127.0.0.1"}, `{"method":"POST","url":"`+server.URL+`/echo","body":"hello"}`)
-	if err != nil || got["status"] != float64(200) || got["body"] != "POST hello" || got["truncated"] != false {
-		t.Fatalf("allowed call = %v, %v", got, err)
-	}
-	// A redirect is returned as is, never followed to a host outside the list.
-	if got, err := call([]string{"127.0.0.1"}, `{"url":"`+server.URL+`/redirect"}`); err != nil || got["status"] != float64(302) {
-		t.Fatalf("redirect = %v, %v", got, err)
-	}
-	if got, _ := call([]string{"127.0.0.1"}, `{"url":"`+server.URL+`/big"}`); got["truncated"] != true || len(got["body"].(string)) != httpToolMaxBody {
-		t.Fatalf("a large body must be truncated: truncated=%v len=%d", got["truncated"], len(got["body"].(string)))
-	}
-	for _, bad := range []string{`{"url":"ftp://127.0.0.1/x"}`, `{"url":"not a url"}`, `{"method":"TRACE","url":"` + server.URL + `"}`, `[]`} {
-		if _, err := call([]string{"127.0.0.1"}, bad); err == nil {
-			t.Errorf("%s was accepted", bad)
-		}
-	}
-	// The egress guard still applies: loopback is refused by the default policy.
-	strict := NewHTTPRequest(netguard.Policy{})
-	if _, err := strict.Call(context.Background(), Call{AllowedHosts: []string{"127.0.0.1"}}, json.RawMessage(`{"url":"`+server.URL+`"}`)); err == nil || !strings.Contains(err.Error(), "egress") {
-		t.Fatalf("loopback under the default policy = %v, want an egress refusal", err)
-	}
-}
-
-func TestHostAllowed(t *testing.T) {
-	for host, want := range map[string]bool{
-		"api.example.com": true, "API.Example.com": true, "example.com": false, "evilexample.com": false,
-		"a.b.example.com": true, "other.org": false,
-	} {
-		if got := hostAllowed(host, []string{"*.example.com"}); got != want {
-			t.Errorf("hostAllowed(%q, *.example.com) = %v, want %v", host, got, want)
-		}
-	}
-	if !hostAllowed("example.com", []string{" example.com "}) || hostAllowed("example.com", []string{"", "  "}) {
-		t.Error("exact entries and blank entries misbehave")
 	}
 }

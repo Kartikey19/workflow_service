@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// MinScrubLength is the shortest value that is masked wherever it would be
+// stored or logged: replacing a one or two character value would mangle
+// everything around it. Shorter values are settings, not credentials.
+const MinScrubLength = 8
+
 var jsonStrings = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 
 // RedactJSON masks a credential inside JSON strings (including object keys).

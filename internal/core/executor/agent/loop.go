@@ -63,18 +63,16 @@ func (u *usage) add(resolved Resolved, response llm.Response) {
 // plan is everything one agent call needs, whether it came from inline
 // configuration or from a stored definition.
 type plan struct {
-	ref                ProviderRef
-	system             string
-	prompt             string
-	tools              []string
-	allowedHosts       []string
-	databaseConnection string
-	maxIterations      int
-	maxTokens          int
-	temperature        *float64
-	outputSchema       json.RawMessage
-	agent              string
-	revision           int
+	ref           ProviderRef
+	system        string
+	prompt        string
+	tools         []string
+	maxIterations int
+	maxTokens     int
+	temperature   *float64
+	outputSchema  json.RawMessage
+	agent         string
+	revision      int
 }
 
 // plan resolves the node's configuration into a plan. A stored agent is loaded
@@ -82,11 +80,11 @@ type plan struct {
 // permanent, because the same configuration fails the same way next time.
 func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (plan, error) {
 	if c.Agent == "" {
-		if err := c.validateResolved(e.tools); err != nil {
+		if err := c.validateResolved(); err != nil {
 			return plan{}, executor.Permanent("bad_config", err)
 		}
 		return plan{
-			ref: ProviderRef{Model: c.Model}, system: c.System, prompt: promptText(c.Prompt), tools: c.Tools, databaseConnection: c.DatabaseConnection,
+			ref: ProviderRef{Model: c.Model}, system: c.System, prompt: promptText(c.Prompt), tools: c.Tools,
 			maxIterations: c.MaxIterations, maxTokens: c.MaxTokens, temperature: c.Temperature, outputSchema: c.OutputSchema,
 		}, nil
 	}
@@ -99,11 +97,6 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 	}
 	if err != nil {
 		return plan{}, executor.Retryable("agent_lookup", err)
-	}
-	for _, name := range def.Tools {
-		if _, ok := e.tools.Get(name); !ok && !IsDynamicReference(name) {
-			return plan{}, executor.Permanent("bad_config", fmt.Errorf("agent %q uses tool %q, which is not available", def.Name, name))
-		}
 	}
 	var input any
 	if len(c.Input) > 0 && string(c.Input) != "null" {
@@ -126,7 +119,7 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 	}
 	return plan{
 		ref: ProviderRef{Connection: def.Connection, Model: def.Model}, system: def.System,
-		prompt: agentPrompt(c.Prompt, input), tools: def.Tools, allowedHosts: def.AllowedHosts, databaseConnection: def.DatabaseConnection,
+		prompt: agentPrompt(c.Prompt, input), tools: def.Tools,
 		maxIterations: def.MaxIterations, maxTokens: def.MaxTokens, temperature: def.Temperature,
 		outputSchema: def.OutputSchema, agent: def.Name, revision: def.Revision,
 	}, nil
@@ -198,7 +191,7 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 	}
 
 	spent := &usage{model: p.ref.Model, agent: p.agent, revision: p.revision}
-	call := Call{TenantID: req.TenantID, RunID: req.RunID, NodeID: req.NodeID, AllowedHosts: p.allowedHosts, DatabaseConnection: p.databaseConnection, RedactSecrets: req.RedactSecrets}
+	call := Call{TenantID: req.TenantID, RunID: req.RunID, NodeID: req.NodeID, RedactSecrets: req.RedactSecrets}
 	for {
 		if spent.iterations >= p.maxIterations {
 			return executor.Result{Metrics: spent.metrics()}, executor.Permanent("max_iterations_exceeded",
@@ -347,8 +340,4 @@ func classify(ctx context.Context, err error) error {
 	default:
 		return executor.Permanent("upstream_4xx", apiErr)
 	}
-}
-
-func (e *Executor) runTool(ctx context.Context, call Call, allowed []string, use llm.Block) llm.Block {
-	return runTool(ctx, e.tools, call, allowed, use)
 }

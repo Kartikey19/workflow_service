@@ -43,7 +43,7 @@ func TestWebUIBrowser(t *testing.T) {
 	invite := owner.mustOK("POST", "/be/v1/invites", map[string]any{"email": "browser@example.com", "role": "admin"}, 201)
 	cmd := exec.CommandContext(ctx, "npm", "run", "test:browser")
 	cmd.Dir = "../../web"
-	cmd.Env = append(os.Environ(), "UI_TEST_URL="+s.base, "UI_TEST_INVITE="+invite["token"].(string), "UI_TEST_PROVIDER_URL="+s.fakes.servers["openai_compatible"].URL)
+	cmd.Env = append(os.Environ(), "UI_TEST_URL="+s.base, "UI_TEST_INVITE="+invite["token"].(string), "UI_TEST_PROVIDER_URL="+s.fakes.servers["openai_compatible"].URL, "UI_TEST_ADMIN_PASSWORD="+adminPassword)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("browser acceptance: %v\n%s", err, output)

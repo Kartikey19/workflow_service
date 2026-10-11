@@ -815,7 +815,7 @@ spec version pinned at `t0`.
       model: claude-sonnet-5
       system: "Classify this support ticket."
       prompt: "${nodes.fetch_ticket.output.body}"
-      tools: [search_kb, get_customer]
+      tools: [help-center, crm]
       max_iterations: 6
 ```
 

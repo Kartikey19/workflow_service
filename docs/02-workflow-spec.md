@@ -122,7 +122,7 @@ paste around this YAML.)*
 | `input` | object | always — the run input, post-validation with defaults applied |
 | `nodes` | map[string]NodeView | nodes that have completed in this run |
 | `run` | object | `{id, correlation_id, started_at, attempt}` |
-| `secrets` | map[string]string | resolved secret refs; **never logged, never persisted** |
+| `secrets` | map | resolved secret refs, `secrets.NAME` or `secrets.GROUP.key`; **never logged, never persisted** (values under 8 characters, such as a group's effort, are settings and are kept) |
 | `now` | timestamp | evaluation time |
 | `item`, `index` | any, int | inside a `foreach` node only (4.9) |
 
@@ -296,7 +296,7 @@ form.
     model: claude-sonnet-5-5
     system: "You classify support tickets. Reply with JSON only."
     prompt: ${nodes.fetch_ticket.output.body}
-    tools: [search_kb, get_customer]     # names registered in the tool registry
+    tools: [support-mail, warehouse]     # connectors it may search with glob, grep and read
     max_iterations: 6                    # REQUIRED. hard cap on the tool loop
     max_tokens: 4096
     temperature: 0
@@ -563,11 +563,10 @@ from that organization's encrypted connection. Arguments cannot override
 | `gdrive`, `dropbox`, `onedrive` | — | Existing upload actions |
 | `smtp`, `resend` | — | `email.send` |
 
-`GET /be/v1/integrations` is the action/schema catalog for the visual builder
-and agent permissions. An agent grants individual actions with
-`tools: ['connector:warehouse:db.query', 'connector:analytics:mongo.find']`.
-SQL agents and workflow nodes share `pkg/dbx`; no separate agent query driver
-exists. Schema inspection is also available as direct workflow nodes.
+`GET /be/v1/integrations` is the action/schema catalog for the visual builder.
+Agents do not get actions one by one: they search connectors (§4.14). SQL agents
+and workflow nodes share `pkg/dbx`; no separate agent query driver exists.
+Schema inspection is also available as direct workflow nodes.
 
 MongoDB `find` takes `{collection, filter?, projection?, sort?, max_rows?}` using
 MongoDB Extended JSON. It has a 30s operation budget, a default 100-row cap,
@@ -587,26 +586,37 @@ nested blocks. `append` adds one text paragraph of at most 2000 characters.
 Slack history returns paginated messages; sending supports `channel`, `text`
 and optional `thread_ts`.
 
-Grant write actions explicitly. Many provider writes have no guaranteed
-exactly-once behavior; a retry or replay of an agent tool call can repeat a send,
-append or create. Use retries only where repetition is acceptable. Google OAuth
+Writes are workflow steps, never agent tools. Many provider writes have no
+guaranteed exactly-once behavior; a retry of the step can repeat a send, append
+or create. Use retries only where repetition is acceptable. Google OAuth
 kinds require configured Google app credentials; previously connected Gmail
 accounts need reconnecting to grant the newly requested read scope. Account
 permission checks still apply after saving a connector.
 
-### 4.14 Data exploration and `mcp.call` (M15)
+### 4.14 Agent tools: glob, grep, read (and `mcp.call`)
 
-A stored agent can bind `database_connection: warehouse` and use
-`tools: [list_tables, describe_table, run_query]`. The connection must be a
-PostgreSQL or MySQL connection in the agent's organization. The model cannot
-choose the connection. `list_tables` lists up to 500 visible tables and views;
-`describe_table` takes `{table}` and returns columns, types, nullability and
-primary-key flags. `run_query` takes `{sql, params?, max_rows?, timeout?}` and
-returns `{columns, rows, row_count, truncated}`. It uses `pkg/dbx` read-only
-transactions and bound parameters, with at most 1000 rows and a 30s timeout.
-Results are further trimmed to the agent's 32 KiB tool-result budget with
-`truncated: true`. Writes and DDL are refused and reported to the model as tool
-errors. The same binding works in inline agent config.
+An agent's `tools` lists the saved connectors it may search, for example
+`tools: [support-mail, warehouse]`. Every agent gets the same three read-only
+tools over them, the way a coding agent searches files; each takes a
+`connection` (one of the attached names, never credentials) and a `limit`:
+
+| Kind | `glob` lists | `grep {query, in?}` searches | `read {id}` opens |
+|---|---|---|---|
+| `postgres`, `mysql` | tables (`pattern` such as `orders_*`) | one read-only SQL statement | a table's columns |
+| `mongo` | collections | documents of collection `in`, `query` a JSON filter | first documents of collection `id` |
+| `gmail` | recent messages (`pattern` is Gmail search) | Gmail search syntax | a message |
+| `gcalendar` | upcoming events | events matching text | — |
+| `gdocs`, `gsheets` | — | — | a document; spreadsheet cells (`range`) |
+| `slack` | — | messages containing text in channel `in` | a channel's recent messages |
+| `notion` | pages | pages by title | a page's content |
+
+A tool is offered only when an attached connector supports it, and its
+description lists the attached connectors and their syntax. SQL runs in
+`pkg/dbx` read-only transactions with at most 1000 rows and a 30s timeout;
+writes and DDL are refused and reported to the model as tool errors. Every
+result is trimmed to the 32 KiB tool-result budget, keeping valid JSON and
+`truncated: true`. Sending, inserting and other writes are workflow steps, so an
+agent can never change anything; give it a downstream step to act on its answer.
 
 An agent can also use `tools: ["mcp:knowledge"]`. `knowledge` must be an MCP
 connection in its organization. The worker initializes it and discovers its
@@ -744,7 +754,7 @@ nodes:
       model: claude-sonnet-5-5
       system: "Classify the ticket. Respond with JSON only."
       prompt: ${nodes.fetch_ticket.output.body.description}
-      tools: [search_kb]
+      tools: [help-center]
       max_iterations: 6
       output_schema:
         type: object

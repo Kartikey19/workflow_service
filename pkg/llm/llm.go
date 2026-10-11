@@ -1,13 +1,19 @@
 // Package llm defines a small provider-neutral interface for chat models with
-// tool calling. Concrete clients (anthropic, later openai, gemini) live in
+// tool calling. Concrete clients (anthropic, openai, gemini) live in
 // subpackages and use plain net/http, with no vendor SDKs.
 package llm
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"strings"
 	"time"
+
+	"github.com/kartikey/workflow_service/pkg/httpx"
 )
 
 // Roles of a Message.
@@ -126,4 +132,30 @@ type Error struct {
 
 func (e *Error) Error() string {
 	return fmt.Sprintf("provider returned HTTP %d (%s): %s", e.Status, e.Code, e.Message)
+}
+
+// TransportError classifies a failed HTTP call while preserving cancellation.
+func TransportError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var netErr net.Error
+	code := "connection_error"
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		code = "timeout"
+	}
+	return &Error{Code: code, Message: err.Error(), Retryable: true}
+}
+
+// StatusError applies the shared retry policy to a provider's error response.
+// Clients decode provider-specific error fields before calling it.
+func StatusError(res *http.Response, code, message string, data []byte) error {
+	if message == "" {
+		message = strings.TrimSpace(string(data[:min(len(data), 200)]))
+	}
+	return &Error{
+		Status: res.StatusCode, Code: code, Message: message,
+		Retryable:  res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusRequestTimeout || res.StatusCode >= 500,
+		RetryAfter: httpx.ParseRetryAfter(res.Header.Get("Retry-After")),
+	}
 }

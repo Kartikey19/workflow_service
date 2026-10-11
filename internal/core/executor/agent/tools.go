@@ -5,21 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"time"
 	"uuid"
 )
 
 // Call identifies the node execution on whose behalf a tool runs, so a tool
 // can scope its work to the tenant and attribute it to a run.
 type Call struct {
-	TenantID   uuid.UUID
-	RunID      uuid.UUID
-	NodeID     string
-	ToolCallID string
-	// AllowedHosts is the agent's allow-list for tools that reach the network.
-	AllowedHosts       []string
-	DatabaseConnection string
-	RedactSecrets      func(...string)
+	TenantID      uuid.UUID
+	RunID         uuid.UUID
+	NodeID        string
+	ToolCallID    string
+	RedactSecrets func(...string)
 }
 
 // Tool is a function an agent may call. Tools run inside the agent's attempt:
@@ -34,8 +30,7 @@ type Tool interface {
 	Call(ctx context.Context, call Call, input json.RawMessage) (json.RawMessage, error)
 }
 
-// Tools is the registry that `tools:` in an agent node refers to. It is built
-// at startup and read-only afterwards.
+// Tools is one attempt's set of tools, keyed by the name the model calls.
 type Tools struct{ byName map[string]Tool }
 
 // NewTools builds a registry; a duplicate name is a programming error.
@@ -73,23 +68,4 @@ func (t *Tools) Names() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// CurrentTime is a harmless built-in tool: models cannot know the date.
-type CurrentTime struct{ Now func() time.Time }
-
-func (CurrentTime) Name() string { return "current_time" }
-func (CurrentTime) Description() string {
-	return "Returns the current date and time in UTC (RFC 3339)."
-}
-func (CurrentTime) InputSchema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{}}`)
-}
-
-func (c CurrentTime) Call(context.Context, Call, json.RawMessage) (json.RawMessage, error) {
-	now := time.Now
-	if c.Now != nil {
-		now = c.Now
-	}
-	return json.Marshal(map[string]string{"now": now().UTC().Format(time.RFC3339)})
 }

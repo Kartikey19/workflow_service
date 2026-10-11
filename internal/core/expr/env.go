@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/cel-go/cel"
@@ -41,9 +42,11 @@ type RunView struct {
 // Bindings supplies evaluation data without reading a clock, environment, or DB.
 // Callers must not mutate these maps while an evaluation is using them.
 type Bindings struct {
-	Input   map[string]any
-	Nodes   map[string]NodeView
-	Run     RunView
+	Input map[string]any
+	Nodes map[string]NodeView
+	Run   RunView
+	// Secrets maps a vault name to its value. A name with a dot, "group.key",
+	// is one key of a secret group and reads as secrets.group.key.
 	Secrets map[string]string
 	Now     time.Time
 	// Item and Index are the current element of a foreach branch; they are nil
@@ -57,7 +60,7 @@ func NewEnv() (*Env, error) {
 		cel.Variable("input", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("nodes", cel.MapType(cel.StringType, cel.MapType(cel.StringType, cel.DynType))),
 		cel.Variable("run", cel.MapType(cel.StringType, cel.DynType)),
-		cel.Variable("secrets", cel.MapType(cel.StringType, cel.StringType)),
+		cel.Variable("secrets", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("now", cel.TimestampType),
 		cel.Variable("item", cel.DynType),
 		cel.Variable("index", cel.IntType),
@@ -76,7 +79,11 @@ func (e *Env) Compile(source string) (*Program, error) {
 		return nil, &CompileError{"E_EXPR_SYNTAX", issues.Err().Error()}
 	}
 	if e.scope != nil {
-		if err := e.scope.check(parsed.Expr()); err != nil {
+		parsedExpr, err := cel.AstToParsedExpr(parsed)
+		if err != nil {
+			return nil, fmt.Errorf("convert parsed CEL expression: %w", err)
+		}
+		if err := e.scope.check(parsedExpr.GetExpr()); err != nil {
 			return nil, err
 		}
 	}
@@ -115,7 +122,7 @@ func (p *Program) Eval(ctx context.Context, bindings Bindings) (ref.Val, error) 
 			"id": bindings.Run.ID, "correlation_id": bindings.Run.CorrelationID,
 			"started_at": bindings.Run.StartedAt, "attempt": bindings.Run.Attempt,
 		},
-		"secrets": bindings.Secrets,
+		"secrets": nestSecrets(bindings.Secrets),
 		"now":     bindings.Now,
 		"item":    bindings.Item,
 		"index":   int64(bindings.Index),
@@ -198,4 +205,24 @@ func (p *Program) EvalList(ctx context.Context, bindings Bindings) ([]any, error
 		return nil, errors.New("expression did not return a list")
 	}
 	return list, nil
+}
+
+// nestSecrets turns "group.key" names into groups: {"group": {"key": value}}.
+// Plain names stay plain strings.
+func nestSecrets(flat map[string]string) map[string]any {
+	out := make(map[string]any, len(flat))
+	for name, value := range flat {
+		group, key, grouped := strings.Cut(name, ".")
+		if !grouped {
+			out[name] = value
+			continue
+		}
+		members, _ := out[group].(map[string]any)
+		if members == nil {
+			members = map[string]any{}
+			out[group] = members
+		}
+		members[key] = value
+	}
+	return out
 }

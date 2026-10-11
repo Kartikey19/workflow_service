@@ -60,13 +60,32 @@ func TestScrubErrorKeepsTheErrorClass(t *testing.T) {
 func TestMissingSecrets(t *testing.T) {
 	config := map[string]any{
 		"headers": map[string]any{"Authorization": "Bearer ${secrets.API_KEY}", "X": `${secrets["OTHER"]}`},
-		"note":    "no secrets mentioned except secrets.PRESENT",
+		"body":    []any{"${double(secrets.llm.temperature)}", "${secrets['llm']['effort']}", "${input.secrets.NOT_A_REF}"},
+		// Literal text is not a reference, even when it reads like one.
+		"note":   "see secrets.NOTE for details",
+		"source": "import secrets\ntoken = secrets.token_hex(16)",
 	}
-	got := missingSecrets(config, map[string]string{"PRESENT": "x"})
-	if len(got) != 2 || got[0] != "API_KEY" || got[1] != "OTHER" {
-		t.Fatalf("missing = %v, want [API_KEY OTHER]", got)
+	uses, refs := secretUses(config)
+	if !uses {
+		t.Fatal("config uses secrets")
 	}
-	if got := missingSecrets(config, map[string]string{"API_KEY": "x", "OTHER": "y", "PRESENT": "z"}); len(got) != 0 {
+	got := missingSecrets(refs, map[string]string{"PRESENT": "x"})
+	want := []string{"API_KEY", "OTHER", "llm.effort", "llm.temperature"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("missing = %v, want %v", got, want)
+	}
+	values := map[string]string{"API_KEY": "x", "OTHER": "y", "llm.temperature": "0.3", "llm.effort": "high"}
+	if got := missingSecrets(refs, values); len(got) != 0 {
 		t.Fatalf("missing = %v, want none", got)
+	}
+	if got := missingSecrets(refs, map[string]string{"API_KEY": "x", "OTHER": "y", "llm.effort": "high"}); strings.Join(got, ",") != "llm.temperature" {
+		t.Fatalf("missing = %v, want the absent group key by name", got)
+	}
+	// Mentions outside ${...} must not load the vault; a dynamic read must.
+	if uses, _ := secretUses(map[string]any{"source": "import secrets", "note": "see secrets.md"}); uses {
+		t.Fatal("literal text loaded the vault")
+	}
+	if uses, refs := secretUses(map[string]any{"v": "${secrets[input.name]}"}); !uses || len(refs) != 0 {
+		t.Fatalf("dynamic read: uses=%v refs=%v", uses, refs)
 	}
 }

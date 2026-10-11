@@ -28,9 +28,6 @@ const MaxSubworkflowDepth = 5
 
 const subworkflowKeyPrefix = "subworkflow:"
 
-// SubworkflowKey is the wait key the parent node parks on.
-func SubworkflowKey(child uuid.UUID) string { return subworkflowKeyPrefix + child.String() }
-
 func toPG(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: [16]byte(id), Valid: true} }
 
 var _ executor.ChildStarter = (*Service)(nil)

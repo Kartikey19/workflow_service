@@ -64,15 +64,6 @@ func scriptedToolLLM(t *testing.T, steps []toolStep) (*httptest.Server, func() [
 		mu.Unlock()
 		if len(results) < len(steps) {
 			step := steps[len(results)]
-			if strings.HasPrefix(step.name, "$connector:") {
-				ref := strings.TrimPrefix(step.name, "$connector:")
-				for _, tool := range request.Tools {
-					if strings.Contains(tool.Function.Description, ref+".") {
-						step.name = tool.Function.Name
-						break
-					}
-				}
-			}
 			if strings.HasPrefix(step.name, "$remote") {
 				wanted := strings.TrimPrefix(step.name, "$remote:")
 				for _, tool := range request.Tools {
@@ -92,33 +83,37 @@ func scriptedToolLLM(t *testing.T, steps []toolStep) (*httptest.Server, func() [
 	return server, func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), captured...) }
 }
 
+// An agent searches its attached database with glob, grep and read, and only
+// ever reads.
 func TestExplorationAgent(t *testing.T) {
 	eachDatabase(t, func(t *testing.T, s *stack, owner *person, b backend, tb tables, conn string) {
-		describe, _ := json.Marshal(map[string]any{"table": tb.events})
-		query, _ := json.Marshal(map[string]any{"sql": "select count(*) as n from " + tb.events, "max_rows": 1})
-		capped, _ := json.Marshal(map[string]any{"sql": b.series(100), "max_rows": 2})
-		injected, _ := json.Marshal(map[string]any{"sql": "select count(*) as n from " + tb.events + " where name = " + placeholder(b, 1), "params": []any{"first' OR 1=1 --"}})
-		write, _ := json.Marshal(map[string]any{"sql": "delete from " + tb.events})
-		model, results := scriptedToolLLM(t, []toolStep{{"list_tables", "{}"}, {"describe_table", string(describe)}, {"run_query", string(query)}, {"run_query", string(write)}, {"run_query", string(capped)}, {"run_query", string(injected)}})
+		step := func(fields map[string]any) string {
+			fields["connection"] = conn
+			raw, _ := json.Marshal(fields)
+			return string(raw)
+		}
+		model, results := scriptedToolLLM(t, []toolStep{
+			{"glob", step(map[string]any{})},
+			{"read", step(map[string]any{"id": tb.events})},
+			{"grep", step(map[string]any{"query": "select count(*) as n from " + tb.events, "limit": 1})},
+			{"grep", step(map[string]any{"query": "delete from " + tb.events})},
+			{"grep", step(map[string]any{"query": b.series(100), "limit": 2})},
+			{"grep", `{"connection":"not-attached","query":"select 1"}`},
+		})
 		owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "explorer-provider", "provider": "openai_compatible", "base_url": model.URL, "api_key": "llm-test-key"}, 201)
 		body := agentBody("explorer", "explorer-provider")
-		body["database_connection"] = conn
-		body["tools"] = []string{"list_tables", "describe_table", "run_query"}
+		body["tools"] = []string{conn}
 		body["max_iterations"] = 8
 		created := owner.mustOK("POST", "/be/v1/agents", body, 201)
-		if created["database_connection"] != conn {
-			t.Fatalf("missing binding: %v", created)
-		}
-		fetched := owner.mustOK("GET", "/be/v1/agents/explorer", nil, 200)
-		if fetched["database_connection"] != conn {
-			t.Fatalf("lost binding: %v", fetched)
+		if tools := created["tools"].([]any); len(tools) != 1 || tools[0] != conn {
+			t.Fatalf("tools = %v", created["tools"])
 		}
 		tested := owner.mustOK("POST", "/be/v1/agents/explorer/test", map[string]any{"input": map[string]any{"question": "How many events are there?"}}, 200)
 		if tested["ok"] != true {
 			t.Fatalf("exploration: %v", tested)
 		}
 		got := results()
-		if len(got) != 6 || !strings.Contains(got[0], strings.TrimPrefix(tb.events, strings.Split(tb.events, ".")[0]+".")) || !strings.Contains(got[1], `"primary_key":true`) || !strings.Contains(got[2], `"n":1`) || !strings.Contains(got[3], "only read statements") || !strings.Contains(got[4], `"truncated":true`) || !strings.Contains(got[4], `"row_count":2`) || !strings.Contains(got[5], `"n":0`) {
+		if len(got) != 6 || !strings.Contains(got[0], strings.TrimPrefix(tb.events, strings.Split(tb.events, ".")[0]+".")) || !strings.Contains(got[1], `"primary_key":true`) || !strings.Contains(got[2], `"n":1`) || !strings.Contains(got[3], "only read statements") || !strings.Contains(got[4], `"truncated":true`) || !strings.Contains(got[4], `"row_count":2`) || !strings.Contains(got[5], "not attached") {
 			t.Fatalf("tool results = %v", got)
 		}
 		// An attempted write did not remove the row.
@@ -126,23 +121,23 @@ func TestExplorationAgent(t *testing.T) {
 		if !strings.Contains(results()[2], `"n":1`) {
 			t.Fatal("agent changed the database")
 		}
-		bad := agentBody("unbound", "explorer-provider")
-		bad["tools"] = []string{"run_query"}
-		if status, _ := owner.call("POST", "/be/v1/agents", bad); status != 400 {
-			t.Fatalf("unbound tool status %d", status)
-		}
-		bad["database_connection"] = "missing"
-		if status, _ := owner.call("POST", "/be/v1/agents", bad); status != 400 {
-			t.Fatalf("unknown DB status %d", status)
+		for name, tools := range map[string][]string{
+			"unknown connector": {"missing"},
+			"legacy tool":       {"run_query"},
+		} {
+			bad := agentBody("unbound", "explorer-provider")
+			bad["tools"] = tools
+			if status, _ := owner.call("POST", "/be/v1/agents", bad); status != 400 {
+				t.Fatalf("%s: status %d", name, status)
+			}
 		}
 		other := s.owner(t, "Other exploration org")
 		otherBody := agentBody("steal", "")
-		otherBody["database_connection"] = conn
-		otherBody["tools"] = []string{"run_query"}
+		otherBody["tools"] = []string{conn}
 		if status, _ := other.call("POST", "/be/v1/agents", otherBody); status != 400 {
 			t.Fatalf("foreign database status %d", status)
 		}
-		// Workflow execution uses the same saved definition and binding.
+		// Workflow execution uses the same saved definition.
 		if status, resp := owner.publish("apiVersion: workflow/v1\nname: explore\nnodes:\n  - id: answer\n    type: agent\n    config: {agent: explorer, input: {question: count events}}\n"); status != 201 {
 			t.Fatalf("publish %d %v", status, resp)
 		}

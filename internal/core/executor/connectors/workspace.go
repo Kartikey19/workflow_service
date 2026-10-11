@@ -131,11 +131,11 @@ func (s *Workspace) request(ctx context.Context, conn executor.Connection, metho
 		if !reply.OK {
 			switch reply.Error {
 			case "ratelimited":
-				return nil, executor.Retryable("rate_limited", errors.New("Slack rate limit"))
+				return nil, executor.Retryable("rate_limited", errors.New("rate limited by Slack"))
 			case "internal_error", "fatal_error", "service_unavailable":
-				return nil, executor.Retryable("upstream_5xx", errors.New("Slack service unavailable"))
+				return nil, executor.Retryable("upstream_5xx", errors.New("service unavailable from Slack"))
 			default:
-				return nil, executor.Permanent("slack_error", fmt.Errorf("Slack: %s", reply.Error))
+				return nil, executor.Permanent("slack_error", fmt.Errorf("error from Slack: %s", reply.Error))
 			}
 		}
 	}

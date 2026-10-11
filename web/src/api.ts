@@ -41,6 +41,11 @@ export async function api(
   return result;
 }
 export const enc = encodeURIComponent;
+// A vault name with a dot is one key of a group: "openai.api_key".
+export function secretParts(name: string): { group?: string; key: string } {
+  const [group, key] = name.split(".");
+  return key === undefined ? { key: group } : { group, key };
+}
 export const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 export const terminal = (status: string) =>
   ["succeeded", "failed", "cancelled", "timed_out"].includes(status);

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"strings"
 	"time"
 	"uuid"
 
@@ -220,16 +219,13 @@ func (d *Dispatcher) resolveConfig(ctx context.Context, run gen.Run, node spec.N
 	if template == nil {
 		return []byte(`{}`), []byte(`{}`), nil, nil
 	}
-	usesSecrets := false
-	if raw, err := json.Marshal(node.Config); err == nil {
-		usesSecrets = strings.Contains(string(raw), "secrets")
-	}
+	usesSecrets, refs := secretUses(node.Config)
 	if usesSecrets && d.secrets != nil {
 		values, err := d.secrets.Secrets(ctx, run.TenantID)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("load vault secrets: %w", err)
 		}
-		if missing := missingSecrets(node.Config, values); len(missing) > 0 {
+		if missing := missingSecrets(refs, values); len(missing) > 0 {
 			return nil, nil, nil, &missingSecretError{names: missing}
 		}
 		real := bindings
@@ -242,10 +238,7 @@ func (d *Dispatcher) resolveConfig(ctx context.Context, run gen.Run, node spec.N
 			return nil, nil, nil, fmt.Errorf("encode resolved config: %w", err)
 		}
 		masked := bindings
-		masked.Secrets = make(map[string]string, len(values))
-		for name := range values {
-			masked.Secrets[name] = redactionMark
-		}
+		masked.Secrets = maskSecrets(values)
 		value, err = template.Resolve(ctx, masked)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("resolve config: %w", err)
@@ -255,7 +248,7 @@ func (d *Dispatcher) resolveConfig(ctx context.Context, run gen.Run, node spec.N
 	}
 	if usesSecrets {
 		// No vault is configured: say so, instead of a generic expression failure.
-		if missing := missingSecrets(node.Config, nil); len(missing) > 0 {
+		if missing := missingSecrets(refs, nil); len(missing) > 0 {
 			return nil, nil, nil, &missingSecretError{names: missing}
 		}
 	}

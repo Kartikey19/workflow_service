@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
@@ -63,14 +65,23 @@ func (kb) Call(context.Context, agent.Call, json.RawMessage) (json.RawMessage, e
 	return json.RawMessage(`{"articles":["KB-1"]}`), nil
 }
 
+// kbSource stands in for connector resolution: the "knowledge" connector
+// becomes the search_kb tool.
+type kbSource struct{}
+
+func (kbSource) Resolve(_ context.Context, _ uuid.UUID, refs []string) ([]agent.Tool, func(), error) {
+	for _, ref := range refs {
+		if ref != "knowledge" {
+			return nil, nil, fmt.Errorf("connector %q is not defined", ref)
+		}
+	}
+	return []agent.Tool{kb{}}, func() {}, nil
+}
+
 func newTestAgent(t *testing.T, model llm.Client) *agent.Executor {
 	t.Helper()
-	tools, err := agent.NewTools(agent.CurrentTime{}, kb{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	pricing := llm.Pricing{"claude-sonnet": {InputPerMTok: 3, OutputPerMTok: 15}}
-	return agent.New(agent.NewStatic("test", model, pricing), tools, nil)
+	return agent.New(agent.NewStatic("test", model, pricing), nil).WithDynamicTools(kbSource{})
 }
 
 func reply(text string) llm.Response {
@@ -111,7 +122,7 @@ nodes:
       model: claude-sonnet-5-5
       system: "Classify the ticket. Respond with JSON only."
       prompt: '${input.text}'
-      tools: [current_time]
+      tools: [knowledge]
       max_iterations: 4
       output_schema:
         type: object
@@ -137,10 +148,10 @@ func TestAgentToolLoopFeedsDownstreamAndReportsCost(t *testing.T) {
 	h.mustPublish(classifyWorkflow)
 	h.llm.set(func(call int, req llm.Request) (llm.Response, error) {
 		if call == 1 {
-			return wantTool("tu_1", "current_time"), nil
+			return wantTool("tu_1", "search_kb"), nil
 		}
 		last := req.Messages[len(req.Messages)-1].Content[0]
-		if last.Type != llm.BlockToolResult || !strings.Contains(last.ToolContent, `"now"`) {
+		if last.Type != llm.BlockToolResult || !strings.Contains(last.ToolContent, `"articles"`) {
 			t.Errorf("model did not receive the tool result: %+v", last)
 		}
 		return reply("```json\n{\"severity\":\"P0\",\"category\":\"billing\"}\n```"), nil
@@ -207,7 +218,7 @@ func TestAgentMaxIterationsEnforced(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, ctx)
 	h.mustPublish(strings.Replace(classifyWorkflow, "max_iterations: 4", "max_iterations: 3", 1))
-	h.llm.set(func(call int, _ llm.Request) (llm.Response, error) { return wantTool("tu", "current_time"), nil })
+	h.llm.set(func(call int, _ llm.Request) (llm.Response, error) { return wantTool("tu", "search_kb"), nil })
 	h.startWorkers(1)
 	runID := h.start("classify-ticket", map[string]any{"text": "x"})
 	h.waitStatus(runID, 15*time.Second, "failed")
@@ -311,7 +322,7 @@ nodes:
       model: claude-sonnet-5-5
       system: "Classify the ticket. Respond with JSON only."
       prompt: ${nodes.fetch_ticket.output.body.description}
-      tools: [search_kb]
+      tools: [knowledge]
       max_iterations: 6
       output_schema:
         type: object

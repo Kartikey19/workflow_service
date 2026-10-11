@@ -34,12 +34,13 @@ import (
 	"github.com/kartikey/workflow_service/pkg/vault"
 )
 
-// Provider kinds.
+// Provider kinds with special handling; Catalog lists them all.
 const (
 	Anthropic        = "anthropic"
 	OpenAI           = "openai"
 	OpenAICompatible = "openai_compatible"
 	Gemini           = "gemini"
+	Ollama           = "ollama"
 )
 
 const (
@@ -48,10 +49,7 @@ const (
 	maxModels   = 200
 )
 
-var (
-	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
-	kinds       = map[string]bool{Anthropic: true, OpenAI: true, OpenAICompatible: true, Gemini: true}
-)
+var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 // Service is safe for concurrent use. A nil keyring means API keys cannot be
 // stored: only key-less OpenAI-compatible connections (a local Ollama) work.
@@ -115,27 +113,33 @@ func aad(orgID pgtype.UUID, name string) []byte {
 	return vault.AAD(uid.String(orgID), "provider:"+name)
 }
 
-func (s *Service) validate(provider, baseURL, key string) error {
-	if !kinds[provider] {
-		return exception.BadRequest("provider must be anthropic, openai, openai_compatible or gemini")
-	}
+// validate checks a connection and returns the endpoint it uses: the kind's
+// default unless base_url overrides it (a proxy, or Ollama on another host).
+func (s *Service) validate(provider, baseURL, key string) (string, error) {
+	kind, ok := lookup(provider)
 	switch {
-	case provider == OpenAICompatible && baseURL == "":
-		return exception.BadRequest("base_url is required for an OpenAI-compatible provider, e.g. https://api.groq.com/openai/v1")
-	case provider != OpenAICompatible && baseURL != "":
-		return exception.BadRequest("base_url applies only to openai_compatible providers")
-	case provider != OpenAICompatible && key == "":
-		return exception.BadRequest("api_key is required")
+	case !ok:
+		return "", exception.BadRequest(fmt.Sprintf("unknown provider %q; GET /be/v1/provider-kinds lists them", provider))
+	case kind.Native() && baseURL != "":
+		return "", exception.BadRequest("base_url applies only to OpenAI-compatible providers")
+	case key == "" && !kind.KeyOptional:
+		return "", exception.BadRequest("api_key is required for " + kind.Title)
 	case len(key) > 4096:
-		return exception.BadRequest("api_key is too long")
+		return "", exception.BadRequest("api_key is too long")
+	}
+	if baseURL == "" {
+		baseURL = kind.BaseURL
+	}
+	if !kind.Native() && baseURL == "" {
+		return "", exception.BadRequest("base_url is required for a custom provider, e.g. https://api.example.com/v1")
 	}
 	if baseURL != "" {
 		parsed, err := url.Parse(baseURL)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-			return exception.BadRequest("base_url must be an absolute http or https URL without credentials")
+			return "", exception.BadRequest("base_url must be an absolute http or https URL without credentials")
 		}
 	}
-	return nil
+	return baseURL, nil
 }
 
 func (s *Service) newClient(provider, baseURL, key string) (llm.Client, error) {
@@ -145,21 +149,23 @@ func (s *Service) newClient(provider, baseURL, key string) (llm.Client, error) {
 		return anthropic.New(key, s.baseURL[Anthropic], httpClient), nil
 	case OpenAI:
 		return openai.New(key, s.baseURL[OpenAI], httpClient), nil
-	case OpenAICompatible:
-		return openai.NewCompatible(key, baseURL, httpClient), nil
 	case Gemini:
 		return gemini.New(key, s.baseURL[Gemini], httpClient), nil
 	}
-	return nil, fmt.Errorf("unknown provider %q", provider)
+	if _, ok := lookup(provider); !ok {
+		return nil, fmt.Errorf("unknown provider %q", provider)
+	}
+	return openai.NewCompatible(key, baseURL, httpClient), nil
 }
 
 // Test lists the models the key can use, proving the key and the endpoint work
 // without spending tokens. It saves nothing.
 func (s *Service) Test(ctx context.Context, in TestInput) (TestResult, error) {
-	if err := s.validate(in.Provider, in.BaseURL, in.APIKey); err != nil {
+	baseURL, err := s.validate(in.Provider, in.BaseURL, in.APIKey)
+	if err != nil {
 		return TestResult{}, err
 	}
-	client, err := s.newClient(in.Provider, in.BaseURL, in.APIKey)
+	client, err := s.newClient(in.Provider, baseURL, in.APIKey)
 	if err != nil {
 		return TestResult{}, err
 	}
@@ -226,9 +232,11 @@ func (s *Service) Create(ctx context.Context, orgID pgtype.UUID, actor string, i
 	if !namePattern.MatchString(in.Name) {
 		return Connection{}, TestResult{}, exception.BadRequest("name must be lowercase letters, digits, - or _ (at most 63 characters)")
 	}
-	if err := s.validate(in.Provider, in.BaseURL, in.APIKey); err != nil {
+	baseURL, err := s.validate(in.Provider, in.BaseURL, in.APIKey)
+	if err != nil {
 		return Connection{}, TestResult{}, err
 	}
+	in.BaseURL = baseURL // stored, so a later change to a default does not move it
 	if in.APIKey != "" && s.keyring == nil {
 		return Connection{}, TestResult{}, exception.New(http.StatusNotImplemented, "vault_not_configured", "Vault is not configured",
 			"set VAULT_MASTER_KEY to store provider API keys")

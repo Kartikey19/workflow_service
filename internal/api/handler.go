@@ -1,5 +1,5 @@
 // Package api contains the /be/v1 HTTP handlers. Handlers stay thin: logic lives
-// in flow and workflows so it is reachable from tests and other entry points
+// in services so it is reachable from tests and other entry points
 // (04 §6). Server lifecycle, authentication and metrics live in package server.
 package api
 
@@ -101,6 +101,7 @@ type IdentityService interface {
 // VaultService is the secrets use-cases.
 type VaultService interface {
 	Put(ctx context.Context, orgID pgtype.UUID, name, value, actor string) error
+	PutGroup(ctx context.Context, orgID pgtype.UUID, group string, keys map[string]string, actor string) error
 	List(ctx context.Context, orgID pgtype.UUID) ([]vault.Info, error)
 	Delete(ctx context.Context, orgID pgtype.UUID, name string) error
 	Rotate(ctx context.Context) (vault.RotateResult, error)
@@ -125,7 +126,6 @@ type AgentService interface {
 	List(ctx context.Context, orgID pgtype.UUID) ([]agents.Agent, error)
 	Delete(ctx context.Context, orgID pgtype.UUID, name string) error
 	Test(ctx context.Context, tenantID pgtype.UUID, name string, input, prompt json.RawMessage) (agents.TestResult, error)
-	Tools() []agents.ToolInfo
 }
 
 // ConnectionService manages connections to external services.
@@ -183,9 +183,6 @@ type Services struct {
 	// Admin enables the /be/v1/admin routes; nil leaves them unregistered.
 	Admin AdminService
 	Auth  auth.Authenticator
-	// Extra registers routes added by later milestones (identity, vault,
-	// agents, webhooks, UI).
-	Extra []func(Router)
 }
 
 // Validate reports a missing required service.
@@ -273,6 +270,7 @@ func (h *Handler) Register(r Router) {
 		r.Handle("POST /be/v1/providers/test", auth.RoleAdmin, h.testProvider)
 		r.Handle("POST /be/v1/providers", auth.RoleAdmin, h.createProvider)
 		r.Handle("GET /be/v1/providers", auth.RoleEditor, h.listProviders)
+		r.Handle("GET /be/v1/provider-kinds", auth.RoleEditor, h.listProviderKinds)
 		r.Handle("POST /be/v1/providers/{id}/test", auth.RoleAdmin, h.testStoredProvider)
 		r.Handle("DELETE /be/v1/providers/{id}", auth.RoleAdmin, h.deleteProvider)
 	}
@@ -299,7 +297,4 @@ func (h *Handler) Register(r Router) {
 		r.HandleAdmin("POST /be/v1/admin/workers/{worker_id}/release-leases", h.adminReleaseLeases)
 	}
 
-	for _, register := range h.services.Extra {
-		register(r)
-	}
 }

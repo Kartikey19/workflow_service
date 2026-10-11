@@ -77,11 +77,6 @@ func Handler() http.Handler {
 	return promhttp.HandlerFor(Registry, promhttp.HandlerOpts{})
 }
 
-// RegisterGauge adds a gauge whose value is read at scrape time.
-func RegisterGauge(name, help string, read func() float64) {
-	Registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, read))
-}
-
 // RunDuration is observed when a run reaches a terminal status. The workflow
 // label is the workflow name: bounded by the number of workflows, not runs.
 var RunDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{

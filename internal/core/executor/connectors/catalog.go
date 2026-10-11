@@ -66,7 +66,6 @@ var actions = []Action{
 	action("notion.append", "notion", "Append text to Notion", false, `{"type":"object","properties":{"block_id":{"type":"string"},"text":{"type":"string","minLength":1,"maxLength":2000}},"additionalProperties":false,"required":["block_id","text"]}`),
 }
 
-func Actions() []Action { return slices.Clone(actions) }
 func LookupAction(name string) (Action, bool) {
 	for _, a := range actions {
 		if a.Name == name {

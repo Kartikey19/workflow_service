@@ -27,6 +27,18 @@ func connectionView(c providers.Connection) map[string]any {
 	return view
 }
 
+// listProviderKinds is GET /be/v1/provider-kinds: the providers a connection
+// can use, with the default endpoint and whether a key is needed.
+func (h *Handler) listProviderKinds(w http.ResponseWriter, _ *http.Request, _ auth.Principal) {
+	items := make([]map[string]any, 0, len(providers.Catalog))
+	for _, k := range providers.Catalog {
+		items = append(items, map[string]any{
+			"id": k.ID, "title": k.Title, "base_url": k.BaseURL, "key_optional": k.KeyOptional, "native": k.Native(),
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 // testProvider is POST /be/v1/providers/test: proves a key and endpoint work by
 // listing the models, before anything is saved. The key is never stored or logged.
 func (h *Handler) testProvider(w http.ResponseWriter, r *http.Request, _ auth.Principal) {

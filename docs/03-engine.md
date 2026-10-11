@@ -254,7 +254,10 @@ binding the walker keeps out of the persisted copy, or (b) resolve fully but
 redact by path before writing `input`. Do (a) — redaction by path is a leak
 waiting for the first user who nests a secret somewhere you didn't expect. In
 practice: run `expr.Resolve` twice, once with real secrets (passed to the
-executor, never stored) and once with `secrets.*` replaced by `"***"` (stored).
+executor, never stored) and once with each secret of 8 or more characters
+replaced by `"***"` (stored). Shorter values are only allowed as keys of a
+secret group (an effort, a temperature); they are settings and stay as they are,
+so `double(secrets.group.temperature)` still evaluates in the stored copy.
 
 ### 4.3 Lease heartbeat
 
