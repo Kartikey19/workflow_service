@@ -52,5 +52,5 @@ jobs:
           DO_APP_ID: ${{ vars.DO_APP_ID }}
           RELEASE_IMAGE: ${{ inputs.image }}
         run: |
-          printf '%s release: `%s`\n\n[App Platform](https://cloud.digitalocean.com/apps/%s)\n' \
+          printf '%s release: %s\n\n[App Platform](https://cloud.digitalocean.com/apps/%s)\n' \
             "$DEPLOY_ENVIRONMENT" "$RELEASE_IMAGE" "$DO_APP_ID" >> "$GITHUB_STEP_SUMMARY"

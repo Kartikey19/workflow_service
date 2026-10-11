@@ -61,7 +61,7 @@ jobs:
         env:
           IMAGE: ${{ steps.name.outputs.image }}@${{ steps.build.outputs.digest }}
         run: |
-          printf 'Release image: `%s`\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Release image: %s\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove registry credentials
         if: always()
         run: docker logout registry.digitalocean.com
