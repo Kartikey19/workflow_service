@@ -2178,3 +2178,6 @@ button.table-row:hover {
 .task-decision details {
   margin-top: 12px;
 }
+.provider-search {
+  margin: 0 0 12px;
+}

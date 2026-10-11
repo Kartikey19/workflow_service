@@ -211,23 +211,21 @@ test("typed agent inputs, provider test-before-save, live validation and version
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page
     .getByRole("navigation")
-    .getByRole("button", { name: "Connectors", exact: true })
+    .getByRole("button", { name: "AI providers", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Add connector", exact: true })
-    .click();
-  await page
-    .getByRole("radio", { name: "Language model provider", exact: true })
-    .click();
+  // Providers have their own page, with every provider omp supports.
+  await page.getByRole("button", { name: "Add provider", exact: true }).click();
+  for (const name of ["Anthropic", "OpenAI", "Groq", "OpenRouter"])
+    await expect(page.getByRole("radio", { name, exact: true })).toBeVisible();
+  await page.getByLabel("Search providers", { exact: true }).fill("olla");
+  await page.getByRole("radio", { name: "Ollama", exact: true }).click();
+  // A local Ollama needs no key; it runs wherever its base URL points.
+  await expect(page.getByLabel("Base URL", { exact: true })).toHaveValue(
+    "http://127.0.0.1:11434/v1",
+  );
   await page
     .getByLabel("Connection name", { exact: true })
     .fill("browser-second-provider");
-  await page
-    .getByLabel("Provider", { exact: true })
-    .selectOption("openai_compatible");
-  await page
-    .getByLabel("API key", { exact: true })
-    .fill("browser-only-test-key");
   await page
     .getByLabel("Base URL", { exact: true })
     .fill(process.env.UI_TEST_PROVIDER_URL!);
@@ -235,13 +233,26 @@ test("typed agent inputs, provider test-before-save, live validation and version
   await page
     .getByRole("button", { name: "Test and save", exact: true })
     .click();
+  await expect(page.locator(".notice")).toContainText("fake-model");
   const provider = page.locator("article").filter({
     has: page.getByRole("heading", {
       name: "browser-second-provider",
       exact: true,
     }),
   });
-  await expect(provider).toContainText("Custom (OpenAI-compatible)");
+  await expect(provider).toContainText("Ollama");
+  await shot(page, "06-providers");
+  // Connectors hold apps and databases only.
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Connectors", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "browser-database" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "browser-second-provider" }),
+  ).toHaveCount(0);
   await shot(page, "06-connectors");
   await page
     .getByRole("navigation")

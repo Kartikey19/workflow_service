@@ -37,7 +37,22 @@ export function Agents({
   const [edit, setEdit] = useState<RecordData | null>(null),
     [test, setTest] = useState<RecordData | null>(null),
     [result, setResult] = useState<RecordData | null>(null),
-    [chosenTools, setTools] = useState<string[]>([]);
+    [chosenTools, setTools] = useState<string[]>([]),
+    [models, setModels] = useState<string[]>([]);
+  // The chosen provider's models, offered as suggestions for the model field.
+  // Listing them needs an admin; others simply type the model.
+  async function loadModels(name: string) {
+    setModels([]);
+    const provider = providers.data?.items?.find(
+      (p: RecordData) => p.name === name,
+    );
+    if (!provider) return;
+    try {
+      setModels((await api(`/providers/${provider.id}/test`, "POST")).models);
+    } catch {
+      /* No permission or the provider is down: the field stays free text. */
+    }
+  }
   function editing(agent: RecordData) {
     setEdit(agent);
     setTools(agent.tools || []);
@@ -167,7 +182,11 @@ export function Agents({
                 <input name="description" defaultValue={edit.description} />
               </Field>
               <Field label="Provider connection">
-                <select name="connection" defaultValue={edit.connection || ""}>
+                <select
+                  name="connection"
+                  defaultValue={edit.connection || ""}
+                  onChange={(e) => loadModels(e.target.value)}
+                >
                   <option value="">Platform provider</option>
                   {providers.data?.items?.map((p: RecordData) => (
                     <option key={p.id}>{p.name}</option>
@@ -180,8 +199,15 @@ export function Agents({
                   required
                   defaultValue={edit.model}
                   placeholder="Provider model ID"
+                  list="provider-models"
+                  autoComplete="off"
                 />
               </Field>
+              <datalist id="provider-models">
+                {models.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
             </div>
             <Field label="Instructions">
               <textarea

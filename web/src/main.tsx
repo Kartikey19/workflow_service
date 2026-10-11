@@ -21,6 +21,7 @@ import {
   LogOut,
   Menu,
   Building2,
+  Sparkles,
 } from "lucide-react";
 import { api, APIError, type RecordData } from "./api";
 import {
@@ -37,6 +38,9 @@ const Workflows = lazy(() =>
 );
 import { Runs } from "./runs";
 import { Platform } from "./platform";
+const Providers = lazy(() =>
+  import("./providers").then((m) => ({ default: m.Providers })),
+);
 const Agents = lazy(() =>
   import("./agents").then((m) => ({ default: m.Agents })),
 );
@@ -53,6 +57,7 @@ import "./style.css";
 const pages = [
   ["workflows", "Workflows", Workflow, "Build"],
   ["agents", "Agents", Bot, "Build"],
+  ["providers", "AI providers", Sparkles, "Build"],
   ["runs", "Runs", Activity, "Operate"],
   ["tasks", "Human tasks", ListTodo, "Operate"],
   ["connectors", "Connectors", Plug, "Connect"],
@@ -293,7 +298,9 @@ function App() {
     .filter((p) => p[0] !== "platform" || session.user.platform_admin)
     .filter((p) => admin || p[0] !== "api-keys")
     .filter(
-      (p) => editable || !["connectors", "vault", "webhooks"].includes(p[0]),
+      (p) =>
+        editable ||
+        !["connectors", "providers", "vault", "webhooks"].includes(p[0]),
     );
   const allowed = visible.some((p) => p[0] === currentPage[0]);
   return (
@@ -443,6 +450,8 @@ function App() {
                     navigate("workflows");
                   }}
                 />
+              ) : currentPage[0] === "providers" ? (
+                <Providers admin={admin} />
               ) : currentPage[0] === "connectors" ? (
                 <Connections admin={admin} />
               ) : currentPage[0] === "vault" ? (

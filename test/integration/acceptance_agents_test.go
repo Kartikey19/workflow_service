@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -158,5 +159,42 @@ func TestAgentNodeFailuresAreClear(t *testing.T) {
 	result := owner.mustOK("POST", "/be/v1/agents/strict/test", map[string]any{"input": map[string]any{"text": 5}}, 200)
 	if result["ok"] != false || result["error"].(map[string]any)["code"] != "invalid_input" {
 		t.Fatalf("agent test = %v", result)
+	}
+}
+
+// Every provider omp supports with a key is offered. OpenAI-compatible kinds
+// bring their own endpoint, and only a local server such as Ollama may go
+// without a key.
+func TestProviderKindsCatalog(t *testing.T) {
+	ctx := context.Background()
+	s := newStack(t, ctx)
+	owner := s.owner(t, "Kinds Co")
+	_, kinds := owner.call("GET", "/be/v1/provider-kinds", nil)
+	ids := []string{}
+	for _, item := range kinds["items"].([]any) {
+		ids = append(ids, item.(map[string]any)["id"].(string))
+	}
+	for _, want := range []string{"anthropic", "openai", "gemini", "ollama", "groq", "openrouter", "deepseek", "xai", "openai_compatible"} {
+		if !slices.Contains(ids, want) {
+			t.Fatalf("provider kinds %v lack %s", ids, want)
+		}
+	}
+	local := owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "local", "provider": "ollama", "base_url": s.fakes.servers["openai_compatible"].URL}, 201)
+	if local["provider"] != "ollama" || local["models"].([]any)[0] != "fake-model" {
+		t.Fatalf("ollama = %v", local)
+	}
+	for name, body := range map[string]map[string]any{
+		"a hosted kind needs a key":  {"name": "g", "provider": "groq"},
+		"an unknown kind":            {"name": "x", "provider": "made_up", "api_key": "k-123456"},
+		"a native kind takes no url": {"name": "a", "provider": "anthropic", "api_key": "k-123456", "base_url": "https://example.com"},
+		"a custom kind needs an url": {"name": "c", "provider": "openai_compatible"},
+	} {
+		if status, resp := owner.call("POST", "/be/v1/providers", body); status != 400 {
+			t.Errorf("%s: %d %v, want 400", name, status, resp)
+		}
+	}
+	groq := owner.mustOK("POST", "/be/v1/providers", map[string]any{"name": "groq", "provider": "groq", "api_key": "groq-test-key-123", "skip_test": true}, 201)
+	if groq["base_url"] != "https://api.groq.com/openai/v1" {
+		t.Fatalf("groq uses %v, want its own endpoint", groq["base_url"])
 	}
 }

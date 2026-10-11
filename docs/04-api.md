@@ -377,18 +377,25 @@ read secrets that were already re-sealed.
 
 ## 4d. Providers and agents (M13)
 
-**Provider connections** hold an organization's API key for one LLM provider:
-`anthropic`, `openai`, `gemini`, or `openai_compatible` (Groq, Together, OpenRouter,
-Ollama, vLLM and others, through a `base_url` that includes the version path, e.g.
-`https://api.groq.com/openai/v1`). Keys are sealed with the vault master key and are
-**write-only**: only a hint (the last four characters) is ever shown. Every request
-goes through the egress guard, since a base URL is chosen by the tenant.
+**Provider connections** hold an organization's API key for one LLM provider. The
+kinds follow the providers omp supports with a key (`GET /be/v1/provider-kinds`):
+`anthropic`, `openai` and `gemini` use their own APIs; `ollama` (local, no key),
+`ollama_cloud`, `openrouter`, `groq`, `deepseek`, `mistral`, `xai`, `together`,
+`cerebras`, `moonshot`, `minimax`, `zai`, `qwen`, `huggingface`, `nvidia`, `venice`,
+`nanogpt` and `zenmux` speak the OpenAI API at their own endpoint, which `base_url`
+may override (a proxy, or Ollama on another host); `openai_compatible` is any other
+server and needs a `base_url` that includes the version path. Keys are sealed with
+the vault master key and are **write-only**: only a hint (the last four characters)
+is ever shown. Every request goes through the egress guard, since a base URL is
+chosen by the tenant. The workspace manages providers on their own page, apart from
+connectors.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
 | `POST /be/v1/providers/test` | admin | `{provider, base_url?, api_key}` → `{ok, models}` by listing the models the key can use; saves nothing. A bad key is `422 provider_test_failed` and the message never echoes the key |
 | `POST /be/v1/providers` | admin | `{name, provider, base_url?, api_key, skip_test?}`; **tests first and saves only if the test passes**; returns the connection and the models found |
 | `GET /be/v1/providers` | editor | connections, with how many agents use each |
+| `GET /be/v1/provider-kinds` | editor | every kind: `{id, title, base_url, key_optional, native}` |
 | `POST /be/v1/providers/{id}/test` | admin | re-test a saved connection |
 | `DELETE /be/v1/providers/{id}` | admin | `409 connection_in_use` while an agent uses it |
 

@@ -14,12 +14,6 @@ import {
   JSONView,
   humanize,
 } from "./components";
-const providerNames: Record<string, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  gemini: "Google Gemini",
-  openai_compatible: "Custom (OpenAI-compatible)",
-};
 const roles = (
   <>
     <option>viewer</option>
@@ -29,10 +23,8 @@ const roles = (
 );
 export function Connections({ admin }: { admin: boolean }) {
   const list = useResource("/connections"),
-    providers = useResource("/providers"),
     kinds = useResource("/integrations");
   const [kind, setKind] = useState("smtp"),
-    [llmKind, setLlmKind] = useState("anthropic"),
     [form, setForm] = useState(false),
     [result, setResult] = useState<RecordData | null>(null),
     [editing, edit] = useState<RecordData | null>(null);
@@ -67,40 +59,27 @@ export function Connections({ admin }: { admin: boolean }) {
           </button>
         )}
       </div>
-      <ResourceState
-        error={list.error || providers.error}
-        loading={!list.data || !providers.data}
-      />
+      <ResourceState error={list.error} loading={!list.data} />
       <div className="cards">
-        {[
-          ...(list.data?.items || []),
-          ...(providers.data?.items || []).map((p: RecordData) => ({
-            ...p,
-            kind: p.provider,
-            provider: true,
-          })),
-        ].map((c: RecordData) => (
+        {(list.data?.items || []).map((c: RecordData) => (
           <article className="panel card" key={c.id}>
             <div className="card-head">
               <span className="card-icon">
                 {(() => {
-                  const Icon = kindIcon(c.provider ? "llm" : c.kind);
+                  const Icon = kindIcon(c.kind);
                   return <Icon size={18} aria-hidden="true" />;
                 })()}
               </span>
               <div>
                 <h2>{c.name}</h2>
                 <small>
-                  {c.provider
-                    ? providerNames[c.kind]
-                    : kinds.data?.items.find(
-                        (k: RecordData) => k.kind === c.kind,
-                      )?.title || c.kind}
+                  {kinds.data?.items.find((k: RecordData) => k.kind === c.kind)
+                    ?.title || c.kind}
                 </small>
               </div>
             </div>
-            <small>{c.account || c.base_url || "Credentials encrypted"}</small>
-            {!c.provider && (
+            <small>{c.account || "Credentials encrypted"}</small>
+            {
               <ul className="connector-actions" aria-label="Actions">
                 {connectorActions(kinds.data?.items, c.kind).map((action) => (
                   <li key={action.name}>
@@ -111,50 +90,37 @@ export function Connections({ admin }: { admin: boolean }) {
                   </li>
                 ))}
               </ul>
-            )}
+            }
             <div className="row">
               {admin && (
                 <>
                   <AsyncButton
                     run={async () =>
                       setResult(
-                        await api(
-                          c.provider
-                            ? `/providers/${c.id}/test`
-                            : `/connections/${enc(c.name)}/test`,
-                          "POST",
-                        ),
+                        await api(`/connections/${enc(c.name)}/test`, "POST"),
                       )
                     }
                   >
                     Test connection
                   </AsyncButton>
-                  {!c.provider &&
-                    !kinds.data?.items.find(
-                      (k: RecordData) => k.kind === c.kind,
-                    )?.oauth && (
-                      <button
-                        onClick={() => {
-                          edit(c);
-                          setKind(c.kind);
-                          setForm(true);
-                        }}
-                      >
-                        Edit settings
-                      </button>
-                    )}
+                  {!kinds.data?.items.find((k: RecordData) => k.kind === c.kind)
+                    ?.oauth && (
+                    <button
+                      onClick={() => {
+                        edit(c);
+                        setKind(c.kind);
+                        setForm(true);
+                      }}
+                    >
+                      Edit settings
+                    </button>
+                  )}
                   <AsyncButton
                     danger
                     run={async () => {
                       if (confirm(`Delete ${c.name}?`)) {
-                        await api(
-                          c.provider
-                            ? `/providers/${c.id}`
-                            : `/connections/${enc(c.name)}`,
-                          "DELETE",
-                        );
+                        await api(`/connections/${enc(c.name)}`, "DELETE");
                         list.reload();
-                        providers.reload();
                       }
                     }}
                   >
@@ -166,12 +132,12 @@ export function Connections({ admin }: { admin: boolean }) {
           </article>
         ))}
       </div>
-      {list.data &&
-        providers.data &&
-        !list.data.items.length &&
-        !providers.data.items.length && (
-          <Empty>Add a provider or service connection to get started.</Empty>
-        )}
+      {list.data && !list.data.items.length && (
+        <Empty>
+          No connectors yet. Add a database, mail or chat service to use it in
+          workflows and agents.
+        </Empty>
+      )}
       {result && (
         <section className="notice">
           <div className="row spread">
@@ -189,10 +155,7 @@ export function Connections({ admin }: { admin: boolean }) {
           </div>
           {!editing && (
             <div className="app-grid" role="radiogroup" aria-label="App">
-              {[
-                ...(kinds.data?.items || []),
-                { kind: "llm", title: "Language model provider" },
-              ].map((k: RecordData) => {
+              {(kinds.data?.items || []).map((k: RecordData) => {
                 const Icon = kindIcon(k.kind);
                 return (
                   <button
@@ -223,40 +186,28 @@ export function Connections({ admin }: { admin: boolean }) {
                 window.location.assign(r.authorize_url);
                 return;
               }
-              if (kind === "llm") {
-                await api("/providers", "POST", {
-                  name,
-                  provider: data.get("provider"),
-                  api_key: data.get("api_key"),
-                  base_url: data.get("base_url"),
-                });
-              } else {
-                const config: RecordData = {},
-                  secret: Record<string, string> = {};
-                descriptor?.fields.forEach((f: RecordData) => {
-                  const v = data.get(f.name);
-                  if (v === null || v === "") return;
-                  if (f.secret) secret[f.name] = String(v);
-                  else
-                    config[f.name] =
-                      f.type === "int"
-                        ? Number(v)
-                        : f.type === "bool"
-                          ? v === "true"
-                          : v;
-                });
-                await api(
-                  editing
-                    ? `/connections/${enc(editing.name)}`
-                    : "/connections",
-                  editing ? "PUT" : "POST",
-                  { name, kind, config, secret },
-                );
-              }
+              const config: RecordData = {},
+                secret: Record<string, string> = {};
+              descriptor?.fields.forEach((f: RecordData) => {
+                const v = data.get(f.name);
+                if (v === null || v === "") return;
+                if (f.secret) secret[f.name] = String(v);
+                else
+                  config[f.name] =
+                    f.type === "int"
+                      ? Number(v)
+                      : f.type === "bool"
+                        ? v === "true"
+                        : v;
+              });
+              await api(
+                editing ? `/connections/${enc(editing.name)}` : "/connections",
+                editing ? "PUT" : "POST",
+                { name, kind, config, secret },
+              );
               setForm(false);
               edit(null);
               list.reload();
-              providers.reload();
             }}
           >
             <Field label="Connection name">
@@ -268,97 +219,51 @@ export function Connections({ admin }: { admin: boolean }) {
                 placeholder="my-connection"
               />
             </Field>
-            {kind === "llm" ? (
-              <>
-                <Field label="Provider">
+            {descriptor?.fields?.map((f: RecordData) => (
+              <Field
+                key={f.name}
+                label={f.title}
+                hint={
+                  f.secret && editing
+                    ? "Leave blank to retain the saved credential."
+                    : f.help
+                }
+              >
+                {f.type === "bool" || f.type === "enum" ? (
                   <select
-                    name="provider"
-                    value={llmKind}
-                    onChange={(e) => setLlmKind(e.target.value)}
+                    name={f.name}
+                    defaultValue={String(
+                      editing?.config?.[f.name] ?? f.default ?? "",
+                    )}
                   >
-                    {Object.entries(providerNames).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
+                    <option value="">Default</option>
+                    {(f.type === "bool" ? ["true", "false"] : f.enum).map(
+                      (v: string) => (
+                        <option key={v}>{v}</option>
+                      ),
+                    )}
                   </select>
-                </Field>
-                {llmKind === "openai_compatible" && (
-                  <Field
-                    label="Base URL"
-                    hint="Any server that speaks the OpenAI chat API, such as Groq, Ollama or vLLM."
-                  >
-                    <input
-                      name="base_url"
-                      type="url"
-                      required
-                      placeholder="https://api.groq.com/openai/v1"
-                    />
-                  </Field>
-                )}
-                <Field
-                  label="API key"
-                  hint={
-                    llmKind === "openai_compatible"
-                      ? "Leave blank for a local server that needs no key."
-                      : undefined
-                  }
-                >
+                ) : (
                   <input
-                    name="api_key"
-                    type="password"
-                    required={llmKind !== "openai_compatible"}
-                    autoComplete="off"
+                    name={f.name}
+                    type={
+                      f.secret
+                        ? "password"
+                        : f.type === "int"
+                          ? "number"
+                          : "text"
+                    }
+                    required={f.required && !(f.secret && editing)}
+                    defaultValue={
+                      f.secret
+                        ? ""
+                        : (editing?.config?.[f.name] ?? f.default ?? "")
+                    }
+                    autoComplete={f.secret ? "off" : undefined}
                   />
-                </Field>
-              </>
-            ) : (
-              descriptor?.fields?.map((f: RecordData) => (
-                <Field
-                  key={f.name}
-                  label={f.title}
-                  hint={
-                    f.secret && editing
-                      ? "Leave blank to retain the saved credential."
-                      : f.help
-                  }
-                >
-                  {f.type === "bool" || f.type === "enum" ? (
-                    <select
-                      name={f.name}
-                      defaultValue={String(
-                        editing?.config?.[f.name] ?? f.default ?? "",
-                      )}
-                    >
-                      <option value="">Default</option>
-                      {(f.type === "bool" ? ["true", "false"] : f.enum).map(
-                        (v: string) => (
-                          <option key={v}>{v}</option>
-                        ),
-                      )}
-                    </select>
-                  ) : (
-                    <input
-                      name={f.name}
-                      type={
-                        f.secret
-                          ? "password"
-                          : f.type === "int"
-                            ? "number"
-                            : "text"
-                      }
-                      required={f.required && !(f.secret && editing)}
-                      defaultValue={
-                        f.secret
-                          ? ""
-                          : (editing?.config?.[f.name] ?? f.default ?? "")
-                      }
-                      autoComplete={f.secret ? "off" : undefined}
-                    />
-                  )}
-                </Field>
-              ))
-            )}
+                )}
+              </Field>
+            ))}
           </ActionForm>
         </section>
       )}

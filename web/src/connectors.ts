@@ -1,5 +1,4 @@
 import {
-  Bot,
   CalendarDays,
   Database,
   FileSpreadsheet,
@@ -37,6 +36,5 @@ export const kindIcons: Record<string, typeof Plug> = {
   dropbox: HardDrive,
   onedrive: HardDrive,
   mcp: Server,
-  llm: Bot,
 };
 export const kindIcon = (kind: string) => kindIcons[kind] || Plug;
