@@ -721,6 +721,15 @@ agent on a tenant connection, a platform-provider agent and a sub-workflow.
       against a real account.
 - [ ] Database connectors respect egress rules and a per-query timeout and row cap.
 
+**Progress (2026-10-11).** Slice 1 is built: the connections framework
+(`0013_connections.sql`, `internal/services/connections`, `/v1/connections` and
+`/v1/integrations`, `04 §4e`), `executor.Connections` and `Request.Redact`, and
+`email.send` over SMTP and Resend (`pkg/mailer` builds RFC 5322 messages with header
+injection protection and speaks SMTP through the egress guard). Vault rotation now
+re-seals provider keys and connection credentials as well as vault secrets. Still to
+do: OAuth and the Gmail, Drive, Dropbox and OneDrive nodes, then `db.query` and
+`db.insert`.
+
 ### M15 — Data-exploration agents and MCP connectors (1 week)
 
 - Data-exploration agent: an agent bound to a database connection with read-only

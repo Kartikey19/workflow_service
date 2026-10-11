@@ -42,6 +42,23 @@ type ApiKey struct {
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type Connection struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	Name             string             `json:"name"`
+	Kind             string             `json:"kind"`
+	Config           []byte             `json:"config"`
+	SecretCiphertext []byte             `json:"secret_ciphertext"`
+	SecretNonce      []byte             `json:"secret_nonce"`
+	SecretKeyVersion pgtype.Int4        `json:"secret_key_version"`
+	SecretHint       pgtype.Text        `json:"secret_hint"`
+	Account          pgtype.Text        `json:"account"`
+	TokenExpiresAt   pgtype.Timestamptz `json:"token_expires_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy        pgtype.Text        `json:"created_by"`
+}
+
 type Invite struct {
 	ID         pgtype.UUID        `json:"id"`
 	OrgID      pgtype.UUID        `json:"org_id"`

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/internal/services/agents"
+	"github.com/kartikey/workflow_service/internal/services/connections"
 	"github.com/kartikey/workflow_service/internal/services/identity"
 	"github.com/kartikey/workflow_service/internal/services/providers"
 	"github.com/kartikey/workflow_service/internal/services/runs"
@@ -127,6 +128,18 @@ type AgentService interface {
 	Tools() []agents.ToolInfo
 }
 
+// ConnectionService manages connections to external services.
+type ConnectionService interface {
+	Kinds() []connections.KindInfo
+	TestInput(ctx context.Context, in connections.Input) error
+	Create(ctx context.Context, orgID pgtype.UUID, actor string, in connections.Input) (connections.Connection, error)
+	List(ctx context.Context, orgID pgtype.UUID) ([]connections.Connection, error)
+	Get(ctx context.Context, orgID pgtype.UUID, name string) (connections.Connection, error)
+	Update(ctx context.Context, orgID pgtype.UUID, name string, in connections.Input) (connections.Connection, error)
+	Delete(ctx context.Context, orgID pgtype.UUID, name string) error
+	Test(ctx context.Context, orgID pgtype.UUID, name string) error
+}
+
 // AdminService is the operator interventions for stuck work (04 §5.1).
 type AdminService interface {
 	RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, actor string) (runs.NodeAdminResult, error)
@@ -155,6 +168,8 @@ type Services struct {
 	PublicURL string
 	// Vault enables /v1/secrets; nil leaves them unregistered.
 	Vault VaultService
+	// Connections enables /v1/connections and /v1/integrations.
+	Connections ConnectionService
 	// Providers and Agents enable /v1/providers and /v1/agents.
 	Providers ProviderService
 	Agents    AgentService
@@ -225,6 +240,16 @@ func (h *Handler) Register(r Router) {
 
 	if h.services.Identity != nil {
 		h.registerIdentity(r)
+	}
+	if h.services.Connections != nil {
+		r.Handle("GET /v1/integrations", auth.RoleEditor, h.listIntegrations)
+		r.Handle("POST /v1/connections/test", auth.RoleAdmin, h.testConnectionInput)
+		r.Handle("POST /v1/connections", auth.RoleAdmin, h.createConnection)
+		r.Handle("GET /v1/connections", auth.RoleEditor, h.listConnections)
+		r.Handle("GET /v1/connections/{name}", auth.RoleEditor, h.getConnection)
+		r.Handle("PUT /v1/connections/{name}", auth.RoleAdmin, h.updateConnection)
+		r.Handle("DELETE /v1/connections/{name}", auth.RoleAdmin, h.deleteConnection)
+		r.Handle("POST /v1/connections/{name}/test", auth.RoleAdmin, h.testConnection)
 	}
 	if h.services.Providers != nil {
 		r.Handle("POST /v1/providers/test", auth.RoleAdmin, h.testProvider)

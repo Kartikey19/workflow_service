@@ -410,6 +410,37 @@ Without `allowed_hosts` every request is refused, and the model is told why.
 
 ---
 
+## 4e. Connections (M14)
+
+A **connection** is an organization's named link to an external service that
+workflow nodes can use by name: SMTP and Resend for email today, with the OAuth
+services (Gmail, Google Drive, Dropbox, OneDrive) and databases following. Settings
+(host, port, default sender) are stored in clear; credentials are sealed with the
+vault master key and are **write-only**: the API shows only a hint (the last four
+characters) and, for OAuth connections, the connected account.
+
+| Endpoint | Role | Purpose |
+|---|---|---|
+| `GET /v1/integrations` | editor | the kinds this installation offers and the fields each takes |
+| `POST /v1/connections/test` | admin | `{kind, config, secret}`: prove settings and credentials work, save nothing |
+| `POST /v1/connections` | admin | `{name, kind, config, secret, skip_test?}`; **tests first and saves only if the test passes** (`422 connection_test_failed`; the message never echoes a credential) |
+| `GET /v1/connections`, `GET /v1/connections/{name}` | editor | settings and hint, never credentials |
+| `PUT /v1/connections/{name}` | admin | replace the settings; send `secret` to replace the credentials, omit it to keep them; the kind cannot change |
+| `POST /v1/connections/{name}/test` | admin | re-test with the stored credentials |
+| `DELETE /v1/connections/{name}` | admin | nodes that still name it fail with `E_CONNECTION_NOT_FOUND` |
+
+Kinds and their fields: **smtp** (`host`, `port` default 587, `tls` = `starttls` |
+`tls` | `none`, `username`, `from`; secret `password`), **resend** (`from`; secret
+`api_key`). A password is never sent over an unencrypted connection to a host other
+than loopback, and `starttls` refuses to continue when the server does not offer it.
+Every connection goes through the egress guard.
+
+Credentials a node fetches from a connection are added to the same scrubber as
+`${secrets.*}`: they are removed from the node's stored output and error, so a server
+that echoes a rejected password back cannot leak it into a run record.
+
+---
+
 ## 5. Operations
 
 | Endpoint | Purpose |

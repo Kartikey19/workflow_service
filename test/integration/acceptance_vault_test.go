@@ -15,7 +15,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kartikey/workflow_service/internal/core/executor/agent"
+	"github.com/kartikey/workflow_service/internal/services/connections"
+	"github.com/kartikey/workflow_service/internal/services/providers"
 	vaultsvc "github.com/kartikey/workflow_service/internal/services/vault"
+	"github.com/kartikey/workflow_service/pkg/netguard"
 	"github.com/kartikey/workflow_service/pkg/vault"
 )
 
@@ -429,4 +433,60 @@ func randomKey(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// Rotation covers everything sealed under the master key, not just vault
+// secrets: provider-connection API keys and connection credentials too. After
+// the old key is dropped they must still open.
+func TestVaultRotationCoversProviderKeysAndConnections(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, ctx)
+	policy := netguard.Policy{AllowPrivate: true}
+	oldRing := ringOf(t, 1, 1)
+
+	// Seal one of each under key 1.
+	if err := vaultsvc.NewService(h.pool, oldRing, nil).Put(ctx, h.tenant, "API_KEY", "vault-secret-value", "t"); err != nil {
+		t.Fatal(err)
+	}
+	oldProviders := providers.NewService(h.pool, oldRing, policy, nil)
+	if _, _, err := oldProviders.Create(ctx, h.tenant, "t", providers.CreateInput{
+		Name: "compat", Provider: providers.OpenAICompatible, BaseURL: "http://127.0.0.1:1/v1", APIKey: "provider-key-123456", SkipTest: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldConnections := connections.NewService(h.pool, oldRing, policy, connections.Endpoints{})
+	if _, err := oldConnections.Create(ctx, h.tenant, "t", connections.Input{
+		Name: "smtp1", Kind: "smtp", SkipTest: true,
+		Config: map[string]any{"host": "smtp.example.com", "username": "u"}, Secret: map[string]string{"password": "smtp-password-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deploy key 2 (keeping key 1), then rotate.
+	rotating := ringOf(t, 2, 1, 2)
+	vaultNew := vaultsvc.NewService(h.pool, rotating, nil)
+	if v, _ := vaultNew.KeyVersions(ctx); v[1] != 3 {
+		t.Fatalf("sealed values under key 1 before rotating = %v, want 3 (secret, provider key, connection)", v)
+	}
+	result, err := vaultNew.Rotate(ctx)
+	if err != nil || result.Rotated != 3 || result.Failed != 0 {
+		t.Fatalf("rotate = %+v, %v; want 3 rotated", result, err)
+	}
+	if v, _ := vaultNew.KeyVersions(ctx); v[1] != 0 || v[2] != 3 {
+		t.Fatalf("key versions after = %v", v)
+	}
+
+	// Drop key 1: everything still opens.
+	only2 := ringOf(t, 2, 2)
+	if got, err := vaultsvc.NewService(h.pool, only2, nil).Secrets(ctx, h.tenant); err != nil || got["API_KEY"] != "vault-secret-value" {
+		t.Fatalf("vault secret after dropping key 1: %v, %v", got, err)
+	}
+	resolved, err := providers.NewService(h.pool, only2, policy, nil).Client(ctx, uuidOf(h.tenant), agent.ProviderRef{Connection: "compat"})
+	if err != nil || resolved.Client == nil {
+		t.Fatalf("provider key after dropping key 1: %v", err)
+	}
+	conn, err := connections.NewService(h.pool, only2, policy, connections.Endpoints{}).Connection(ctx, uuidOf(h.tenant), "smtp1", "smtp")
+	if err != nil || conn.Secret["password"] != "smtp-password-1" {
+		t.Fatalf("connection credentials after dropping key 1: %+v, %v", conn, err)
+	}
 }

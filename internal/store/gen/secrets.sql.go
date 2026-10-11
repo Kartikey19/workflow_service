@@ -11,24 +11,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countSecretsByKeyVersion = `-- name: CountSecretsByKeyVersion :many
-select key_version, count(*) as total from secrets group by key_version order by key_version
+const countSealedByKeyVersion = `-- name: CountSealedByKeyVersion :many
+select key_version, sum(total)::bigint as total from (
+  select key_version, count(*) as total from secrets group by key_version
+  union all
+  select key_version, count(*) from provider_connections where key_version is not null group by key_version
+  union all
+  select secret_key_version, count(*) from connections where secret_key_version is not null group by secret_key_version
+) all_sealed group by key_version order by key_version
 `
 
-type CountSecretsByKeyVersionRow struct {
+type CountSealedByKeyVersionRow struct {
 	KeyVersion int32 `json:"key_version"`
 	Total      int64 `json:"total"`
 }
 
-func (q *Queries) CountSecretsByKeyVersion(ctx context.Context) ([]CountSecretsByKeyVersionRow, error) {
-	rows, err := q.db.Query(ctx, countSecretsByKeyVersion)
+// Everything sealed under the vault master key, across all tables.
+func (q *Queries) CountSealedByKeyVersion(ctx context.Context) ([]CountSealedByKeyVersionRow, error) {
+	rows, err := q.db.Query(ctx, countSealedByKeyVersion)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CountSecretsByKeyVersionRow
+	var items []CountSealedByKeyVersionRow
 	for rows.Next() {
-		var i CountSecretsByKeyVersionRow
+		var i CountSealedByKeyVersionRow
 		if err := rows.Scan(&i.KeyVersion, &i.Total); err != nil {
 			return nil, err
 		}
@@ -55,6 +62,55 @@ func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const listProviderKeysToRotate = `-- name: ListProviderKeysToRotate :many
+select id, org_id, name, key_ciphertext, key_nonce, key_version
+  from provider_connections
+ where key_version is not null and key_version <> $1 and id > $2
+ order by id limit $3
+`
+
+type ListProviderKeysToRotateParams struct {
+	CurrentVersion pgtype.Int4 `json:"current_version"`
+	AfterID        pgtype.UUID `json:"after_id"`
+	Lim            int32       `json:"lim"`
+}
+
+type ListProviderKeysToRotateRow struct {
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	Name          string      `json:"name"`
+	KeyCiphertext []byte      `json:"key_ciphertext"`
+	KeyNonce      []byte      `json:"key_nonce"`
+	KeyVersion    pgtype.Int4 `json:"key_version"`
+}
+
+func (q *Queries) ListProviderKeysToRotate(ctx context.Context, arg ListProviderKeysToRotateParams) ([]ListProviderKeysToRotateRow, error) {
+	rows, err := q.db.Query(ctx, listProviderKeysToRotate, arg.CurrentVersion, arg.AfterID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProviderKeysToRotateRow
+	for rows.Next() {
+		var i ListProviderKeysToRotateRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.KeyCiphertext,
+			&i.KeyNonce,
+			&i.KeyVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSecretNames = `-- name: ListSecretNames :many
@@ -184,6 +240,34 @@ func (q *Queries) ListSecretsToRotate(ctx context.Context, arg ListSecretsToRota
 		return nil, err
 	}
 	return items, nil
+}
+
+const rotateProviderKey = `-- name: RotateProviderKey :execrows
+update provider_connections
+   set key_ciphertext = $1, key_nonce = $2, key_version = $3
+ where id = $4 and key_version = $5
+`
+
+type RotateProviderKeyParams struct {
+	Ciphertext []byte      `json:"ciphertext"`
+	Nonce      []byte      `json:"nonce"`
+	NewVersion pgtype.Int4 `json:"new_version"`
+	ID         pgtype.UUID `json:"id"`
+	OldVersion pgtype.Int4 `json:"old_version"`
+}
+
+func (q *Queries) RotateProviderKey(ctx context.Context, arg RotateProviderKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateProviderKey,
+		arg.Ciphertext,
+		arg.Nonce,
+		arg.NewVersion,
+		arg.ID,
+		arg.OldVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const rotateSecret = `-- name: RotateSecret :execrows

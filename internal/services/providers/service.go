@@ -112,7 +112,7 @@ type CreateInput struct {
 }
 
 func aad(orgID pgtype.UUID, name string) []byte {
-	return append(append([]byte(uid.String(orgID)), 0), "provider:"+name...)
+	return vault.AAD(uid.String(orgID), "provider:"+name)
 }
 
 func (s *Service) validate(provider, baseURL, key string) error {

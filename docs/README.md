@@ -74,6 +74,10 @@ Organizations add their own provider keys under `/v1/providers` (`04 §4d`); the
 sealed with the vault key, so they need `VAULT_MASTER_KEY`. `OPENAI_BASE_URL` and
 `GEMINI_BASE_URL` let an operator route those providers through a proxy.
 
+Connections (`04 §4e`) seal their credentials with the vault key too. `RESEND_BASE_URL`
+routes Resend through a proxy. Key rotation (`04 §4c`) re-seals vault secrets, provider
+keys and connection credentials together.
+
 Sign-in uses sessions and API keys (`04 §4b`). Set `BOOTSTRAP_ADMIN_EMAIL` and
 `BOOTSTRAP_ADMIN_PASSWORD` once to create the first platform administrator;
 `PUBLIC_URL` builds invite links, `SESSION_TTL` (default 336h) sets the session

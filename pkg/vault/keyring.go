@@ -146,3 +146,10 @@ func (k *Keyring) Open(version int, nonce, ciphertext, aad []byte) ([]byte, erro
 	}
 	return plaintext, nil
 }
+
+// AAD builds the additional authenticated data that binds a ciphertext to its
+// owner and a name within it ("provider:acme" and so on). It is the one place the
+// format is defined, because rotation must rebuild exactly what sealing used.
+func AAD(owner, name string) []byte {
+	return append(append([]byte(owner), 0), name...)
+}

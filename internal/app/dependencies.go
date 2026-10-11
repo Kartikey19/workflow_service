@@ -11,8 +11,10 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
+	"github.com/kartikey/workflow_service/internal/core/executor/email"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	"github.com/kartikey/workflow_service/internal/services/agents"
+	"github.com/kartikey/workflow_service/internal/services/connections"
 	"github.com/kartikey/workflow_service/internal/services/identity"
 	"github.com/kartikey/workflow_service/internal/services/providers"
 	"github.com/kartikey/workflow_service/internal/services/runs"
@@ -39,6 +41,7 @@ type Deps struct {
 	Vault     *vault.Service
 	Providers *providers.Service
 	Agents    *agents.Service
+	Conns     *connections.Service
 	Auth      auth.Authenticator
 	Secrets   engine.SecretSource
 	Extra     []func(api.Router)
@@ -92,8 +95,11 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, tools, agentSvc)
 	agentSvc.Attach(agentExecutor)
 
+	connectionSvc := connections.NewService(pool, keyring, policy, connections.Endpoints{Resend: cfg.Services.ResendBaseURL})
+	emailExecutor := email.New(connectionSvc, policy, cfg.Services.ResendBaseURL)
+
 	registry := executor.NewRegistry()
-	for _, e := range append(builtin.All(), httpexec.New(policy), agentExecutor, builtin.SubWorkflow{Starter: svc}) {
+	for _, e := range append(builtin.All(), httpexec.New(policy), agentExecutor, builtin.SubWorkflow{Starter: svc}, emailExecutor) {
 		if err := registry.Register(e); err != nil {
 			return nil, err
 		}
@@ -106,7 +112,7 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	deps := &Deps{
 		Pool: pool, Log: log, Registry: registry, Runs: svc, Tasks: tasks.NewService(svc),
 		Workflows: workflows.NewService(pool, registry), Identity: ident, Vault: vaultSvc,
-		Providers: providerSvc, Agents: agentSvc, cfgAuth: cfg.Auth,
+		Providers: providerSvc, Agents: agentSvc, Conns: connectionSvc, cfgAuth: cfg.Auth,
 	}
 	deps.Workflows.Plans = ident.Plans()
 	deps.Runs.Allowance = ident.Plans()
@@ -136,7 +142,7 @@ func (d *Deps) Services() *api.Services {
 	return &api.Services{
 		Pool: d.Pool, Workflows: d.Workflows, Runs: d.Runs, Executors: d.Registry,
 		Tasks: d.Tasks, Admin: d.Runs, Identity: d.Identity, Vault: d.Vault,
-		Providers: d.Providers, Agents: d.Agents,
+		Providers: d.Providers, Agents: d.Agents, Connections: d.Conns,
 		CookieSecure: d.cfgAuth.CookieSecure, PublicURL: d.cfgAuth.PublicURL, Auth: d.Auth, Extra: d.Extra,
 	}
 }

@@ -158,7 +158,10 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 		return
 	}
 
-	// 5. Execute outside any transaction, bounded by the node timeout.
+	// 5. Execute outside any transaction, bounded by the node timeout. Values the
+	// executor fetches itself (connection credentials) join the secrets in the
+	// scrubber through req.Redact.
+	redactions := newRedactions(secretValues)
 	req := executor.Request{
 		RunID:           uuid.UUID(ne.RunID.Bytes),
 		NodeExecutionID: uuid.UUID(ne.ID.Bytes),
@@ -169,6 +172,7 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 		Config:          resolvedCfg,
 		IdempotencyKey:  ne.IdempotencyKey,
 		Emit:            func(context.Context, string, any) {},
+		Redact:          redactions.Add,
 	}
 	attemptCtx, cancelAttempt := attemptContext(ctx, node)
 	defer cancelAttempt()
@@ -177,11 +181,11 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 	}
 	started := time.Now()
 	res, execErr := d.execute(attemptCtx, ex, ne, req)
-	if len(secretValues) > 0 {
+	if values := redactions.Values(); len(values) > 0 {
 		// An upstream can echo a credential back, and transport errors can quote a
 		// URL that carried one: neither may reach the stored output or error.
-		res.Output = scrubBytes(res.Output, secretValues)
-		execErr = scrubError(execErr, secretValues)
+		res.Output = scrubBytes(res.Output, values)
+		execErr = scrubError(execErr, values)
 	}
 	elapsed := time.Since(started)
 	metrics := encodeMetrics(res.Metrics, elapsed)

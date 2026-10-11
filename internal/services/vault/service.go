@@ -54,9 +54,7 @@ func notConfigured() error {
 }
 
 // aad binds a ciphertext to its organization and name.
-func aad(orgID pgtype.UUID, name string) []byte {
-	return append(append([]byte(uid.String(orgID)), 0), name...)
-}
+func aad(orgID pgtype.UUID, name string) []byte { return vault.AAD(uid.String(orgID), name) }
 
 // Info is a secret's metadata; the value is never returned.
 type Info struct {
@@ -149,51 +147,134 @@ func (s *Service) Secrets(ctx context.Context, tenantID pgtype.UUID) (map[string
 	return out, nil
 }
 
-// RotateResult reports a rotation pass.
+// RotateResult reports a rotation pass over everything sealed under the master
+// key: vault secrets, provider-connection API keys and connection credentials.
 type RotateResult struct {
 	Rotated int // re-sealed under the current key
 	Skipped int // changed by someone else while the pass ran; already current
 	Failed  int // could not be opened (their key is no longer held)
 }
 
-// Rotate re-seals every secret that is not under the current key version. It is
+func (r *RotateResult) add(other RotateResult) {
+	r.Rotated += other.Rotated
+	r.Skipped += other.Skipped
+	r.Failed += other.Failed
+}
+
+// sealed is one row waiting to be re-sealed, from any table.
+type sealed struct {
+	id         pgtype.UUID
+	label      []byte // the additional authenticated data it was sealed with
+	name       string
+	ciphertext []byte
+	nonce      []byte
+	version    int32
+}
+
+// source lists a page of rows not under the current key and replaces one.
+type source struct {
+	table   string
+	list    func(ctx context.Context, current int32, after pgtype.UUID) ([]sealed, error)
+	replace func(ctx context.Context, row sealed, ciphertext, nonce []byte, version int32) (int64, error)
+}
+
+func (s *Service) sources() []source {
+	return []source{
+		{
+			table: "secrets",
+			list: func(ctx context.Context, current int32, after pgtype.UUID) ([]sealed, error) {
+				rows, err := s.q.ListSecretsToRotate(ctx, gen.ListSecretsToRotateParams{CurrentVersion: current, AfterID: after, Lim: rotateBatch})
+				out := make([]sealed, 0, len(rows))
+				for _, r := range rows {
+					out = append(out, sealed{r.ID, aad(r.OrgID, r.Name), r.Name, r.Ciphertext, r.Nonce, r.KeyVersion})
+				}
+				return out, err
+			},
+			replace: func(ctx context.Context, row sealed, ciphertext, nonce []byte, version int32) (int64, error) {
+				return s.q.RotateSecret(ctx, gen.RotateSecretParams{ID: row.id, Ciphertext: ciphertext, Nonce: nonce, NewVersion: version, OldVersion: row.version})
+			},
+		},
+		{
+			table: "provider_connections",
+			list: func(ctx context.Context, current int32, after pgtype.UUID) ([]sealed, error) {
+				rows, err := s.q.ListProviderKeysToRotate(ctx, gen.ListProviderKeysToRotateParams{CurrentVersion: pgtype.Int4{Int32: current, Valid: true}, AfterID: after, Lim: rotateBatch})
+				out := make([]sealed, 0, len(rows))
+				for _, r := range rows {
+					out = append(out, sealed{r.ID, vault.AAD(uid.String(r.OrgID), "provider:"+r.Name), r.Name, r.KeyCiphertext, r.KeyNonce, r.KeyVersion.Int32})
+				}
+				return out, err
+			},
+			replace: func(ctx context.Context, row sealed, ciphertext, nonce []byte, version int32) (int64, error) {
+				return s.q.RotateProviderKey(ctx, gen.RotateProviderKeyParams{
+					ID: row.id, Ciphertext: ciphertext, Nonce: nonce, NewVersion: pgtype.Int4{Int32: version, Valid: true}, OldVersion: pgtype.Int4{Int32: row.version, Valid: true},
+				})
+			},
+		},
+		{
+			table: "connections",
+			list: func(ctx context.Context, current int32, after pgtype.UUID) ([]sealed, error) {
+				rows, err := s.q.ListConnectionsToRotate(ctx, gen.ListConnectionsToRotateParams{CurrentVersion: pgtype.Int4{Int32: current, Valid: true}, AfterID: after, Lim: rotateBatch})
+				out := make([]sealed, 0, len(rows))
+				for _, r := range rows {
+					out = append(out, sealed{r.ID, vault.AAD(uid.String(r.OrgID), "connection:"+r.Name), r.Name, r.SecretCiphertext, r.SecretNonce, r.SecretKeyVersion.Int32})
+				}
+				return out, err
+			},
+			replace: func(ctx context.Context, row sealed, ciphertext, nonce []byte, version int32) (int64, error) {
+				return s.q.RotateConnectionSecret(ctx, gen.RotateConnectionSecretParams{
+					ID: row.id, Ciphertext: ciphertext, Nonce: nonce, NewVersion: pgtype.Int4{Int32: version, Valid: true}, OldVersion: pgtype.Int4{Int32: row.version, Valid: true},
+				})
+			},
+		},
+	}
+}
+
+// Rotate re-seals everything that is not under the current key version. It is
 // safe to run while the service is serving: each row is replaced with a
 // compare-and-set on its old version, and reads keep working because old keys
 // stay in the keyring until the operator removes them.
 func (s *Service) Rotate(ctx context.Context) (RotateResult, error) {
-	var result RotateResult
+	var total RotateResult
 	if s.keyring == nil {
-		return result, notConfigured()
+		return total, notConfigured()
 	}
+	for _, src := range s.sources() {
+		result, err := s.rotateSource(ctx, src)
+		total.add(result)
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+func (s *Service) rotateSource(ctx context.Context, src source) (RotateResult, error) {
+	var result RotateResult
 	after := pgtype.UUID{Valid: true} // the zero UUID sorts before every other
 	for {
-		rows, err := s.q.ListSecretsToRotate(ctx, gen.ListSecretsToRotateParams{
-			CurrentVersion: int32(s.keyring.Current()), AfterID: after, Lim: rotateBatch,
-		})
+		rows, err := src.list(ctx, int32(s.keyring.Current()), after)
 		if err != nil {
-			return result, fmt.Errorf("list secrets to rotate: %w", err)
+			return result, fmt.Errorf("list %s to rotate: %w", src.table, err)
 		}
 		if len(rows) == 0 {
 			return result, nil
 		}
 		for _, row := range rows {
-			after = row.ID
-			label := aad(row.OrgID, row.Name)
-			plaintext, err := s.keyring.Open(int(row.KeyVersion), row.Nonce, row.Ciphertext, label)
+			after = row.id
+			plaintext, err := s.keyring.Open(int(row.version), row.nonce, row.ciphertext, row.label)
 			if err != nil {
 				result.Failed++
-				s.log.Error("rotate secret: cannot open it", zap.String("name", row.Name), zap.Int32("key_version", row.KeyVersion), zap.Error(err))
+				s.log.Error("rotate: cannot open a sealed value", zap.String("table", src.table), zap.String("name", row.name),
+					zap.Int32("key_version", row.version), zap.Error(err))
 				continue
 			}
-			ciphertext, nonce, version, err := s.keyring.Seal(plaintext, label)
+			ciphertext, nonce, version, err := s.keyring.Seal(plaintext, row.label)
 			if err != nil {
 				return result, err
 			}
-			changed, err := s.q.RotateSecret(ctx, gen.RotateSecretParams{
-				ID: row.ID, Ciphertext: ciphertext, Nonce: nonce, NewVersion: int32(version), OldVersion: row.KeyVersion,
-			})
+			changed, err := src.replace(ctx, row, ciphertext, nonce, int32(version))
 			if err != nil {
-				return result, fmt.Errorf("rotate secret: %w", err)
+				return result, fmt.Errorf("rotate %s: %w", src.table, err)
 			}
 			if changed == 0 {
 				result.Skipped++
@@ -204,15 +285,15 @@ func (s *Service) Rotate(ctx context.Context) (RotateResult, error) {
 	}
 }
 
-// KeyVersions reports how many secrets are sealed under each key version, so an
-// operator can tell when an old key is safe to remove.
+// KeyVersions reports how many sealed values use each key version, across every
+// table, so an operator can tell when an old key is safe to remove.
 func (s *Service) KeyVersions(ctx context.Context) (map[int]int64, error) {
 	if s.keyring == nil {
 		return nil, notConfigured()
 	}
-	rows, err := s.q.CountSecretsByKeyVersion(ctx)
+	rows, err := s.q.CountSealedByKeyVersion(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("count secrets by key version: %w", err)
+		return nil, fmt.Errorf("count sealed values by key version: %w", err)
 	}
 	out := make(map[int]int64, len(rows))
 	for _, row := range rows {

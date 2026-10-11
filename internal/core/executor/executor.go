@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 	"uuid"
 )
@@ -41,6 +42,28 @@ type Request struct {
 	// Emit records a progress event. Best-effort, non-transactional.
 	// Reserved for streaming node output in v2.
 	Emit func(ctx context.Context, kind string, payload any)
+
+	// Redact registers credential values the executor obtained itself (from a
+	// Connection, say). The engine then scrubs them from the node's stored output
+	// and error, as it does for ${secrets.*}. It may be nil.
+	Redact func(values ...string)
+}
+
+// RedactSecrets registers values with the engine's scrubber, if there is one.
+// Short values are skipped: replacing "1" everywhere would mangle the output.
+func (r Request) RedactSecrets(values ...string) {
+	if r.Redact == nil {
+		return
+	}
+	keep := make([]string, 0, len(values))
+	for _, v := range values {
+		if len(v) >= 6 {
+			keep = append(keep, v)
+		}
+	}
+	if len(keep) > 0 {
+		r.Redact(keep...)
+	}
 }
 
 type Result struct {
@@ -140,3 +163,25 @@ type ChildStarter interface {
 // /v1/signals, so a caller cannot complete a task or a sub-workflow wait around
 // the checks those paths make.
 var ReservedWaitKeyPrefixes = []string{"task:", "subworkflow:"}
+
+// Connection is an organization's named connection to an external service, with
+// its credentials decrypted for one use. Config holds the non-secret settings
+// (host, port, from address); Secret the credentials (password, tokens).
+type Connection struct {
+	Name   string
+	Kind   string
+	Config map[string]any
+	Secret map[string]string
+}
+
+// ErrConnectionNotFound means the organization has no connection of that name
+// and kind.
+var ErrConnectionNotFound = errors.New("connection not found")
+
+// Connections gives executors the credentials of a named connection. The
+// connections service implements it; executors never import the store.
+type Connections interface {
+	// Connection returns the connection called name, which must be one of kinds.
+	// OAuth connections are refreshed first when their token is about to expire.
+	Connection(ctx context.Context, tenantID uuid.UUID, name string, kinds ...string) (Connection, error)
+}

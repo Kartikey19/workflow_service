@@ -106,7 +106,7 @@ type stack struct {
 	fakes *fakeProviders
 }
 
-func newStack(t *testing.T, ctx context.Context) *stack {
+func newStack(t *testing.T, ctx context.Context, tweak ...func(*config.Config)) *stack {
 	t.Helper()
 	h := newHarness(t, ctx) // for the isolated database and helpers
 	fakes := newFakeProviders(t)
@@ -123,6 +123,9 @@ func newStack(t *testing.T, ctx context.Context) *stack {
 			AnthropicAPIKey: "platform-anthropic-key", AnthropicBaseURL: fakes.servers["anthropic"].URL,
 			OpenAIBaseURL: fakes.servers["openai"].URL, GeminiBaseURL: fakes.servers["gemini"].URL,
 		},
+	}
+	for _, edit := range tweak {
+		edit(&cfg)
 	}
 	deps, err := app.Build(ctx, cfg, h.pool, testLogger())
 	if err != nil {

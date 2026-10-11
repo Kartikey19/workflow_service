@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/kartikey/workflow_service/internal/core/executor"
 )
@@ -120,4 +121,40 @@ func stripCode(err error, code string) error {
 		return err
 	}
 	return errors.New(strings.TrimPrefix(err.Error(), code+": "))
+}
+
+// redactions collects the credential values to scrub from one node attempt: the
+// vault secrets its config used plus anything the executor registered.
+type redactions struct {
+	mu     sync.Mutex
+	values map[string]struct{}
+}
+
+func newRedactions(initial []string) *redactions {
+	r := &redactions{values: make(map[string]struct{}, len(initial))}
+	r.Add(initial...)
+	return r
+}
+
+// Add registers values to scrub; it is safe to call from the executor's goroutines.
+func (r *redactions) Add(values ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, value := range values {
+		if value != "" {
+			r.values[value] = struct{}{}
+		}
+	}
+}
+
+// Values returns the registered values, longest first.
+func (r *redactions) Values() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.values))
+	for value := range r.values {
+		out = append(out, value)
+	}
+	slices.SortFunc(out, func(a, b string) int { return len(b) - len(a) })
+	return out
 }

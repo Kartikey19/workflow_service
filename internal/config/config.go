@@ -25,6 +25,7 @@ type Config struct {
 	LLM      LLMConfig
 	Auth     AuthConfig
 	Vault    VaultConfig
+	Services ServicesConfig
 }
 
 type AppConfig struct {
@@ -90,6 +91,13 @@ type VaultConfig struct {
 	MasterKey  string `env:"VAULT_MASTER_KEY"`                 // 32 bytes, base64
 	KeyVersion int    `env:"VAULT_KEY_VERSION" envDefault:"1"` // version of VAULT_MASTER_KEY
 	OldKeys    string `env:"VAULT_OLD_KEYS"`                   // "1:base64,2:base64"
+}
+
+// ServicesConfig points the built-in integrations at different endpoints, for a
+// corporate proxy or a test server. Empty keeps the public endpoint. Tenants
+// cannot set these.
+type ServicesConfig struct {
+	ResendBaseURL string `env:"RESEND_BASE_URL"` // default https://api.resend.com
 }
 
 // LLMConfig configures the platform-managed model provider used by agent

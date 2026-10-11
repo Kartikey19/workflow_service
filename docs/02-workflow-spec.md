@@ -435,6 +435,38 @@ Wait keys starting with `task:` or `subworkflow:` belong to the engine: a
 `wait_event` cannot use them and `POST /v1/signals` rejects them.
 
 
+### 4.11 `email.send` (M14)
+
+Sends one email through an SMTP server or Resend.
+
+```yaml
+- id: notify
+  type: email.send
+  needs: [create_ticket]
+  config:
+    connection: team-smtp            # a saved smtp or resend connection (04 §4e)
+    to: [oncall@example.com]         # a string or a list; cc and bcc work the same way
+    subject: "Ticket ${nodes.create_ticket.output.body.id} created"
+    text: "A new ticket needs attention."
+    html: "<p>A new ticket needs attention.</p>"   # optional; with text it is multipart/alternative
+    reply_to: support@example.com    # optional
+    from: "Ops <ops@example.com>"    # optional if the connection has a default sender
+```
+
+Instead of a connection, give credentials inline with `${secrets.*}`:
+`resend: {api_key: ${secrets.RESEND_KEY}}` or
+`smtp: {host: smtp.example.com, port: 587, username: bot, password: ${secrets.SMTP_PASSWORD}}`.
+Exactly one of `connection`, `smtp` and `resend` must be set.
+
+The node validates the message before touching the network (addresses, at most 50
+recipients, no line breaks in headers, a body under 1 MiB), so a bad message is a
+permanent failure. Temporary failures (SMTP 4xx, timeouts, Resend 429 and 5xx) are
+retried; rejected recipients and bad credentials are not. The Message-ID (SMTP) and
+the Idempotency-Key (Resend) come from the node's stable key, so a retried send is
+recognisable. Delivery is at-least-once: if a send succeeds but the node's result is
+lost, a redelivered attempt can send again, as it can for any side effect.
+Output: `{provider, message_id, recipients}`.
+
 ### 4.8 `noop` (M2)
 
 No config. Succeeds immediately. Exists for fan-in points and for testing the
