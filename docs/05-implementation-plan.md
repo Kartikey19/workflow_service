@@ -719,9 +719,12 @@ agent on a tenant connection, a platform-provider agent and a sub-workflow.
 **Acceptance**
 - [ ] Each integration has a recorded-response test and a manual end-to-end check
       against a real account.
-- [ ] Database connectors respect egress rules and a per-query timeout and row cap.
+- [x] Database connectors respect egress rules and a per-query timeout and row cap.
 
-**Progress (2026-10-11).** Slice 2 adds the OAuth sign-in (state with PKCE, a public
+**Progress (2026-10-11).** Slice 3 adds `pkg/dbx` (PostgreSQL through pgx, MySQL through
+go-sql-driver; read-only checks, row and size caps, statement timeouts) and the
+`db.query` and `db.insert` nodes (`02 §4.13`), tested through the real wiring against
+PostgreSQL and MySQL 8 (CI runs a MySQL service; locally set `MYSQL_URL`). Slice 2 adds the OAuth sign-in (state with PKCE, a public
 callback, lazy refresh with compare-and-set; `0014_oauth_states.sql`) and the
 `gmail.send`, `gdrive.upload`, `dropbox.upload` and `onedrive.upload` nodes
 (`internal/core/executor/connectors`, `02 §4.12`). They are tested against fake Google,
@@ -731,8 +734,7 @@ been done** and needs OAuth apps registered with each provider. Slice 1 is built
 `/v1/integrations`, `04 §4e`), `executor.Connections` and `Request.Redact`, and
 `email.send` over SMTP and Resend (`pkg/mailer` builds RFC 5322 messages with header
 injection protection and speaks SMTP through the egress guard). Vault rotation now
-re-seals provider keys and connection credentials as well as vault secrets. Still to
-do: `db.query` and `db.insert` for PostgreSQL and MySQL.
+re-seals provider keys and connection credentials as well as vault secrets.
 
 ### M15 — Data-exploration agents and MCP connectors (1 week)
 

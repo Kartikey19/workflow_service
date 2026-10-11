@@ -21,8 +21,21 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: workflow_test
+          MYSQL_DATABASE: workflow_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -uroot -pworkflow_test --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       DATABASE_URL: postgres://workflow:workflow_test@localhost:5432/workflow_test?sslmode=disable
+      MYSQL_URL: root:workflow_test@tcp(127.0.0.1:3306)/workflow_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

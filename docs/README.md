@@ -111,6 +111,9 @@ Migrations are forward-only: add a new numbered SQL file with `-- +goose Up`
 and `-- +goose Down` markers, wrapping dollar-quoted function bodies in
 `-- +goose StatementBegin` / `-- +goose StatementEnd`. Do not edit applied files.
 
+Database-node tests also run against MySQL when `MYSQL_URL` is set (a go-sql-driver DSN,
+e.g. `user:pass@tcp(127.0.0.1:3306)/dbname`); CI provides one.
+
 For integration tests, export `DATABASE_URL` (or source your trusted `.env` with
 `set -a; source .env; set +a`) and run `make test-integration`.
 Integration tests create and remove temporary schemas in the supplied database;

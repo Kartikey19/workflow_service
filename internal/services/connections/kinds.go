@@ -54,8 +54,10 @@ type kind struct {
 
 func (s *Service) kinds() map[string]kind {
 	registry := map[string]kind{
-		KindSMTP:   smtpKind(),
-		KindResend: resendKind(),
+		KindSMTP:     smtpKind(),
+		KindResend:   resendKind(),
+		KindPostgres: databaseKind(KindPostgres, "PostgreSQL database", 5432),
+		KindMySQL:    databaseKind(KindMySQL, "MySQL database", 3306),
 	}
 	for name, k := range s.oauthKinds() {
 		registry[name] = k

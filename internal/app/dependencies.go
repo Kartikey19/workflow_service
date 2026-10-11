@@ -12,6 +12,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
 	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
+	"github.com/kartikey/workflow_service/internal/core/executor/database"
 	"github.com/kartikey/workflow_service/internal/core/executor/email"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	"github.com/kartikey/workflow_service/internal/services/agents"
@@ -111,6 +112,7 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	appNodes := []executor.Executor{
 		connectors.NewGmail(connectionSvc, policy, endpoints), connectors.NewGDrive(connectionSvc, policy, endpoints),
 		connectors.NewDropbox(connectionSvc, policy, endpoints), connectors.NewOneDrive(connectionSvc, policy, endpoints),
+		database.NewQuery(connectionSvc, policy), database.NewInsert(connectionSvc, policy),
 	}
 
 	registry := executor.NewRegistry()

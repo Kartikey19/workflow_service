@@ -499,6 +499,34 @@ are harmless to repeat; **Gmail** has no idempotency key, so a send whose result
 be sent again. 429 and rate-limit replies are retried honouring `Retry-After`; an expired
 token is refreshed first; `401`, `403` (other than rate limits) and `404` are permanent.
 
+### 4.13 `db.query`, `db.insert` (M14)
+
+Both use a `postgres` or `mysql` connection (`04 §4e`) named by `connection`.
+
+`db.query` runs one read statement. Config: `connection`, `sql`, `params` (list),
+`max_rows` (default 1000, at most 10000), `timeout` (default 30s, at most 5m),
+`fail_on_truncate` (default false). Output: `{columns, rows, row_count, truncated}`.
+
+- **Values are parameters.** `sql` may not contain `${...}`; publish fails with a 400.
+  Put values in `params` and refer to them with `$1`… (PostgreSQL) or `?` (MySQL).
+- **Read-only.** The statement must start with `select`, `with`, `show`, `describe`,
+  `explain`, `values` or `table`, and runs in a read-only transaction. Anything else
+  fails once with `db_statement`.
+- **Bounded.** The row cap and a result size cap (900 KiB) stop at the limit and set
+  `truncated`; with `fail_on_truncate` the node fails with `too_many_rows`. The
+  timeout cancels the statement on the server.
+
+`db.insert` writes rows to one `table` (`name` or `schema.name`). Config: `connection`,
+`table`, `row` or `rows` (at most 1000, all with the same columns), `ignore_conflicts`
+(skip rows that violate a unique key), `timeout`. Output: `{inserted}`. Table and column
+names are validated (letters, digits, underscores) and quoted; values are always bound
+parameters. All rows go in one transaction.
+
+Failures: wrong credentials are `db_auth` and a rejected statement is `db_statement`
+(both permanent); network trouble, timeouts and deadlocks are `db_transient` (retried);
+an address blocked by the egress policy is `egress_blocked` (permanent). Error messages
+never contain the password.
+
 ### 4.8 `noop` (M2)
 
 No config. Succeeds immediately. Exists for fan-in points and for testing the

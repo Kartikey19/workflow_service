@@ -453,6 +453,10 @@ Kinds and their fields: **smtp** (`host`, `port` default 587, `tls` = `starttls`
 `tls` | `none`, `username`, `from`; secret `password`), **resend** (`from`; secret
 `api_key`). A password is never sent over an unencrypted connection to a host other
 than loopback, and `starttls` refuses to continue when the server does not offer it.
+**postgres** and **mysql** (`host`, `port`, `database`, `username`, `tls` =
+`verify-full` (default) | `require` | `disable`; secret `password`): the password is
+never placed in a connection string, and TLS certificates are verified unless the
+connection says otherwise — there is no silent fallback to plaintext.
 Every connection goes through the egress guard.
 
 Credentials a node fetches from a connection are added to the same scrubber as

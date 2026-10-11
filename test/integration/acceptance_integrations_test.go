@@ -312,7 +312,7 @@ func TestOAuthConnectFlow(t *testing.T) {
 	for _, k := range kinds["items"].([]any) {
 		offered = append(offered, k.(map[string]any)["kind"].(string))
 	}
-	if strings.Join(offered, ",") != "smtp,resend,gmail,gdrive,dropbox,onedrive" {
+	if strings.Join(offered, ",") != "smtp,resend,gmail,gdrive,dropbox,onedrive,postgres,mysql" {
 		t.Fatalf("offered kinds = %v", offered)
 	}
 	// OAuth kinds cannot be created with pasted credentials.
