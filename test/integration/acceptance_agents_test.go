@@ -99,7 +99,7 @@ func TestAgentsAPIRulesAndRevisions(t *testing.T) {
 	for _, item := range tools["items"].([]any) {
 		names = append(names, item.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "current_time,http_request" {
+	if strings.Join(names, ",") != "current_time,describe_table,http_request,list_tables,run_query" {
 		t.Fatalf("tools = %v", names)
 	}
 

@@ -26,6 +26,7 @@ type Executor struct {
 	clients Clients
 	tools   *Tools
 	defs    Definitions
+	dynamic DynamicTools
 }
 
 var _ executor.Executor = (*Executor)(nil)
@@ -95,19 +96,20 @@ type config struct {
 	Input json.RawMessage `json:"input"`
 
 	// Inline mode: configure the call here.
-	Model         string          `json:"model"`
-	System        string          `json:"system"`
-	Prompt        json.RawMessage `json:"prompt"`
-	Tools         []string        `json:"tools"`
-	MaxIterations int             `json:"max_iterations"`
-	MaxTokens     int             `json:"max_tokens"`
-	Temperature   *float64        `json:"temperature"`
-	OutputSchema  json.RawMessage `json:"output_schema"`
+	Model              string          `json:"model"`
+	System             string          `json:"system"`
+	Prompt             json.RawMessage `json:"prompt"`
+	Tools              []string        `json:"tools"`
+	DatabaseConnection string          `json:"database_connection"`
+	MaxIterations      int             `json:"max_iterations"`
+	MaxTokens          int             `json:"max_tokens"`
+	Temperature        *float64        `json:"temperature"`
+	OutputSchema       json.RawMessage `json:"output_schema"`
 }
 
 // inlineOnly are the fields that, with `agent`, would conflict with the stored
 // definition.
-var inlineOnly = []string{"model", "system", "tools", "max_iterations", "max_tokens", "temperature", "output_schema"}
+var inlineOnly = []string{"model", "system", "tools", "max_iterations", "max_tokens", "temperature", "output_schema", "database_connection"}
 
 // ValidateConfig checks the shape at publish time. A node either names a stored
 // agent (`agent`, with optional `input` and `prompt`) or configures the call
@@ -155,6 +157,7 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 		{Name: "system", Kind: "string"},
 		{Name: "prompt", Kind: "any", Required: true},
 		{Name: "tools", Kind: "array"},
+		{Name: "database_connection", Kind: "string"},
 		{Name: "max_iterations", Kind: "integer", Required: true},
 		{Name: "max_tokens", Kind: "integer"},
 		{Name: "temperature", Kind: "number"},
@@ -179,7 +182,7 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 				problems = append(problems, errors.New("tools must be a list of literal tool names"))
 				break
 			}
-			if _, registered := e.tools.Get(name); !registered {
+			if _, registered := e.tools.Get(name); !registered && !IsMCPReference(name) {
 				problems = append(problems, fmt.Errorf("unknown tool %q (available: %s)", name, toolList(e.tools)))
 			}
 		}
@@ -188,6 +191,21 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 		if err := jsonschema.Check(schema); err != nil {
 			problems = append(problems, fmt.Errorf("output_schema: %w", err))
 		}
+	}
+	db, _ := c["database_connection"].(string)
+	var names []string
+	if entries, ok := c["tools"].([]any); ok {
+		for _, entry := range entries {
+			if name, ok := entry.(string); ok {
+				names = append(names, name)
+			}
+		}
+	}
+	if err := validateDatabaseTools(names, db); err != nil {
+		problems = append(problems, err)
+	}
+	if err := validateReferences(names); err != nil {
+		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
 }
@@ -212,6 +230,9 @@ func literalInt(config map[string]any, key string, lo, hi int) error {
 // validateResolved checks an inline configuration after its expressions are
 // resolved. Stored agents were validated when they were saved.
 func (c *config) validateResolved(tools *Tools) error {
+	if err := validateDatabaseTools(c.Tools, c.DatabaseConnection); err != nil {
+		return err
+	}
 	return validateLimits(c.Model, c.Prompt, true, c.MaxIterations, c.MaxTokens, c.Temperature, c.Tools, c.OutputSchema, tools)
 }
 
@@ -228,8 +249,11 @@ func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, ma
 	case temperature != nil && (*temperature < 0 || *temperature > 1):
 		return errors.New("temperature must be between 0 and 1")
 	}
+	if err := validateReferences(toolNames); err != nil {
+		return err
+	}
 	for _, name := range toolNames {
-		if _, ok := tools.Get(name); !ok {
+		if _, ok := tools.Get(name); !ok && !IsMCPReference(name) {
 			return fmt.Errorf("unknown tool %q", name)
 		}
 	}
@@ -248,6 +272,9 @@ func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, ma
 // ValidateDefinition checks a stored agent before it is saved, with the same
 // rules as an inline node plus the schemas. The agents service calls it.
 func (e *Executor) ValidateDefinition(d Definition) error {
+	if err := validateDatabaseTools(d.Tools, d.DatabaseConnection); err != nil {
+		return err
+	}
 	// A definition has no prompt of its own: each node supplies input.
 	if err := validateLimits(d.Model, nil, false, d.MaxIterations, d.MaxTokens, d.Temperature, d.Tools, d.OutputSchema, e.tools); err != nil {
 		return err

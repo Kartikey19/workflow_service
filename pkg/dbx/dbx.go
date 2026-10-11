@@ -93,16 +93,16 @@ type InsertOptions struct {
 
 // Table names a table or view.
 type Table struct {
-	Schema string
-	Name   string
+	Schema string `json:"schema"`
+	Name   string `json:"name"`
 }
 
 // Column describes a column.
 type Column struct {
-	Name       string
-	Type       string
-	Nullable   bool
-	PrimaryKey bool
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Nullable   bool   `json:"nullable"`
+	PrimaryKey bool   `json:"primary_key"`
 }
 
 // Conn is an open connection. It is not safe for concurrent use.

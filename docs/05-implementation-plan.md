@@ -741,15 +741,31 @@ re-seals provider keys and connection credentials as well as vault secrets.
 - Data-exploration agent: an agent bound to a database connection with read-only
   tools `list_tables`, `describe_table` and `run_query` (read-only transaction,
   statement timeout, row cap) (7).
-- `mcp_servers(org, name, url, auth)` connections; the MCP client supports
+- MCP servers use the existing organization-scoped encrypted `connections` store
+  with kind `mcp` (URL, transport, optional bearer token); the MCP client supports
   initialize, `tools/list` and `tools/call` over streamable HTTP or SSE;
   agents list MCP servers in `tools`, and an `mcp.call` node type calls one
   tool directly (8).
 
 **Acceptance**
-- [ ] An exploration agent answers a question by querying a sample database and
-      cannot write to it.
-- [ ] An agent calls a tool on a public MCP test server.
+- [x] An exploration agent answers a question by querying a sample database and
+      cannot write to it (real PostgreSQL and MySQL, scripted LLM).
+- [x] An agent calls a tool on a public MCP test server (DeepWiki live smoke test,
+      2026-10-11, scripted LLM; opt-in so external uptime does not gate CI).
+
+Implemented: tenant-bound `database_connection`, the three read-only exploration
+tools, encrypted MCP connection kind with test-before-save, the official Go MCP
+SDK behind `pkg/mcpclient`, both HTTP transports, dynamic agent tool discovery,
+and `mcp.call`. Integration coverage checks both databases, write refusal,
+parameter injection and row caps, tenant isolation, both transports, credentials
+and blocked egress. Client tests cover pagination, SSE responses, authentication,
+redirect/origin protection, cancellation and response bounds. No real LLM account
+was used. To repeat the live smoke test:
+
+```sh
+M15_PUBLIC_MCP_URL=https://mcp.deepwiki.com/mcp \
+  go test -count=1 -tags=integration ./test/integration -run '^TestMCPPublicAgent$'
+```
 
 ### M16 — Webhook triggers (2–3 days)
 

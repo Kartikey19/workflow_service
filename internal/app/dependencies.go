@@ -15,6 +15,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/database"
 	"github.com/kartikey/workflow_service/internal/core/executor/email"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
+	mcpexec "github.com/kartikey/workflow_service/internal/core/executor/mcp"
 	"github.com/kartikey/workflow_service/internal/services/agents"
 	"github.com/kartikey/workflow_service/internal/services/connections"
 	"github.com/kartikey/workflow_service/internal/services/identity"
@@ -81,7 +82,18 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	if err != nil {
 		return nil, fmt.Errorf("LLM_PRICING_JSON: %w", err)
 	}
-	tools, err := agent.NewTools(agent.CurrentTime{}, agent.NewHTTPRequest(policy))
+	endpoints, err := connectors.ParseEndpoints(cfg.Services.IntegrationEndpoints)
+	if err != nil {
+		return nil, err
+	}
+	connectionSvc := connections.NewService(pool, keyring, policy, connections.Options{
+		ResendURL: cfg.Services.ResendBaseURL, PublicURL: cfg.Auth.PublicURL, Endpoints: endpoints,
+		Google:          connections.OAuthApp{ClientID: cfg.Services.GoogleClientID, ClientSecret: cfg.Services.GoogleClientSecret},
+		Dropbox:         connections.OAuthApp{ClientID: cfg.Services.DropboxAppKey, ClientSecret: cfg.Services.DropboxAppSecret},
+		Microsoft:       connections.OAuthApp{ClientID: cfg.Services.MicrosoftClientID, ClientSecret: cfg.Services.MicrosoftClientSecret},
+		MicrosoftTenant: cfg.Services.MicrosoftTenant,
+	})
+	tools, err := agent.NewTools(append([]agent.Tool{agent.CurrentTime{}, agent.NewHTTPRequest(policy)}, agent.DatabaseTools(connectionSvc, policy)...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -94,25 +106,15 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 		providers.Anthropic: cfg.LLM.AnthropicBaseURL, providers.OpenAI: cfg.LLM.OpenAIBaseURL, providers.Gemini: cfg.LLM.GeminiBaseURL,
 	})
 	agentSvc := agents.NewService(pool, tools)
-	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, tools, agentSvc)
+	mcpExecutor := mcpexec.New(connectionSvc, policy)
+	agentExecutor := agent.New(agent.Router{Named: providerSvc, Default: platform}, tools, agentSvc).WithDynamicTools(mcpExecutor)
 	agentSvc.Attach(agentExecutor)
 
-	endpoints, err := connectors.ParseEndpoints(cfg.Services.IntegrationEndpoints)
-	if err != nil {
-		return nil, err
-	}
-	connectionSvc := connections.NewService(pool, keyring, policy, connections.Options{
-		ResendURL: cfg.Services.ResendBaseURL, PublicURL: cfg.Auth.PublicURL, Endpoints: endpoints,
-		Google:          connections.OAuthApp{ClientID: cfg.Services.GoogleClientID, ClientSecret: cfg.Services.GoogleClientSecret},
-		Dropbox:         connections.OAuthApp{ClientID: cfg.Services.DropboxAppKey, ClientSecret: cfg.Services.DropboxAppSecret},
-		Microsoft:       connections.OAuthApp{ClientID: cfg.Services.MicrosoftClientID, ClientSecret: cfg.Services.MicrosoftClientSecret},
-		MicrosoftTenant: cfg.Services.MicrosoftTenant,
-	})
 	emailExecutor := email.New(connectionSvc, policy, cfg.Services.ResendBaseURL)
 	appNodes := []executor.Executor{
 		connectors.NewGmail(connectionSvc, policy, endpoints), connectors.NewGDrive(connectionSvc, policy, endpoints),
 		connectors.NewDropbox(connectionSvc, policy, endpoints), connectors.NewOneDrive(connectionSvc, policy, endpoints),
-		database.NewQuery(connectionSvc, policy), database.NewInsert(connectionSvc, policy),
+		mcpExecutor, database.NewQuery(connectionSvc, policy), database.NewInsert(connectionSvc, policy),
 	}
 
 	registry := executor.NewRegistry()

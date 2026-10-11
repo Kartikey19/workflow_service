@@ -9,24 +9,25 @@ import (
 )
 
 type Agent struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	Name          string             `json:"name"`
-	Description   string             `json:"description"`
-	ConnectionID  pgtype.UUID        `json:"connection_id"`
-	Model         string             `json:"model"`
-	SystemPrompt  string             `json:"system_prompt"`
-	InputSchema   []byte             `json:"input_schema"`
-	OutputSchema  []byte             `json:"output_schema"`
-	Tools         []string           `json:"tools"`
-	AllowedHosts  []string           `json:"allowed_hosts"`
-	MaxIterations int32              `json:"max_iterations"`
-	MaxTokens     pgtype.Int4        `json:"max_tokens"`
-	Temperature   pgtype.Float8      `json:"temperature"`
-	Revision      int32              `json:"revision"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	UpdatedBy     pgtype.Text        `json:"updated_by"`
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	Name               string             `json:"name"`
+	Description        string             `json:"description"`
+	ConnectionID       pgtype.UUID        `json:"connection_id"`
+	Model              string             `json:"model"`
+	SystemPrompt       string             `json:"system_prompt"`
+	InputSchema        []byte             `json:"input_schema"`
+	OutputSchema       []byte             `json:"output_schema"`
+	Tools              []string           `json:"tools"`
+	AllowedHosts       []string           `json:"allowed_hosts"`
+	MaxIterations      int32              `json:"max_iterations"`
+	MaxTokens          pgtype.Int4        `json:"max_tokens"`
+	Temperature        pgtype.Float8      `json:"temperature"`
+	Revision           int32              `json:"revision"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	UpdatedBy          pgtype.Text        `json:"updated_by"`
+	DatabaseConnection string             `json:"database_connection"`
 }
 
 type ApiKey struct {

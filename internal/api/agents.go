@@ -13,24 +13,25 @@ import (
 
 // agentRequest is the body of POST /v1/agents and PUT /v1/agents/{name}.
 type agentRequest struct {
-	Name          string          `json:"name"`
-	Description   string          `json:"description"`
-	Connection    string          `json:"connection"`
-	Model         string          `json:"model"`
-	System        string          `json:"system_prompt"`
-	InputSchema   json.RawMessage `json:"input_schema"`
-	OutputSchema  json.RawMessage `json:"output_schema"`
-	Tools         []string        `json:"tools"`
-	AllowedHosts  []string        `json:"allowed_hosts"`
-	MaxIterations int             `json:"max_iterations"`
-	MaxTokens     *int            `json:"max_tokens"`
-	Temperature   *float64        `json:"temperature"`
+	Name               string          `json:"name"`
+	Description        string          `json:"description"`
+	Connection         string          `json:"connection"`
+	Model              string          `json:"model"`
+	System             string          `json:"system_prompt"`
+	InputSchema        json.RawMessage `json:"input_schema"`
+	OutputSchema       json.RawMessage `json:"output_schema"`
+	Tools              []string        `json:"tools"`
+	DatabaseConnection string          `json:"database_connection"`
+	AllowedHosts       []string        `json:"allowed_hosts"`
+	MaxIterations      int             `json:"max_iterations"`
+	MaxTokens          *int            `json:"max_tokens"`
+	Temperature        *float64        `json:"temperature"`
 }
 
 func (a agentRequest) input() agents.Input {
 	return agents.Input{
 		Name: a.Name, Description: a.Description, Connection: a.Connection, Model: a.Model, System: a.System,
-		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts,
+		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts, DatabaseConnection: a.DatabaseConnection,
 		MaxIterations: a.MaxIterations, MaxTokens: a.MaxTokens, Temperature: a.Temperature,
 	}
 }
@@ -39,7 +40,7 @@ func agentView(a agents.Agent) map[string]any {
 	view := map[string]any{
 		"id": uid.String(a.ID), "name": a.Name, "description": a.Description, "connection": nil, "model": a.Model,
 		"system_prompt": a.System, "input_schema": httpx.Raw(a.InputSchema), "output_schema": httpx.Raw(a.OutputSchema),
-		"tools": a.Tools, "allowed_hosts": a.AllowedHosts, "max_iterations": a.MaxIterations,
+		"database_connection": a.DatabaseConnection, "tools": a.Tools, "allowed_hosts": a.AllowedHosts, "max_iterations": a.MaxIterations,
 		"max_tokens": a.MaxTokens, "temperature": a.Temperature, "revision": a.Revision,
 		"created_at": a.CreatedAt.UTC().Format(time.RFC3339), "updated_at": a.UpdatedAt.UTC().Format(time.RFC3339),
 		"updated_by": nil,

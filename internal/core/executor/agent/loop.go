@@ -63,17 +63,18 @@ func (u *usage) add(resolved Resolved, response llm.Response) {
 // plan is everything one agent call needs, whether it came from inline
 // configuration or from a stored definition.
 type plan struct {
-	ref           ProviderRef
-	system        string
-	prompt        string
-	tools         []string
-	allowedHosts  []string
-	maxIterations int
-	maxTokens     int
-	temperature   *float64
-	outputSchema  json.RawMessage
-	agent         string
-	revision      int
+	ref                ProviderRef
+	system             string
+	prompt             string
+	tools              []string
+	allowedHosts       []string
+	databaseConnection string
+	maxIterations      int
+	maxTokens          int
+	temperature        *float64
+	outputSchema       json.RawMessage
+	agent              string
+	revision           int
 }
 
 // plan resolves the node's configuration into a plan. A stored agent is loaded
@@ -85,7 +86,7 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 			return plan{}, executor.Permanent("bad_config", err)
 		}
 		return plan{
-			ref: ProviderRef{Model: c.Model}, system: c.System, prompt: promptText(c.Prompt), tools: c.Tools,
+			ref: ProviderRef{Model: c.Model}, system: c.System, prompt: promptText(c.Prompt), tools: c.Tools, databaseConnection: c.DatabaseConnection,
 			maxIterations: c.MaxIterations, maxTokens: c.MaxTokens, temperature: c.Temperature, outputSchema: c.OutputSchema,
 		}, nil
 	}
@@ -100,7 +101,7 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 		return plan{}, executor.Retryable("agent_lookup", err)
 	}
 	for _, name := range def.Tools {
-		if _, ok := e.tools.Get(name); !ok {
+		if _, ok := e.tools.Get(name); !ok && !IsMCPReference(name) {
 			return plan{}, executor.Permanent("bad_config", fmt.Errorf("agent %q uses tool %q, which is not available", def.Name, name))
 		}
 	}
@@ -125,7 +126,7 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 	}
 	return plan{
 		ref: ProviderRef{Connection: def.Connection, Model: def.Model}, system: def.System,
-		prompt: agentPrompt(c.Prompt, input), tools: def.Tools, allowedHosts: def.AllowedHosts,
+		prompt: agentPrompt(c.Prompt, input), tools: def.Tools, allowedHosts: def.AllowedHosts, databaseConnection: def.DatabaseConnection,
 		maxIterations: def.MaxIterations, maxTokens: def.MaxTokens, temperature: def.Temperature,
 		outputSchema: def.OutputSchema, agent: def.Name, revision: def.Revision,
 	}, nil
@@ -156,6 +157,17 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 	if err != nil {
 		return executor.Result{}, err
 	}
+	registry, names, closeTools, err := e.resolveTools(ctx, req.TenantID, p.tools)
+	if err != nil {
+		var permanent *executor.PermanentError
+		var retryable *executor.RetryableError
+		if errors.As(err, &permanent) || errors.As(err, &retryable) {
+			return executor.Result{}, err
+		}
+		return executor.Result{}, executor.Retryable("mcp_tools", err)
+	}
+	defer closeTools()
+	p.tools = names
 	resolved, err := e.clients.Client(ctx, req.TenantID, p.ref)
 	switch {
 	case errors.Is(err, ErrNotConfigured):
@@ -181,12 +193,12 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{{Type: llm.BlockText, Text: p.prompt}}}},
 	}
 	for _, name := range p.tools {
-		tool, _ := e.tools.Get(name)
+		tool, _ := registry.Get(name)
 		llmRequest.Tools = append(llmRequest.Tools, llm.Tool{Name: tool.Name(), Description: tool.Description(), InputSchema: tool.InputSchema()})
 	}
 
 	spent := &usage{model: p.ref.Model, agent: p.agent, revision: p.revision}
-	call := Call{TenantID: req.TenantID, RunID: req.RunID, NodeID: req.NodeID, AllowedHosts: p.allowedHosts}
+	call := Call{TenantID: req.TenantID, RunID: req.RunID, NodeID: req.NodeID, AllowedHosts: p.allowedHosts, DatabaseConnection: p.databaseConnection, RedactSecrets: req.RedactSecrets}
 	for {
 		if spent.iterations >= p.maxIterations {
 			return executor.Result{Metrics: spent.metrics()}, executor.Permanent("max_iterations_exceeded",
@@ -207,7 +219,7 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 		results := make([]llm.Block, 0, len(uses))
 		for _, use := range uses {
 			spent.toolCalls++
-			results = append(results, e.runTool(ctx, call, p.tools, use))
+			results = append(results, runTool(ctx, registry, call, p.tools, use))
 		}
 		llmRequest.Messages = append(llmRequest.Messages, llm.Message{Role: llm.RoleUser, Content: results})
 	}
@@ -215,21 +227,20 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 
 // runTool executes one requested tool. Anything the model got wrong, or any
 // tool failure, goes back to the model as an error result so it can recover.
-func (e *Executor) runTool(ctx context.Context, call Call, allowed []string, use llm.Block) llm.Block {
+func runTool(ctx context.Context, registry *Tools, call Call, allowed []string, use llm.Block) llm.Block {
 	result := llm.Block{Type: llm.BlockToolResult, ToolUseID: use.ToolUseID}
-	tool, ok := e.tools.Get(use.ToolName)
+	tool, ok := registry.Get(use.ToolName)
 	if !ok || !hasTool(allowed, use.ToolName) {
 		result.IsError = true
 		result.ToolContent = fmt.Sprintf("tool %q is not available", use.ToolName)
 		return result
 	}
 	output, err := tool.Call(ctx, call, use.ToolInput)
+	text := string(output)
 	if err != nil {
 		result.IsError = true
-		result.ToolContent = err.Error()
-		return result
+		text = err.Error()
 	}
-	text := string(output)
 	if len(text) > maxToolResultBytes {
 		text = text[:maxToolResultBytes] + "…[truncated]"
 	}
@@ -335,4 +346,8 @@ func classify(ctx context.Context, err error) error {
 	default:
 		return executor.Permanent("upstream_4xx", apiErr)
 	}
+}
+
+func (e *Executor) runTool(ctx context.Context, call Call, allowed []string, use llm.Block) llm.Block {
+	return runTool(ctx, e.tools, call, allowed, use)
 }

@@ -386,7 +386,7 @@ goes through the egress guard, since a base URL is chosen by the tenant.
 **Agents** are named, reusable definitions: which connection and model, the system
 prompt, an `input_schema` and `output_schema` (the JSON Schema subset used by
 `wait_event`), `tools`, `allowed_hosts`, `max_iterations` (required, 1 to 50),
-`max_tokens` and `temperature`. Leave `connection` empty to use the platform's own
+`max_tokens`, `temperature` and optional `database_connection`. Leave `connection` empty to use the platform's own
 provider (`ANTHROPIC_API_KEY`). Saving validates everything; editing bumps `revision`,
 which each run's node metrics record.
 
@@ -408,13 +408,24 @@ for hosts in the agent's own `allowed_hosts` (exact names or `*.example.com`), g
 through the egress guard, never follows redirects, and returns a truncated body.
 Without `allowed_hosts` every request is refused, and the model is told why.
 
+`list_tables`, `describe_table` and `run_query` require `database_connection` to
+name a PostgreSQL/MySQL connection in the same organization. This binding is
+saved with the definition and returned by agent reads. Database tools receive
+no connection name or credentials from the model (see `02 §4.14`).
+
+MCP tool references use `"mcp:<connection-name>"` in `tools`. Saving checks that
+each name belongs to this organization and has kind `mcp`; discovery happens
+at execution time. `GET /v1/agent-tools` lists built-ins, including database
+tools; remote catalogs come from the selected servers. Duplicate tool references
+and more than eight MCP server references are rejected.
+
 ---
 
-## 4e. Connections (M14)
+## 4e. Connections (M14–M15)
 
 A **connection** is an organization's named link to an external service that
-workflow nodes can use by name: SMTP and Resend for email today, with the OAuth
-services (Gmail, Google Drive, Dropbox, OneDrive) and databases following. Settings
+workflow nodes can use by name: SMTP and Resend for email, OAuth services
+(Gmail, Google Drive, Dropbox, OneDrive), databases and MCP servers. Settings
 (host, port, default sender) are stored in clear; credentials are sealed with the
 vault master key and are **write-only**: the API shows only a hint (the last four
 characters) and, for OAuth connections, the connected account.
@@ -457,6 +468,12 @@ than loopback, and `starttls` refuses to continue when the server does not offer
 `verify-full` (default) | `require` | `disable`; secret `password`): the password is
 never placed in a connection string, and TLS certificates are verified unless the
 connection says otherwise — there is no silent fallback to plaintext.
+**mcp** (`url`, `transport` = `streamable_http` (default) | `sse`; optional
+secret `token` for bearer authentication). The URL must have no embedded
+credentials, query or fragment. Test-before-save initializes the session and
+lists tools; it never calls a tool. Authless public servers are supported.
+MCP servers use this connection store and its encryption/rotation lifecycle,
+so there is no separate server credential store.
 Every connection goes through the egress guard.
 
 Credentials a node fetches from a connection are added to the same scrubber as

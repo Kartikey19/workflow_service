@@ -21,9 +21,9 @@ delete from provider_connections where id = @id and org_id = @org_id;
 
 -- name: CreateAgent :one
 insert into agents (id, org_id, name, description, connection_id, model, system_prompt, input_schema, output_schema,
-                    tools, allowed_hosts, max_iterations, max_tokens, temperature, updated_by)
+                    tools, allowed_hosts, database_connection, max_iterations, max_tokens, temperature, updated_by)
 values (@id, @org_id, @name, @description, sqlc.narg(connection_id), @model, @system_prompt, sqlc.narg(input_schema),
-        sqlc.narg(output_schema), @tools::text[], @allowed_hosts::text[], @max_iterations, sqlc.narg(max_tokens),
+        sqlc.narg(output_schema), @tools::text[], @allowed_hosts::text[], @database_connection, @max_iterations, sqlc.narg(max_tokens),
         sqlc.narg(temperature), sqlc.narg(updated_by))
 on conflict (org_id, name) do nothing
 returning *;
@@ -32,7 +32,7 @@ returning *;
 update agents
    set description = @description, connection_id = sqlc.narg(connection_id), model = @model, system_prompt = @system_prompt,
        input_schema = sqlc.narg(input_schema), output_schema = sqlc.narg(output_schema),
-       tools = @tools::text[], allowed_hosts = @allowed_hosts::text[], max_iterations = @max_iterations,
+       tools = @tools::text[], allowed_hosts = @allowed_hosts::text[], database_connection = @database_connection, max_iterations = @max_iterations,
        max_tokens = sqlc.narg(max_tokens), temperature = sqlc.narg(temperature),
        revision = revision + 1, updated_at = now(), updated_by = sqlc.narg(updated_by)
  where org_id = @org_id and name = @name

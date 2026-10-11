@@ -18,6 +18,7 @@ const (
 	KindOneDrive = "onedrive"
 	KindPostgres = "postgres"
 	KindMySQL    = "mysql"
+	KindMCP      = "mcp"
 )
 
 // Field describes one setting of a kind, for validation and for the editor.
@@ -54,6 +55,7 @@ type kind struct {
 
 func (s *Service) kinds() map[string]kind {
 	registry := map[string]kind{
+		KindMCP:      mcpKind(),
 		KindSMTP:     smtpKind(),
 		KindResend:   resendKind(),
 		KindPostgres: databaseKind(KindPostgres, "PostgreSQL database", 5432),
@@ -68,7 +70,7 @@ func (s *Service) kinds() map[string]kind {
 // Kinds lists the kinds this installation offers.
 func (s *Service) Kinds() []KindInfo {
 	out := make([]KindInfo, 0, len(s.registry))
-	for _, name := range []string{KindSMTP, KindResend, KindGmail, KindGDrive, KindDropbox, KindOneDrive, KindPostgres, KindMySQL} {
+	for _, name := range []string{KindSMTP, KindResend, KindGmail, KindGDrive, KindDropbox, KindOneDrive, KindPostgres, KindMySQL, KindMCP} {
 		if k, ok := s.registry[name]; ok {
 			out = append(out, k.info)
 		}

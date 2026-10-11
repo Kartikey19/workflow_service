@@ -84,6 +84,14 @@ Connections (`04 §4e`) seal their credentials with the vault key too. `RESEND_B
 routes Resend through a proxy. Key rotation (`04 §4c`) re-seals vault secrets, provider
 keys and connection credentials together.
 
+Agents can explore a saved PostgreSQL/MySQL connection with `database_connection`
+and `tools: [list_tables, describe_table, run_query]`. These tools enforce read-only
+transactions, row/size caps and statement timeouts. MCP servers are saved as
+connections with kind `mcp`, `config: {url, transport: streamable_http}` (or `sse`)
+and optional `secret: {token}`. Agents use `tools: ["mcp:server-name"]`; workflows
+can call a tool directly with `mcp.call` (`02 §4.14`). Public DeepWiki was smoke-tested
+with a scripted LLM; other MCP servers and real LLM accounts remain unverified.
+
 Sign-in uses sessions and API keys (`04 §4b`). Set `BOOTSTRAP_ADMIN_EMAIL` and
 `BOOTSTRAP_ADMIN_PASSWORD` once to create the first platform administrator;
 `PUBLIC_URL` builds invite links, `SESSION_TTL` (default 336h) sets the session

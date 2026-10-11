@@ -527,6 +527,52 @@ Failures: wrong credentials are `db_auth` and a rejected statement is `db_statem
 an address blocked by the egress policy is `egress_blocked` (permanent). Error messages
 never contain the password.
 
+### 4.14 Data exploration and `mcp.call` (M15)
+
+A stored agent can bind `database_connection: warehouse` and use
+`tools: [list_tables, describe_table, run_query]`. The connection must be a
+PostgreSQL or MySQL connection in the agent's organization. The model cannot
+choose the connection. `list_tables` lists up to 500 visible tables and views;
+`describe_table` takes `{table}` and returns columns, types, nullability and
+primary-key flags. `run_query` takes `{sql, params?, max_rows?, timeout?}` and
+returns `{columns, rows, row_count, truncated}`. It uses `pkg/dbx` read-only
+transactions and bound parameters, with at most 1000 rows and a 30s timeout.
+Results are further trimmed to the agent's 32 KiB tool-result budget with
+`truncated: true`. Writes and DDL are refused and reported to the model as tool
+errors. The same binding works in inline agent config.
+
+An agent can also use `tools: ["mcp:knowledge"]`. `knowledge` must be an MCP
+connection in its organization. The worker initializes it and discovers its
+`tools/list` catalog once per attempt. The model receives aliases
+`mcp_<server-index>_tool_<tool-index>` with the original names and descriptions.
+Only the granted servers are available. Sessions close when the attempt ends.
+There are at most eight servers and 128 remote tools per agent.
+
+```yaml
+- id: search
+  type: mcp.call
+  config:
+    connection: knowledge
+    tool: search
+    arguments: {query: '${input.question}'}
+    timeout: 30s
+```
+
+`mcp.call` initializes a saved MCP connection and calls one tool directly.
+`arguments` is an object (default `{}`); expressions are resolved as ordinary
+workflow values. Timeout defaults to 30s and is capped at 2m. Output is the MCP
+result `{content, structuredContent?, isError?}`. A tool's `isError: true` fails
+permanently with `mcp_tool_error`; protocol errors and HTTP 4xx other than 408/429
+are `mcp_protocol` (permanent). Transport failures are `mcp_transport` (retryable),
+and the egress guard remains `egress_blocked` (permanent). Remote tools may have
+side effects; configure retries only when the tool is safe to repeat.
+
+Both streamable HTTP (including SSE responses) and legacy SSE are supported;
+stdio/subprocess servers are not. Responses/events and call arguments are
+limited to 1 MiB; tool schemas to 32 KiB. Redirects and cross-origin SSE message
+endpoints are refused. Bearer tokens are never forwarded to another origin or
+included in stored output, errors or model-visible tool results.
+
 ### 4.8 `noop` (M2)
 
 No config. Succeeds immediately. Exists for fan-in points and for testing the

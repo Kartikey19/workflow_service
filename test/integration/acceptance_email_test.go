@@ -288,7 +288,7 @@ func TestConnectionsAPI(t *testing.T) {
 	for _, k := range kinds["items"].([]any) {
 		got2 = append(got2, k.(map[string]any)["kind"].(string))
 	}
-	if strings.Join(got2, ",") != "smtp,resend,postgres,mysql" {
+	if strings.Join(got2, ",") != "smtp,resend,postgres,mysql,mcp" {
 		t.Fatalf("available kinds = %v", got2)
 	}
 	if status, _ := owner.call("DELETE", "/v1/connections/team-smtp", nil); status != 204 {

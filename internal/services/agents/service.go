@@ -56,39 +56,41 @@ func (s *Service) Attach(e *agent.Executor) { s.validator, s.runner = e, e }
 
 // Agent is a stored definition as the API shows it.
 type Agent struct {
-	ID            pgtype.UUID
-	Name          string
-	Description   string
-	Connection    string
-	Model         string
-	System        string
-	InputSchema   json.RawMessage
-	OutputSchema  json.RawMessage
-	Tools         []string
-	AllowedHosts  []string
-	MaxIterations int
-	MaxTokens     *int
-	Temperature   *float64
-	Revision      int
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	UpdatedBy     string
+	ID                 pgtype.UUID
+	Name               string
+	Description        string
+	Connection         string
+	Model              string
+	System             string
+	InputSchema        json.RawMessage
+	OutputSchema       json.RawMessage
+	Tools              []string
+	DatabaseConnection string
+	AllowedHosts       []string
+	MaxIterations      int
+	MaxTokens          *int
+	Temperature        *float64
+	Revision           int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	UpdatedBy          string
 }
 
 // Input is what a caller sends to create or replace an agent.
 type Input struct {
-	Name          string
-	Description   string
-	Connection    string // provider connection name; empty uses the platform provider
-	Model         string
-	System        string
-	InputSchema   json.RawMessage
-	OutputSchema  json.RawMessage
-	Tools         []string
-	AllowedHosts  []string
-	MaxIterations int
-	MaxTokens     *int
-	Temperature   *float64
+	Name               string
+	Description        string
+	Connection         string // provider connection name; empty uses the platform provider
+	Model              string
+	System             string
+	InputSchema        json.RawMessage
+	OutputSchema       json.RawMessage
+	Tools              []string
+	DatabaseConnection string
+	AllowedHosts       []string
+	MaxIterations      int
+	MaxTokens          *int
+	Temperature        *float64
 }
 
 func nonNull(raw json.RawMessage) []byte {
@@ -116,7 +118,7 @@ func floatPtr(v pgtype.Float8) *float64 {
 func fromRow(a gen.Agent, connection string) Agent {
 	return Agent{
 		ID: a.ID, Name: a.Name, Description: a.Description, Connection: connection, Model: a.Model, System: a.SystemPrompt,
-		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts,
+		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts, DatabaseConnection: a.DatabaseConnection,
 		MaxIterations: int(a.MaxIterations), MaxTokens: intPtr(a.MaxTokens), Temperature: floatPtr(a.Temperature),
 		Revision: int(a.Revision), CreatedAt: a.CreatedAt.Time, UpdatedAt: a.UpdatedAt.Time, UpdatedBy: a.UpdatedBy.String,
 	}
@@ -145,7 +147,7 @@ func (s *Service) validate(ctx context.Context, orgID pgtype.UUID, in *Input) (p
 	}
 	definition := agent.Definition{
 		Name: in.Name, Connection: in.Connection, Model: strings.TrimSpace(in.Model), System: in.System,
-		InputSchema: in.InputSchema, OutputSchema: in.OutputSchema, Tools: in.Tools, AllowedHosts: in.AllowedHosts,
+		InputSchema: in.InputSchema, OutputSchema: in.OutputSchema, Tools: in.Tools, AllowedHosts: in.AllowedHosts, DatabaseConnection: in.DatabaseConnection,
 		MaxIterations: in.MaxIterations, Temperature: in.Temperature,
 	}
 	if in.MaxTokens != nil {
@@ -157,6 +159,27 @@ func (s *Service) validate(ctx context.Context, orgID pgtype.UUID, in *Input) (p
 		}
 	}
 	in.Model = definition.Model
+	if in.DatabaseConnection != "" {
+		row, err := s.q.GetConnection(ctx, gen.GetConnectionParams{OrgID: orgID, Name: in.DatabaseConnection})
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && row.Kind != "postgres" && row.Kind != "mysql" {
+			return pgtype.UUID{}, exception.BadRequest("database_connection must name a postgres or mysql connection in this organization")
+		}
+		if err != nil {
+			return pgtype.UUID{}, fmt.Errorf("load database connection: %w", err)
+		}
+	}
+	for _, ref := range in.Tools {
+		if !agent.IsMCPReference(ref) {
+			continue
+		}
+		row, err := s.q.GetConnection(ctx, gen.GetConnectionParams{OrgID: orgID, Name: strings.TrimPrefix(ref, "mcp:")})
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && row.Kind != "mcp" {
+			return pgtype.UUID{}, exception.BadRequest("MCP tool reference must name an mcp connection in this organization")
+		}
+		if err != nil {
+			return pgtype.UUID{}, fmt.Errorf("load MCP connection: %w", err)
+		}
+	}
 	if in.Connection == "" {
 		return pgtype.UUID{}, nil
 	}
@@ -179,7 +202,7 @@ func (s *Service) Create(ctx context.Context, orgID pgtype.UUID, actor string, i
 	row, err := s.q.CreateAgent(ctx, gen.CreateAgentParams{
 		ID: uid.New(), OrgID: orgID, Name: in.Name, Description: in.Description, ConnectionID: connectionID,
 		Model: in.Model, SystemPrompt: in.System, InputSchema: nonNull(in.InputSchema), OutputSchema: nonNull(in.OutputSchema),
-		Tools: in.Tools, AllowedHosts: in.AllowedHosts, MaxIterations: int32(in.MaxIterations),
+		Tools: in.Tools, AllowedHosts: in.AllowedHosts, DatabaseConnection: in.DatabaseConnection, MaxIterations: int32(in.MaxIterations),
 		MaxTokens: pgInt(in.MaxTokens), Temperature: pgFloat(in.Temperature), UpdatedBy: pgtype.Text{String: actor, Valid: actor != ""},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -201,7 +224,7 @@ func (s *Service) Update(ctx context.Context, orgID pgtype.UUID, actor, name str
 	row, err := s.q.UpdateAgent(ctx, gen.UpdateAgentParams{
 		OrgID: orgID, Name: name, Description: in.Description, ConnectionID: connectionID, Model: in.Model,
 		SystemPrompt: in.System, InputSchema: nonNull(in.InputSchema), OutputSchema: nonNull(in.OutputSchema),
-		Tools: in.Tools, AllowedHosts: in.AllowedHosts, MaxIterations: int32(in.MaxIterations),
+		Tools: in.Tools, AllowedHosts: in.AllowedHosts, DatabaseConnection: in.DatabaseConnection, MaxIterations: int32(in.MaxIterations),
 		MaxTokens: pgInt(in.MaxTokens), Temperature: pgFloat(in.Temperature), UpdatedBy: pgtype.Text{String: actor, Valid: actor != ""},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -277,7 +300,7 @@ func (s *Service) Definition(ctx context.Context, tenantID uuid.UUID, name strin
 	a := row.Agent
 	def := agent.Definition{
 		Name: a.Name, Revision: int(a.Revision), Connection: row.ConnectionName, Model: a.Model, System: a.SystemPrompt,
-		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts,
+		InputSchema: a.InputSchema, OutputSchema: a.OutputSchema, Tools: a.Tools, AllowedHosts: a.AllowedHosts, DatabaseConnection: a.DatabaseConnection,
 		MaxIterations: int(a.MaxIterations), Temperature: floatPtr(a.Temperature),
 	}
 	if a.MaxTokens.Valid {
