@@ -37,6 +37,7 @@ type Principal struct {
 	TenantID      pgtype.UUID // the organization
 	UserID        pgtype.UUID // invalid for API keys and webhooks
 	Email         string
+	Name          string // an API key's name
 	Role          string
 	PlatformAdmin bool
 	Via           string // session | api_key | dev
@@ -48,6 +49,8 @@ func (p Principal) Actor() string {
 	switch {
 	case p.Email != "":
 		return p.Email
+	case p.Via == "api_key" && p.Name != "":
+		return "api_key:" + p.Name
 	case p.Via == "api_key":
 		return "api_key"
 	default:
@@ -73,6 +76,24 @@ func From(ctx context.Context) (Principal, bool) {
 // Authenticator resolves a request to a principal, or ErrUnauthenticated.
 type Authenticator interface {
 	Authenticate(r *http.Request) (Principal, error)
+}
+
+// Chain tries each authenticator in order and returns the first principal. An
+// authenticator that finds no credentials returns ErrUnauthenticated and the next
+// one is tried; any other error stops the chain.
+type Chain []Authenticator
+
+func (c Chain) Authenticate(r *http.Request) (Principal, error) {
+	for _, a := range c {
+		p, err := a.Authenticate(r)
+		if err == nil {
+			return p, nil
+		}
+		if !errors.Is(err, ErrUnauthenticated) {
+			return Principal{}, err
+		}
+	}
+	return Principal{}, ErrUnauthenticated
 }
 
 // DevHeader trusts an X-Tenant-ID header and grants the owner role; the

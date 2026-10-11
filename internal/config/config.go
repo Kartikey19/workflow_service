@@ -22,6 +22,7 @@ type Config struct {
 	Worker   WorkerConfig
 	Egress   EgressConfig
 	LLM      LLMConfig
+	Auth     AuthConfig
 }
 
 type AppConfig struct {
@@ -65,6 +66,18 @@ type WorkerConfig struct {
 type EgressConfig struct {
 	AllowCIDRs   string `env:"EGRESS_ALLOW_CIDRS"`                      // comma separated
 	AllowPrivate bool   `env:"EGRESS_ALLOW_PRIVATE" envDefault:"false"` // local development only
+}
+
+// AuthConfig configures sign-in and the first administrator.
+type AuthConfig struct {
+	SessionTTL time.Duration `env:"SESSION_TTL" envDefault:"336h"`
+	// CookieSecure marks the session cookie Secure; production requires it.
+	CookieSecure bool `env:"COOKIE_SECURE" envDefault:"false"`
+	// PublicURL is the externally visible base URL, used for invite links.
+	PublicURL string `env:"PUBLIC_URL"`
+	// The first platform admin is created from these when no user exists.
+	BootstrapAdminEmail    string `env:"BOOTSTRAP_ADMIN_EMAIL"`
+	BootstrapAdminPassword string `env:"BOOTSTRAP_ADMIN_PASSWORD"`
 }
 
 // LLMConfig configures the platform-managed model provider used by agent
@@ -177,6 +190,15 @@ func (c *Config) Validate() error {
 	}
 	if c.App.ShutdownGrace <= 0 {
 		add("SHUTDOWN_GRACE must be greater than 0")
+	}
+	if c.Auth.SessionTTL < 0 {
+		add("SESSION_TTL cannot be negative")
+	}
+	if c.App.Environment == "production" && !c.Auth.CookieSecure {
+		add("COOKIE_SECURE must be true in production")
+	}
+	if (c.Auth.BootstrapAdminEmail == "") != (c.Auth.BootstrapAdminPassword == "") {
+		add("BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together")
 	}
 	return errors.Join(errs...)
 }

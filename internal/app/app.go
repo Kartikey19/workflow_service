@@ -63,6 +63,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 
+	if serveAPI && cfg.Auth.BootstrapAdminEmail != "" {
+		created, err := deps.Identity.Bootstrap(ctx, cfg.Auth.BootstrapAdminEmail, cfg.Auth.BootstrapAdminPassword)
+		if err != nil {
+			return fmt.Errorf("bootstrap first administrator: %w", err)
+		}
+		if created {
+			log.Info("created the first platform administrator", zap.String("email", cfg.Auth.BootstrapAdminEmail))
+		}
+	}
+
 	var components []func(context.Context) error
 	if serveAPI {
 		srv, err := server.New(server.Config{Address: cfg.App.HTTPAddress, API: deps.Services()}, pool, log)

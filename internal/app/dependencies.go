@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +12,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
+	"github.com/kartikey/workflow_service/internal/services/identity"
 	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/services/tasks"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
@@ -32,6 +32,8 @@ type Deps struct {
 	Runs      *runs.Service
 	Tasks     *tasks.Service
 	Auth      auth.Authenticator
+	Identity  *identity.Service
+	cfgAuth   config.AuthConfig
 	Secrets   engine.SecretSource
 	Extra     []func(api.Router)
 }
@@ -59,10 +61,19 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 		Pool: pool, Log: log, Registry: registry, Runs: svc, Tasks: tasks.NewService(svc),
 		Workflows: workflows.NewService(pool, registry),
 	}
-	if cfg.App.Environment == "production" {
-		return nil, errors.New("production requires authentication; development header auth is disabled")
+	ident, err := identity.NewService(pool, identity.Config{SessionTTL: cfg.Auth.SessionTTL, CookieSecure: cfg.Auth.CookieSecure})
+	if err != nil {
+		return nil, err
 	}
-	deps.Auth = auth.DevHeader{}
+	deps.Identity, deps.cfgAuth = ident, cfg.Auth
+	deps.Workflows.Plans = ident.Plans()
+	deps.Runs.Allowance = ident.Plans()
+	// Sessions and API keys always work. The development header (an X-Tenant-ID
+	// that is trusted blindly) exists only outside production.
+	deps.Auth = ident.Authenticator()
+	if cfg.App.Environment != "production" {
+		deps.Auth = auth.Chain{ident.Authenticator(), auth.DevHeader{}}
+	}
 	return deps, nil
 }
 
@@ -79,7 +90,8 @@ func EgressPolicy(cfg config.EgressConfig) (netguard.Policy, error) {
 func (d *Deps) Services() *api.Services {
 	return &api.Services{
 		Pool: d.Pool, Workflows: d.Workflows, Runs: d.Runs, Executors: d.Registry,
-		Tasks: d.Tasks, Admin: d.Runs, Auth: d.Auth, Extra: d.Extra,
+		Tasks: d.Tasks, Admin: d.Runs, Identity: d.Identity, CookieSecure: d.cfgAuth.CookieSecure,
+		PublicURL: d.cfgAuth.PublicURL, Auth: d.Auth, Extra: d.Extra,
 	}
 }
 

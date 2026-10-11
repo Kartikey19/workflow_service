@@ -70,6 +70,12 @@ name or family prefix to `{input_per_mtok, output_per_mtok}` that overrides the
 built-in price estimates behind `cost_usd`). Without a key, workflows with agent
 nodes still publish but those nodes fail permanently with `llm_not_configured`.
 
+Sign-in uses sessions and API keys (`04 §4b`). Set `BOOTSTRAP_ADMIN_EMAIL` and
+`BOOTSTRAP_ADMIN_PASSWORD` once to create the first platform administrator;
+`PUBLIC_URL` builds invite links, `SESSION_TTL` (default 336h) sets the session
+lifetime, and `COOKIE_SECURE=true` is required in production. Outside production
+the development `X-Tenant-ID` header still works, alongside real credentials.
+
 Only `DATABASE_URL` is required; every other setting has a default (see
 `internal/config/config.go`, where each field's `env` tag names its variable).
 

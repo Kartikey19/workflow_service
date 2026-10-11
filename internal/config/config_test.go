@@ -59,6 +59,33 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantError: "mode must be api or worker",
 		},
+		{
+			name:      "production requires secure cookies",
+			configure: func(c *Config) { c.App.Environment = "production" },
+			wantError: "COOKIE_SECURE must be true in production",
+		},
+		{
+			name: "production with secure cookies is accepted",
+			configure: func(c *Config) {
+				c.App.Environment = "production"
+				c.Auth.CookieSecure = true
+			},
+		},
+		{
+			name:      "bootstrap email needs a password",
+			configure: func(c *Config) { c.Auth.BootstrapAdminEmail = "root@example.com" },
+			wantError: "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together",
+		},
+		{
+			name:      "bootstrap password needs an email",
+			configure: func(c *Config) { c.Auth.BootstrapAdminPassword = "a-long-password" },
+			wantError: "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together",
+		},
+		{
+			name:      "negative session lifetime",
+			configure: func(c *Config) { c.Auth.SessionTTL = -time.Hour },
+			wantError: "SESSION_TTL cannot be negative",
+		},
 	}
 
 	for _, tt := range tests {

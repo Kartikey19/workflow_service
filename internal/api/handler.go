@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/services/identity"
 	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/services/tasks"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
@@ -28,6 +29,9 @@ type HandlerFunc func(http.ResponseWriter, *http.Request, auth.Principal)
 // server package implements it.
 type Router interface {
 	Handle(pattern, role string, h HandlerFunc)
+	// HandlePublic registers a route that needs no authentication (sign-in,
+	// accepting an invite). The handler receives no principal.
+	HandlePublic(pattern string, h func(http.ResponseWriter, *http.Request))
 	// HandleAdmin registers a route for platform administrators only.
 	HandleAdmin(pattern string, h HandlerFunc)
 }
@@ -64,6 +68,32 @@ type TaskService interface {
 	Complete(ctx context.Context, tenantID, id pgtype.UUID, actor tasks.Actor, payload json.RawMessage) (runs.SignalResult, error)
 }
 
+// IdentityService is the accounts, organization and platform use-cases.
+type IdentityService interface {
+	Login(ctx context.Context, email, password string) (identity.Session, error)
+	Logout(ctx context.Context, sessionID pgtype.UUID) error
+	Me(ctx context.Context, p auth.Principal) (identity.User, identity.Membership, []identity.Membership, error)
+	SwitchOrg(ctx context.Context, p auth.Principal, orgID pgtype.UUID) (identity.Membership, error)
+	PreviewInvite(ctx context.Context, token string) (identity.Invite, bool, error)
+	AcceptInvite(ctx context.Context, token, password, name string) (identity.Session, error)
+
+	ListMembers(ctx context.Context, orgID pgtype.UUID) ([]identity.Member, error)
+	UpdateMemberRole(ctx context.Context, actor auth.Principal, userID pgtype.UUID, role string) error
+	RemoveMember(ctx context.Context, actor auth.Principal, userID pgtype.UUID) error
+	CreateInvite(ctx context.Context, actor auth.Principal, email, role string) (identity.Invite, string, error)
+	ListInvites(ctx context.Context, orgID pgtype.UUID) ([]identity.Invite, error)
+	RevokeInvite(ctx context.Context, orgID, id pgtype.UUID) error
+	CreateAPIKey(ctx context.Context, actor auth.Principal, name, role string) (identity.APIKey, string, error)
+	ListAPIKeys(ctx context.Context, orgID pgtype.UUID) ([]identity.APIKey, error)
+	RevokeAPIKey(ctx context.Context, orgID, id pgtype.UUID) error
+	Usage(ctx context.Context, orgID pgtype.UUID) (identity.Usage, error)
+	ListPlans(ctx context.Context) ([]identity.PlanInfo, error)
+
+	CreatePlatformInvite(ctx context.Context, actor auth.Principal, email, orgName string) (identity.Invite, string, error)
+	ListOrganizations(ctx context.Context, limit int) ([]identity.OrgSummary, error)
+	SetOrganizationPlan(ctx context.Context, orgID pgtype.UUID, planID string) error
+}
+
 // AdminService is the operator interventions for stuck work (04 §5.1).
 type AdminService interface {
 	RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, actor string) (runs.NodeAdminResult, error)
@@ -83,6 +113,13 @@ type Services struct {
 	Workflows WorkflowService
 	Runs      RunService
 	Executors ExecutorCatalog
+	// Identity enables sign-in, members, invites, API keys and plans; nil
+	// leaves those routes unregistered (the development authenticator needs none).
+	Identity IdentityService
+	// CookieSecure marks the session cookie Secure (set it behind HTTPS).
+	CookieSecure bool
+	// PublicURL is the externally visible base URL, used to build invite links.
+	PublicURL string
 	// Tasks enables the /v1/tasks routes; nil leaves them unregistered.
 	Tasks TaskService
 	// Admin enables the /v1/admin routes; nil leaves them unregistered.
@@ -146,6 +183,10 @@ func (h *Handler) Register(r Router) {
 		r.Handle("POST /v1/tasks/{id}/claim", auth.RoleEditor, h.claimTask)
 		r.Handle("POST /v1/tasks/{id}/release", auth.RoleEditor, h.releaseTask)
 		r.Handle("POST /v1/tasks/{id}/complete", auth.RoleEditor, h.completeTask)
+	}
+
+	if h.services.Identity != nil {
+		h.registerIdentity(r)
 	}
 
 	if h.services.Admin != nil {

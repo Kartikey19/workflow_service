@@ -633,10 +633,19 @@ users exist. Invite emails are sent via platform SMTP when configured; otherwise
 the UI shows a copyable link.
 
 **Acceptance**
-- [ ] Invite → accept → login → switch organization works end to end.
-- [ ] Role checks on every mutating endpoint; viewers cannot publish or run.
-- [ ] Free plan: the second workflow, a sixth step, and the 21st run in a
+- [x] Invite → accept → login → switch organization works end to end.
+- [x] Role checks on every mutating endpoint; viewers cannot publish or run.
+- [x] Free plan: the second workflow, a sixth step, and the 21st run in a
       month are rejected with `402` and a clear message.
+
+**Built (2026-10-11).** Migration `0010_identity.sql` (users, organizations,
+memberships, invites, sessions, api_keys, plans, organization_usage) and
+`internal/services/identity`, whose `Authenticator` replaces the development
+header outside production (`auth.Chain`). `identity.Plans` implements both
+`workflows.Plans` and `runs.Allowance`; the run count is an atomic
+`insert ... on conflict ... where runs < limit`. Login does not reveal which emails
+exist and locks an account after five failures. Invite emails wait for the email
+integration (M14): the API returns the link. API: `04 §4b`.
 
 ### M12 — Vault (2 days)
 

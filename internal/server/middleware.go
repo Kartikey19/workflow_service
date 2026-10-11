@@ -29,6 +29,20 @@ func (r router) Handle(pattern, role string, h api.HandlerFunc) {
 	r.mux.Handle(pattern, r.server.authed(role, false, h))
 }
 
+// HandlePublic registers pattern without authentication. It still bounds the
+// body and records request metrics.
+func (r router) HandlePublic(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	r.mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		started := time.Now()
+		recorder := httpx.NewStatusRecorder(w)
+		defer func() {
+			obs.HTTPRequests.WithLabelValues(req.Pattern, strconv.Itoa(recorder.Status)).Observe(time.Since(started).Seconds())
+		}()
+		req.Body = http.MaxBytesReader(recorder, req.Body, maxBodyBytes)
+		h(recorder, req)
+	}))
+}
+
 // HandleAdmin registers pattern for platform administrators only; tenant
 // roles, including owner, are not enough.
 func (r router) HandleAdmin(pattern string, h api.HandlerFunc) {

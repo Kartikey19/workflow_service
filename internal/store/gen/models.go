@@ -8,6 +8,39 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ApiKey struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	Name       string             `json:"name"`
+	Prefix     string             `json:"prefix"`
+	TokenHash  string             `json:"token_hash"`
+	Role       string             `json:"role"`
+	CreatedBy  pgtype.UUID        `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type Invite struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	OrgName    pgtype.Text        `json:"org_name"`
+	Email      string             `json:"email"`
+	Role       string             `json:"role"`
+	TokenHash  string             `json:"token_hash"`
+	InvitedBy  pgtype.UUID        `json:"invited_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	AcceptedAt pgtype.Timestamptz `json:"accepted_at"`
+}
+
+type Membership struct {
+	OrgID     pgtype.UUID        `json:"org_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Role      string             `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type NodeExecution struct {
 	ID             pgtype.UUID        `json:"id"`
 	RunID          pgtype.UUID        `json:"run_id"`
@@ -30,6 +63,28 @@ type NodeExecution struct {
 	EndedAt        pgtype.Timestamptz `json:"ended_at"`
 	LeaseToken     pgtype.UUID        `json:"lease_token"`
 	Item           []byte             `json:"item"`
+}
+
+type Organization struct {
+	ID        pgtype.UUID        `json:"id"`
+	Name      string             `json:"name"`
+	Slug      string             `json:"slug"`
+	PlanID    string             `json:"plan_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type OrganizationUsage struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	Month pgtype.Date `json:"month"`
+	Runs  int64       `json:"runs"`
+}
+
+type Plan struct {
+	ID              string      `json:"id"`
+	Name            string      `json:"name"`
+	MaxWorkflows    pgtype.Int8 `json:"max_workflows"`
+	MaxSteps        pgtype.Int8 `json:"max_steps"`
+	MaxRunsPerMonth pgtype.Int8 `json:"max_runs_per_month"`
 }
 
 type Run struct {
@@ -80,6 +135,16 @@ type RunWait struct {
 	Schema          []byte             `json:"schema"`
 }
 
+type Session struct {
+	ID         pgtype.UUID        `json:"id"`
+	UserID     pgtype.UUID        `json:"user_id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	TokenHash  string             `json:"token_hash"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
+}
+
 type Task struct {
 	ID              pgtype.UUID        `json:"id"`
 	TenantID        pgtype.UUID        `json:"tenant_id"`
@@ -117,6 +182,18 @@ type TaskDetail struct {
 	Status          string             `json:"status"`
 	WaitKey         string             `json:"wait_key"`
 	WorkflowName    string             `json:"workflow_name"`
+}
+
+type User struct {
+	ID            pgtype.UUID        `json:"id"`
+	Email         string             `json:"email"`
+	Name          string             `json:"name"`
+	PasswordHash  string             `json:"password_hash"`
+	PlatformAdmin bool               `json:"platform_admin"`
+	FailedLogins  int32              `json:"failed_logins"`
+	LockedUntil   pgtype.Timestamptz `json:"locked_until"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	DisabledAt    pgtype.Timestamptz `json:"disabled_at"`
 }
 
 type Workflow struct {

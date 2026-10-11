@@ -278,6 +278,55 @@ organization's task.
 
 ---
 
+## 4b. Identity, organizations and plans (M11)
+
+An **organization** is the tenant. Callers authenticate with a **session cookie**
+(`wf_session`: HttpOnly, SameSite=Lax, Secure in production; a state-changing
+request whose `Origin` names another site is rejected) or an **API key**
+(`Authorization: Bearer wfk_...`). Roles, least to most privileged: `viewer`,
+`editor` (publish, run), `admin` (members, invites, keys), `owner`. Nobody can
+grant a role above their own, an admin cannot touch an owner, and an organization
+always keeps at least one owner. Sign-up is invite-only.
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /v1/auth/login` | none | `{email, password}` → sets the session cookie; wrong credentials are indistinguishable from unknown emails, and 5 failures in a row lock the account for 15 minutes (`429 account_locked`) |
+| `GET /v1/auth/invite?token=` | none | preview an invite: email, role, organization, whether the email already has an account |
+| `POST /v1/auth/accept-invite` | none | `{token, password, name}`; creates the account (or, if the email has one, requires its password), joins the organization — created now for a platform invite — and signs in. `410` if the invite is unknown, used or expired |
+| `POST /v1/auth/logout` | session | ends the session |
+| `GET /v1/auth/me` | session | the user, the current organization and every organization they can switch to |
+| `POST /v1/auth/switch-org` | session | `{organization_id}` |
+| `GET /v1/members` | viewer | members of the current organization |
+| `PATCH /v1/members/{user_id}` | admin | `{role}` |
+| `DELETE /v1/members/{user_id}` | viewer | remove a member (admin) or leave (yourself); their sessions stop working at once |
+| `POST /v1/invites` | admin | `{email, role}` → the response carries the invite `token` and `accept_url` **once**; `GET /v1/invites` lists pending ones, `DELETE /v1/invites/{id}` revokes |
+| `POST /v1/api-keys` | admin | `{name, role}` (viewer, editor or admin; at most your own role) → the `token` is shown once; `GET` lists metadata, `DELETE /v1/api-keys/{id}` revokes at once |
+| `GET /v1/usage` | viewer | the plan and current usage |
+| `GET /v1/plans` | viewer | every plan and its limits |
+| `POST /v1/admin/invites` | platform admin | `{email, organization_name}` — invites someone to a new organization they will own |
+| `GET /v1/admin/organizations` | platform admin | organizations with plan, members and runs this month |
+| `PUT /v1/admin/organizations/{id}/plan` | platform admin | `{plan}`; billing is manual until self sign-up opens |
+
+**Plan limits** are rows in `plans` (a null limit is unlimited) and are enforced at
+publish time (workflows, steps per workflow) and at run creation (runs per calendar
+month, UTC). Breaching one is `402 plan_limit` with a message naming the limit.
+The monthly count is atomic, so concurrent starts cannot overshoot it, and an
+idempotent replay or a sub-workflow child run is not charged.
+
+| Plan | Workflows | Steps per workflow | Runs per month |
+|---|---|---|---|
+| Free | 1 | 5 | 20 |
+| Pro | 50 | 50 | 10 000 |
+| Team | unlimited | 200 | 100 000 |
+
+The first platform administrator is created from `BOOTSTRAP_ADMIN_EMAIL` and
+`BOOTSTRAP_ADMIN_PASSWORD` when no user exists, with an organization of their own.
+Invite links are returned in the response; sending them by email arrives with the
+email integration (M14). Passwords are bcrypt hashes of 10–72 characters; session,
+invite and API-key tokens are random and stored only as SHA-256 hashes.
+
+---
+
 ## 5. Operations
 
 | Endpoint | Purpose |
