@@ -54,8 +54,9 @@ scope, where staging could inherit production's ID. Environment reviewers are
 optional: configuring them makes automatic releases wait for review.
 
 Once these repository changes are on GitHub, run **Build and deploy App
-Platform** manually on `main` with **deploy unchecked**. This runs all checks
-and publishes the initial image without requiring an existing app. Copy the
+Platform** manually on the prepared deployment branch with **deploy unchecked**,
+before merging it into `main`. This runs the CI checks and publishes the initial
+image without requiring an existing app. Copy the
 release image from the workflow summary:
 
 ```text
@@ -63,8 +64,9 @@ registry.digitalocean.com/<registry>/workflow-service@sha256:<digest>
 ```
 
 The registry also contains a tag equal to the workflow's full commit SHA.
-Ordinary pushes to `main` deploy automatically after bootstrap; manual runs on
-other branches only publish images.
+After the app is created and production's `DO_APP_ID` is configured, merge the
+deployment branch into `main`. Ordinary pushes to `main` then deploy
+automatically; manual runs on other branches only publish images.
 
 ## 3. Create the App Platform app once
 
@@ -118,8 +120,11 @@ Variables → DO_APP_ID**. Open the app's HTTPS URL at `/ui/`, sign in and remov
 
 ## 4. Automatic releases and rollback
 
-Each push to `main` runs the reusable CI (Go, integration, UI and container
-acceptance), builds and pushes the image, then deploys production. The deploy
+Each push to `main` runs the reusable CI (Go unit/race checks, UI, migrations,
+combined API/worker startup and container acceptance), builds and pushes the
+image, then deploys production.
+The full database integration suites are commented out in CI and remain runnable
+locally. The deploy
 job retrieves the app's current spec, changes only `web.image` to the release
 digest, disables registry auto-deploy, and calls `doctl apps update
 --update-sources --wait`. Runtime secrets, domains, sizing and other settings

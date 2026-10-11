@@ -123,7 +123,7 @@ and `-- +goose Down` markers, wrapping dollar-quoted function bodies in
 `-- +goose StatementBegin` / `-- +goose StatementEnd`. Do not edit applied files.
 
 Database-node tests also run against MySQL when `MYSQL_URL` is set (a go-sql-driver DSN,
-e.g. `user:pass@tcp(127.0.0.1:3306)/dbname`); CI provides one.
+e.g. `user:pass@tcp(127.0.0.1:3306)/dbname`).
 
 For integration tests, export `DATABASE_URL` (or source your trusted `.env` with
 `set -a; source .env; set +a`) and run `make test-integration`.
@@ -137,9 +137,13 @@ make generate         # regenerate sqlc after query changes
 make check            # formatting, sqlc freshness, vet, unit + integration tests
 ```
 
-GitHub Actions runs these checks with a PostgreSQL 16 service, checks the migration
-command twice, and runs integration tests with the race detector. The workflow
-will run on pushes and pull requests once this project is in a GitHub repository.
+GitHub Actions runs module, formatting, sqlc, vet, unit and unit race checks,
+browser tests, migration checks, the combined API/worker startup smoke test and
+container acceptance. PostgreSQL 16 remains for these smoke checks. The full
+database integration suites,
+including the race run, are commented out in `.github/workflows/ci.yml` and remain
+available locally with `make test-integration` or
+`go test -race -count=1 -tags=integration ./test/integration`.
 
 ## Application lifecycle
 

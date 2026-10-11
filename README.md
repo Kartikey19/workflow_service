@@ -92,8 +92,10 @@ Sheets, Calendar, Slack, Notion, email and MCP accounts once. Workflows and agen
 reuse their named connections and the same action implementations. Agents choose
 explicit read/write permissions; analytics agents can use only read actions.
 
-Verification uses real PostgreSQL/MySQL/MongoDB and scripted external services
-(set `MONGO_URL` for MongoDB acceptance; CI supplies it):
+Full local verification uses real PostgreSQL/MySQL/MongoDB and scripted external
+services (set `MYSQL_URL` and `MONGO_URL` for those connector tests). CI keeps
+unit/race tests, browser checks, migrations and container acceptance; the full
+database integration suites are commented out in its workflow:
 
 ```sh
 make check
