@@ -366,6 +366,50 @@ read secrets that were already re-sealed.
 
 ---
 
+## 4d. Providers and agents (M13)
+
+**Provider connections** hold an organization's API key for one LLM provider:
+`anthropic`, `openai`, `gemini`, or `openai_compatible` (Groq, Together, OpenRouter,
+Ollama, vLLM and others, through a `base_url` that includes the version path, e.g.
+`https://api.groq.com/openai/v1`). Keys are sealed with the vault master key and are
+**write-only**: only a hint (the last four characters) is ever shown. Every request
+goes through the egress guard, since a base URL is chosen by the tenant.
+
+| Endpoint | Role | Purpose |
+|---|---|---|
+| `POST /v1/providers/test` | admin | `{provider, base_url?, api_key}` → `{ok, models}` by listing the models the key can use; saves nothing. A bad key is `422 provider_test_failed` and the message never echoes the key |
+| `POST /v1/providers` | admin | `{name, provider, base_url?, api_key, skip_test?}`; **tests first and saves only if the test passes**; returns the connection and the models found |
+| `GET /v1/providers` | editor | connections, with how many agents use each |
+| `POST /v1/providers/{id}/test` | admin | re-test a saved connection |
+| `DELETE /v1/providers/{id}` | admin | `409 connection_in_use` while an agent uses it |
+
+**Agents** are named, reusable definitions: which connection and model, the system
+prompt, an `input_schema` and `output_schema` (the JSON Schema subset used by
+`wait_event`), `tools`, `allowed_hosts`, `max_iterations` (required, 1 to 50),
+`max_tokens` and `temperature`. Leave `connection` empty to use the platform's own
+provider (`ANTHROPIC_API_KEY`). Saving validates everything; editing bumps `revision`,
+which each run's node metrics record.
+
+| Endpoint | Role | Purpose |
+|---|---|---|
+| `GET /v1/agents`, `GET /v1/agents/{name}` | viewer | read |
+| `POST /v1/agents`, `PUT /v1/agents/{name}`, `DELETE /v1/agents/{name}` | editor | manage (the name in the path is the identity) |
+| `POST /v1/agents/{name}/test` | editor | run once with `{input?, prompt?}`; spends real tokens, creates no run; a failing agent is a 200 with `ok: false` and the reason |
+| `GET /v1/agent-tools` | viewer | tools an agent can be given |
+
+Use an agent in a workflow with `type: agent, config: {agent: <name>, input: {...}}`
+(`02 §4.6`). The input is checked against `input_schema` and passed to the model as
+JSON; the reply is validated against `output_schema`, and a violation is a permanent
+failure. A missing agent or connection fails the node by name (`E_AGENT_NOT_FOUND`,
+`E_PROVIDER_NOT_FOUND`).
+
+**Tools.** `current_time`, and `http_request`, which is fail-closed: it works only
+for hosts in the agent's own `allowed_hosts` (exact names or `*.example.com`), goes
+through the egress guard, never follows redirects, and returns a truncated body.
+Without `allowed_hosts` every request is refused, and the model is told why.
+
+---
+
 ## 5. Operations
 
 | Endpoint | Purpose |

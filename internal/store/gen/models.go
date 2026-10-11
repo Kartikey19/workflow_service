@@ -8,6 +8,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Agent struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	Name          string             `json:"name"`
+	Description   string             `json:"description"`
+	ConnectionID  pgtype.UUID        `json:"connection_id"`
+	Model         string             `json:"model"`
+	SystemPrompt  string             `json:"system_prompt"`
+	InputSchema   []byte             `json:"input_schema"`
+	OutputSchema  []byte             `json:"output_schema"`
+	Tools         []string           `json:"tools"`
+	AllowedHosts  []string           `json:"allowed_hosts"`
+	MaxIterations int32              `json:"max_iterations"`
+	MaxTokens     pgtype.Int4        `json:"max_tokens"`
+	Temperature   pgtype.Float8      `json:"temperature"`
+	Revision      int32              `json:"revision"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	UpdatedBy     pgtype.Text        `json:"updated_by"`
+}
+
 type ApiKey struct {
 	ID         pgtype.UUID        `json:"id"`
 	OrgID      pgtype.UUID        `json:"org_id"`
@@ -85,6 +106,21 @@ type Plan struct {
 	MaxWorkflows    pgtype.Int8 `json:"max_workflows"`
 	MaxSteps        pgtype.Int8 `json:"max_steps"`
 	MaxRunsPerMonth pgtype.Int8 `json:"max_runs_per_month"`
+}
+
+type ProviderConnection struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	Name          string             `json:"name"`
+	Provider      string             `json:"provider"`
+	BaseUrl       pgtype.Text        `json:"base_url"`
+	KeyCiphertext []byte             `json:"key_ciphertext"`
+	KeyNonce      []byte             `json:"key_nonce"`
+	KeyVersion    pgtype.Int4        `json:"key_version"`
+	KeyHint       pgtype.Text        `json:"key_hint"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy     pgtype.Text        `json:"created_by"`
 }
 
 type Run struct {

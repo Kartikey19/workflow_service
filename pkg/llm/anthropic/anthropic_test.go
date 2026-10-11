@@ -129,3 +129,26 @@ func TestCompleteHonoursContextAndTransportFailures(t *testing.T) {
 		t.Fatalf("cancelled context error = %v, want context.Canceled", err)
 	}
 }
+
+func TestListModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Header.Get("x-api-key") != "k" {
+			t.Errorf("request %s key %q", r.URL.Path, r.Header.Get("x-api-key"))
+		}
+		_, _ = io.WriteString(w, `{"data":[{"id":"claude-a"},{"id":"claude-b"}]}`)
+	}))
+	defer server.Close()
+	models, err := New("k", server.URL, nil).ListModels(context.Background())
+	if err != nil || len(models) != 2 || models[0] != "claude-a" {
+		t.Fatalf("models = %v, %v", models, err)
+	}
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`)
+	}))
+	defer denied.Close()
+	var apiErr *llm.Error
+	if _, err := New("bad", denied.URL, nil).ListModels(context.Background()); !errors.As(err, &apiErr) || apiErr.Status != 401 || apiErr.Retryable {
+		t.Fatalf("a rejected key = %v", err)
+	}
+}

@@ -70,7 +70,7 @@ func newTestAgent(t *testing.T, model llm.Client) *agent.Executor {
 		t.Fatal(err)
 	}
 	pricing := llm.Pricing{"claude-sonnet": {InputPerMTok: 3, OutputPerMTok: 15}}
-	return agent.New(agent.NewStatic("test", model, pricing), tools)
+	return agent.New(agent.NewStatic("test", model, pricing), tools, nil)
 }
 
 func reply(text string) llm.Response {

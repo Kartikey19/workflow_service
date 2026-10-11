@@ -202,3 +202,40 @@ func transportError(ctx context.Context, err error) error {
 	}
 	return &llm.Error{Code: code, Message: err.Error(), Retryable: true}
 }
+
+var _ llm.ModelLister = (*Client)(nil)
+
+// ListModels returns the model IDs this key can use (GET /v1/models).
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/models?limit=100", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("x-api-key", c.apiKey)
+	httpReq.Header.Set("anthropic-version", apiVersion)
+	res, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, transportError(ctx, err)
+	}
+	defer res.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(res.Body, maxResponse))
+	if err != nil {
+		return nil, &llm.Error{Code: "read_error", Message: err.Error(), Retryable: true}
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, statusError(res, data)
+	}
+	var list struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, &llm.Error{Status: res.StatusCode, Code: "bad_response", Message: "response is not valid JSON"}
+	}
+	models := make([]string, 0, len(list.Data))
+	for _, model := range list.Data {
+		models = append(models, model.ID)
+	}
+	return models, nil
+}

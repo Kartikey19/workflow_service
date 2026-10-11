@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/pkg/jsonschema"
@@ -24,17 +25,19 @@ const (
 type Executor struct {
 	clients Clients
 	tools   *Tools
+	defs    Definitions
 }
 
 var _ executor.Executor = (*Executor)(nil)
 
-// New builds the executor. A nil tools registry means no tools are available;
-// a nil clients means no provider is configured.
-func New(clients Clients, tools *Tools) *Executor {
+// New builds the executor. A nil tools registry means no tools are available; a
+// nil clients means no provider is configured; a nil defs means a node cannot
+// refer to a stored agent by name (only inline configuration works).
+func New(clients Clients, tools *Tools, defs Definitions) *Executor {
 	if clients == nil {
 		clients = Unconfigured{}
 	}
-	return &Executor{clients: clients, tools: tools}
+	return &Executor{clients: clients, tools: tools, defs: defs}
 }
 
 func (*Executor) Type() string { return "agent" }
@@ -43,11 +46,19 @@ func (e *Executor) Describe() executor.Description {
 	return executor.Description{
 		Title: "Agent", Category: "ai",
 		Description: "Calls a language model, optionally letting it use registered tools in a loop capped by max_iterations. " +
-			"With output_schema the reply must be JSON that matches it; a violation fails the node permanently. " +
+			"Run a stored agent with `agent: <name>` and `input`, or configure model, prompt and limits inline. " +
+			"With an output schema the reply must be JSON that matches it; a violation fails the node permanently. " +
 			"429 and 5xx responses are retried. Available tools: " + toolList(e.tools) + ".",
 		Example: `- id: classify
   type: agent
   needs: [fetch_ticket]
+  config:
+    agent: ticket-classifier          # defined under /v1/agents
+    input: {text: '${nodes.fetch_ticket.output.body.description}'}
+
+# or, inline:
+- id: classify
+  type: agent
   config:
     model: claude-sonnet-5-5
     system: "Classify the ticket. Respond with JSON only."
@@ -58,8 +69,8 @@ func (e *Executor) Describe() executor.Description {
       required: [severity]
       properties:
         severity: {type: string, enum: [P0, P1, P2]}`,
-		Output: `the validated JSON reply when output_schema is set, otherwise {"text": "<reply>"}; ` +
-			`metrics: iterations, tokens_in, tokens_out, cost_usd, model, stop_reason, tool_calls`,
+		Output: `the validated JSON reply when there is an output schema, otherwise {"text": "<reply>"}; ` +
+			`metrics: iterations, tokens_in, tokens_out, cost_usd, model, stop_reason, tool_calls (and agent, agent_revision)`,
 	}
 }
 
@@ -79,6 +90,11 @@ func toolList(tools *Tools) string {
 }
 
 type config struct {
+	// Agent mode: run a stored definition.
+	Agent string          `json:"agent"`
+	Input json.RawMessage `json:"input"`
+
+	// Inline mode: configure the call here.
 	Model         string          `json:"model"`
 	System        string          `json:"system"`
 	Prompt        json.RawMessage `json:"prompt"`
@@ -89,10 +105,51 @@ type config struct {
 	OutputSchema  json.RawMessage `json:"output_schema"`
 }
 
-// ValidateConfig checks the shape at publish time. max_iterations is mandatory
-// and must be a literal: the run-level timeout is far too coarse to bound
-// agent spend.
+// inlineOnly are the fields that, with `agent`, would conflict with the stored
+// definition.
+var inlineOnly = []string{"model", "system", "tools", "max_iterations", "max_tokens", "temperature", "output_schema"}
+
+// ValidateConfig checks the shape at publish time. A node either names a stored
+// agent (`agent`, with optional `input` and `prompt`) or configures the call
+// inline. Inline max_iterations is mandatory and must be a literal: the run-level
+// timeout is far too coarse to bound agent spend. (A stored agent's limits are
+// checked when the agent is saved.)
 func (e *Executor) ValidateConfig(raw json.RawMessage) error {
+	var c map[string]any
+	if err := json.Unmarshal(raw, &c); err != nil || c == nil {
+		return errors.New("config must be an object")
+	}
+	if _, named := c["agent"]; named {
+		return e.validateNamed(raw, c)
+	}
+	return e.validateInline(raw, c)
+}
+
+func (e *Executor) validateNamed(raw json.RawMessage, c map[string]any) error {
+	if err := executor.CheckFields(raw, []executor.Field{
+		{Name: "agent", Kind: "string", Required: true},
+		{Name: "input", Kind: "any"},
+		{Name: "prompt", Kind: "any"},
+	}); err != nil {
+		for _, name := range inlineOnly {
+			if _, present := c[name]; present {
+				return fmt.Errorf("%s cannot be set together with agent: it comes from the agent definition", name)
+			}
+		}
+		return err
+	}
+	if name, ok := c["agent"].(string); ok && !executor.IsExpression(name) && strings.TrimSpace(name) == "" {
+		return errors.New("agent must name a stored agent")
+	}
+	_, hasInput := c["input"]
+	_, hasPrompt := c["prompt"]
+	if !hasInput && !hasPrompt {
+		return errors.New("an agent node needs input or prompt")
+	}
+	return nil
+}
+
+func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 	if err := executor.CheckFields(raw, []executor.Field{
 		{Name: "model", Kind: "string", Required: true},
 		{Name: "system", Kind: "string"},
@@ -105,8 +162,6 @@ func (e *Executor) ValidateConfig(raw json.RawMessage) error {
 	}); err != nil {
 		return err
 	}
-	var c map[string]any
-	_ = json.Unmarshal(raw, &c)
 	var problems []error
 	if err := literalInt(c, "max_iterations", 1, maxIterationsLimit); err != nil {
 		problems = append(problems, err)
@@ -154,31 +209,56 @@ func literalInt(config map[string]any, key string, lo, hi int) error {
 	return nil
 }
 
+// validateResolved checks an inline configuration after its expressions are
+// resolved. Stored agents were validated when they were saved.
 func (c *config) validateResolved(tools *Tools) error {
+	return validateLimits(c.Model, c.Prompt, true, c.MaxIterations, c.MaxTokens, c.Temperature, c.Tools, c.OutputSchema, tools)
+}
+
+func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, maxIterations, maxTokens int, temperature *float64, toolNames []string, outputSchema json.RawMessage, tools *Tools) error {
 	switch {
-	case c.Model == "":
+	case model == "":
 		return errors.New("model is required")
-	case len(c.Prompt) == 0 || string(c.Prompt) == "null":
+	case requirePrompt && (len(prompt) == 0 || string(prompt) == "null"):
 		return errors.New("prompt is required")
-	case c.MaxIterations < 1 || c.MaxIterations > maxIterationsLimit:
+	case maxIterations < 1 || maxIterations > maxIterationsLimit:
 		return fmt.Errorf("max_iterations must be between 1 and %d", maxIterationsLimit)
-	case c.MaxTokens < 0 || c.MaxTokens > maxTokensLimit:
+	case maxTokens < 0 || maxTokens > maxTokensLimit:
 		return fmt.Errorf("max_tokens must be between 1 and %d", maxTokensLimit)
-	case c.Temperature != nil && (*c.Temperature < 0 || *c.Temperature > 1):
+	case temperature != nil && (*temperature < 0 || *temperature > 1):
 		return errors.New("temperature must be between 0 and 1")
 	}
-	for _, name := range c.Tools {
+	for _, name := range toolNames {
 		if _, ok := tools.Get(name); !ok {
 			return fmt.Errorf("unknown tool %q", name)
 		}
 	}
-	if len(c.OutputSchema) > 0 && string(c.OutputSchema) != "null" {
+	if len(outputSchema) > 0 && string(outputSchema) != "null" {
 		var schema any
-		if err := json.Unmarshal(c.OutputSchema, &schema); err != nil {
+		if err := json.Unmarshal(outputSchema, &schema); err != nil {
 			return fmt.Errorf("output_schema: %w", err)
 		}
 		if err := jsonschema.Check(schema); err != nil {
 			return fmt.Errorf("output_schema: %w", err)
+		}
+	}
+	return nil
+}
+
+// ValidateDefinition checks a stored agent before it is saved, with the same
+// rules as an inline node plus the schemas. The agents service calls it.
+func (e *Executor) ValidateDefinition(d Definition) error {
+	// A definition has no prompt of its own: each node supplies input.
+	if err := validateLimits(d.Model, nil, false, d.MaxIterations, d.MaxTokens, d.Temperature, d.Tools, d.OutputSchema, e.tools); err != nil {
+		return err
+	}
+	if len(d.InputSchema) > 0 && string(d.InputSchema) != "null" {
+		var schema any
+		if err := json.Unmarshal(d.InputSchema, &schema); err != nil {
+			return fmt.Errorf("input_schema: %w", err)
+		}
+		if err := jsonschema.Check(schema); err != nil {
+			return fmt.Errorf("input_schema: %w", err)
 		}
 	}
 	return nil

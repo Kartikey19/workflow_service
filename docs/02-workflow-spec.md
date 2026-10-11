@@ -269,7 +269,24 @@ across concurrent orders and the second run will fail to register its wait — w
 is the right failure, loudly at wait time, rather than a signal going to the wrong
 run.
 
-### 4.6 `agent` (M7)
+### 4.6 `agent` (M7, M13)
+
+An agent node either runs a **stored agent** (`04 §4d`) or configures the call
+inline. Stored form:
+
+```yaml
+- id: classify
+  type: agent
+  needs: [fetch_ticket]
+  config:
+    agent: ticket-classifier          # defined under /v1/agents
+    input: {text: '${nodes.fetch_ticket.output.body.description}'}
+    # prompt: optional extra instruction placed before the input
+```
+
+The agent supplies the provider, model, system prompt, schemas, tools and limits, so
+those fields cannot be set on the node. The rest of this section describes the inline
+form.
 
 ```yaml
 - id: classify

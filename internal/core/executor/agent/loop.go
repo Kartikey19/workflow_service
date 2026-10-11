@@ -20,6 +20,8 @@ const maxToolResultBytes = 32 << 10
 // usage accumulates what the loop has spent so far. It is reported on every
 // outcome, success or failure, because failed attempts cost money too.
 type usage struct {
+	agent      string
+	revision   int
 	model      string
 	iterations int
 	tokensIn   int
@@ -31,11 +33,15 @@ type usage struct {
 }
 
 func (u *usage) metrics() map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"iterations": u.iterations, "tokens_in": u.tokensIn, "tokens_out": u.tokensOut,
 		"cost_usd": u.cost, "cost_known": u.costKnown, "model": u.model,
 		"stop_reason": u.stop, "tool_calls": u.toolCalls,
 	}
+	if u.agent != "" {
+		m["agent"], m["agent_revision"] = u.agent, u.revision
+	}
+	return m
 }
 
 func (u *usage) add(resolved Resolved, response llm.Response) {
@@ -54,6 +60,91 @@ func (u *usage) add(resolved Resolved, response llm.Response) {
 	}
 }
 
+// plan is everything one agent call needs, whether it came from inline
+// configuration or from a stored definition.
+type plan struct {
+	ref           ProviderRef
+	system        string
+	prompt        string
+	tools         []string
+	allowedHosts  []string
+	maxIterations int
+	maxTokens     int
+	temperature   *float64
+	outputSchema  json.RawMessage
+	agent         string
+	revision      int
+}
+
+// plan resolves the node's configuration into a plan. A stored agent is loaded
+// and its input checked against the agent's input schema; failures here are
+// permanent, because the same configuration fails the same way next time.
+func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (plan, error) {
+	if c.Agent == "" {
+		if err := c.validateResolved(e.tools); err != nil {
+			return plan{}, executor.Permanent("bad_config", err)
+		}
+		return plan{
+			ref: ProviderRef{Model: c.Model}, system: c.System, prompt: promptText(c.Prompt), tools: c.Tools,
+			maxIterations: c.MaxIterations, maxTokens: c.MaxTokens, temperature: c.Temperature, outputSchema: c.OutputSchema,
+		}, nil
+	}
+	if e.defs == nil {
+		return plan{}, executor.Permanent("bad_config", errors.New("stored agents are not available on this worker"))
+	}
+	def, err := e.defs.Definition(ctx, req.TenantID, c.Agent)
+	if errors.Is(err, ErrAgentNotFound) {
+		return plan{}, executor.Permanent("E_AGENT_NOT_FOUND", fmt.Errorf("agent %q is not defined; create it under /v1/agents", c.Agent))
+	}
+	if err != nil {
+		return plan{}, executor.Retryable("agent_lookup", err)
+	}
+	for _, name := range def.Tools {
+		if _, ok := e.tools.Get(name); !ok {
+			return plan{}, executor.Permanent("bad_config", fmt.Errorf("agent %q uses tool %q, which is not available", def.Name, name))
+		}
+	}
+	var input any
+	if len(c.Input) > 0 && string(c.Input) != "null" {
+		if err := json.Unmarshal(c.Input, &input); err != nil {
+			return plan{}, executor.Permanent("bad_config", fmt.Errorf("input: %w", err))
+		}
+	}
+	if len(def.InputSchema) > 0 && string(def.InputSchema) != "null" {
+		var schema any
+		if err := json.Unmarshal(def.InputSchema, &schema); err != nil {
+			return plan{}, executor.Permanent("bad_config", fmt.Errorf("agent %q has an invalid input schema", def.Name))
+		}
+		if violations := jsonschema.Validate(schema, input); len(violations) > 0 {
+			parts := make([]string, 0, len(violations))
+			for _, v := range violations {
+				parts = append(parts, v.Field+" "+v.Message)
+			}
+			return plan{}, executor.Permanent("invalid_input", fmt.Errorf("input does not match the agent's input schema: %s", strings.Join(parts, "; ")))
+		}
+	}
+	return plan{
+		ref: ProviderRef{Connection: def.Connection, Model: def.Model}, system: def.System,
+		prompt: agentPrompt(c.Prompt, input), tools: def.Tools, allowedHosts: def.AllowedHosts,
+		maxIterations: def.MaxIterations, maxTokens: def.MaxTokens, temperature: def.Temperature,
+		outputSchema: def.OutputSchema, agent: def.Name, revision: def.Revision,
+	}, nil
+}
+
+// agentPrompt builds the user message of a stored agent: the node's own prompt
+// (if any) followed by the input as JSON.
+func agentPrompt(prompt json.RawMessage, input any) string {
+	var parts []string
+	if len(prompt) > 0 && string(prompt) != "null" {
+		parts = append(parts, promptText(prompt))
+	}
+	if input != nil {
+		encoded, _ := json.MarshalIndent(input, "", "  ")
+		parts = append(parts, "Input:\n"+string(encoded))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // Execute runs the model, executing requested tools until it answers or
 // max_iterations model calls have been made.
 func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.Result, error) {
@@ -61,42 +152,45 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 	if err := executor.DecodeConfig(req.Config, &c); err != nil {
 		return executor.Result{}, err
 	}
-	if err := c.validateResolved(e.tools); err != nil {
-		return executor.Result{}, executor.Permanent("bad_config", err)
-	}
-	resolved, err := e.clients.Client(ctx, req.TenantID, c.Model)
-	if errors.Is(err, ErrNotConfigured) {
-		return executor.Result{}, executor.Permanent("llm_not_configured", err)
-	}
+	p, err := e.plan(ctx, req, c)
 	if err != nil {
+		return executor.Result{}, err
+	}
+	resolved, err := e.clients.Client(ctx, req.TenantID, p.ref)
+	switch {
+	case errors.Is(err, ErrNotConfigured):
+		return executor.Result{}, executor.Permanent("llm_not_configured", err)
+	case errors.Is(err, ErrConnectionNotFound):
+		return executor.Result{}, executor.Permanent("E_PROVIDER_NOT_FOUND", fmt.Errorf("provider connection %q does not exist", p.ref.Connection))
+	case err != nil:
 		return executor.Result{}, executor.Retryable("provider_lookup", err)
 	}
 
-	maxTokens := c.MaxTokens
+	maxTokens := p.maxTokens
 	if maxTokens == 0 {
 		maxTokens = defaultMaxTokens
 	}
 	var schema any
-	structured := len(c.OutputSchema) > 0 && string(c.OutputSchema) != "null"
+	structured := len(p.outputSchema) > 0 && string(p.outputSchema) != "null"
 	if structured {
-		_ = json.Unmarshal(c.OutputSchema, &schema)
+		_ = json.Unmarshal(p.outputSchema, &schema)
 	}
 	llmRequest := llm.Request{
-		Model: c.Model, System: systemPrompt(c.System, c.OutputSchema, structured),
-		MaxTokens: maxTokens, Temperature: c.Temperature,
-		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{{Type: llm.BlockText, Text: promptText(c.Prompt)}}}},
+		Model: p.ref.Model, System: systemPrompt(p.system, p.outputSchema, structured),
+		MaxTokens: maxTokens, Temperature: p.temperature,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{{Type: llm.BlockText, Text: p.prompt}}}},
 	}
-	for _, name := range c.Tools {
+	for _, name := range p.tools {
 		tool, _ := e.tools.Get(name)
 		llmRequest.Tools = append(llmRequest.Tools, llm.Tool{Name: tool.Name(), Description: tool.Description(), InputSchema: tool.InputSchema()})
 	}
 
-	spent := &usage{model: c.Model}
-	call := Call{TenantID: req.TenantID, RunID: req.RunID, NodeID: req.NodeID}
+	spent := &usage{model: p.ref.Model, agent: p.agent, revision: p.revision}
+	call := Call{TenantID: req.TenantID, RunID: req.RunID, NodeID: req.NodeID, AllowedHosts: p.allowedHosts}
 	for {
-		if spent.iterations >= c.MaxIterations {
+		if spent.iterations >= p.maxIterations {
 			return executor.Result{Metrics: spent.metrics()}, executor.Permanent("max_iterations_exceeded",
-				fmt.Errorf("the model still wanted tools after %d iterations", c.MaxIterations))
+				fmt.Errorf("the model still wanted tools after %d iterations", p.maxIterations))
 		}
 		spent.iterations++
 		response, err := resolved.Client.Complete(ctx, llmRequest)
@@ -113,7 +207,7 @@ func (e *Executor) Execute(ctx context.Context, req executor.Request) (executor.
 		results := make([]llm.Block, 0, len(uses))
 		for _, use := range uses {
 			spent.toolCalls++
-			results = append(results, e.runTool(ctx, call, c.Tools, use))
+			results = append(results, e.runTool(ctx, call, p.tools, use))
 		}
 		llmRequest.Messages = append(llmRequest.Messages, llm.Message{Role: llm.RoleUser, Content: results})
 	}

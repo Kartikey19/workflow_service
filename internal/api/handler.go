@@ -12,7 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kartikey/workflow_service/internal/core/executor"
+	"github.com/kartikey/workflow_service/internal/services/agents"
 	"github.com/kartikey/workflow_service/internal/services/identity"
+	"github.com/kartikey/workflow_service/internal/services/providers"
 	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/services/tasks"
 	"github.com/kartikey/workflow_service/internal/services/vault"
@@ -105,6 +107,26 @@ type VaultService interface {
 	Current() int
 }
 
+// ProviderService manages LLM provider connections.
+type ProviderService interface {
+	Test(ctx context.Context, in providers.TestInput) (providers.TestResult, error)
+	Create(ctx context.Context, orgID pgtype.UUID, actor string, in providers.CreateInput) (providers.Connection, providers.TestResult, error)
+	List(ctx context.Context, orgID pgtype.UUID) ([]providers.Connection, error)
+	TestStored(ctx context.Context, orgID, id pgtype.UUID) (providers.TestResult, error)
+	Delete(ctx context.Context, orgID, id pgtype.UUID) error
+}
+
+// AgentService manages reusable agent definitions.
+type AgentService interface {
+	Create(ctx context.Context, orgID pgtype.UUID, actor string, in agents.Input) (agents.Agent, error)
+	Update(ctx context.Context, orgID pgtype.UUID, actor, name string, in agents.Input) (agents.Agent, error)
+	Get(ctx context.Context, orgID pgtype.UUID, name string) (agents.Agent, error)
+	List(ctx context.Context, orgID pgtype.UUID) ([]agents.Agent, error)
+	Delete(ctx context.Context, orgID pgtype.UUID, name string) error
+	Test(ctx context.Context, tenantID pgtype.UUID, name string, input, prompt json.RawMessage) (agents.TestResult, error)
+	Tools() []agents.ToolInfo
+}
+
 // AdminService is the operator interventions for stuck work (04 §5.1).
 type AdminService interface {
 	RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, actor string) (runs.NodeAdminResult, error)
@@ -133,6 +155,9 @@ type Services struct {
 	PublicURL string
 	// Vault enables /v1/secrets; nil leaves them unregistered.
 	Vault VaultService
+	// Providers and Agents enable /v1/providers and /v1/agents.
+	Providers ProviderService
+	Agents    AgentService
 	// Tasks enables the /v1/tasks routes; nil leaves them unregistered.
 	Tasks TaskService
 	// Admin enables the /v1/admin routes; nil leaves them unregistered.
@@ -200,6 +225,22 @@ func (h *Handler) Register(r Router) {
 
 	if h.services.Identity != nil {
 		h.registerIdentity(r)
+	}
+	if h.services.Providers != nil {
+		r.Handle("POST /v1/providers/test", auth.RoleAdmin, h.testProvider)
+		r.Handle("POST /v1/providers", auth.RoleAdmin, h.createProvider)
+		r.Handle("GET /v1/providers", auth.RoleEditor, h.listProviders)
+		r.Handle("POST /v1/providers/{id}/test", auth.RoleAdmin, h.testStoredProvider)
+		r.Handle("DELETE /v1/providers/{id}", auth.RoleAdmin, h.deleteProvider)
+	}
+	if h.services.Agents != nil {
+		r.Handle("GET /v1/agent-tools", auth.RoleViewer, h.listAgentTools)
+		r.Handle("GET /v1/agents", auth.RoleViewer, h.listAgents)
+		r.Handle("POST /v1/agents", auth.RoleEditor, h.createAgent)
+		r.Handle("GET /v1/agents/{name}", auth.RoleViewer, h.getAgent)
+		r.Handle("PUT /v1/agents/{name}", auth.RoleEditor, h.updateAgent)
+		r.Handle("DELETE /v1/agents/{name}", auth.RoleEditor, h.deleteAgent)
+		r.Handle("POST /v1/agents/{name}/test", auth.RoleEditor, h.testAgent)
 	}
 	if h.services.Vault != nil {
 		r.Handle("GET /v1/secrets", auth.RoleEditor, h.listSecrets)

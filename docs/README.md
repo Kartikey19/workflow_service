@@ -70,6 +70,10 @@ name or family prefix to `{input_per_mtok, output_per_mtok}` that overrides the
 built-in price estimates behind `cost_usd`). Without a key, workflows with agent
 nodes still publish but those nodes fail permanently with `llm_not_configured`.
 
+Organizations add their own provider keys under `/v1/providers` (`04 §4d`); these are
+sealed with the vault key, so they need `VAULT_MASTER_KEY`. `OPENAI_BASE_URL` and
+`GEMINI_BASE_URL` let an operator route those providers through a proxy.
+
 Sign-in uses sessions and API keys (`04 §4b`). Set `BOOTSTRAP_ADMIN_EMAIL` and
 `BOOTSTRAP_ADMIN_PASSWORD` once to create the first platform administrator;
 `PUBLIC_URL` builds invite links, `SESSION_TTL` (default 336h) sets the session

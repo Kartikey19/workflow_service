@@ -108,6 +108,12 @@ type Client interface {
 	Complete(ctx context.Context, req Request) (Response, error)
 }
 
+// ModelLister lists the models a key can use. A connection test calls it before
+// a key is saved: it proves the key and the endpoint work without spending tokens.
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]string, error)
+}
+
 // Error is a failed provider call. Retryable errors are transient (rate limits,
 // overload, 5xx); the rest will fail the same way if repeated.
 type Error struct {

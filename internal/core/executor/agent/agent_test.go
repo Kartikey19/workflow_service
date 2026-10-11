@@ -75,7 +75,7 @@ func newExecutor(t *testing.T, client llm.Client, tool Tool) *Executor {
 		t.Fatal(err)
 	}
 	pricing := llm.Pricing{"claude-sonnet": {InputPerMTok: 3, OutputPerMTok: 15}}
-	return New(NewStatic("anthropic", client, pricing), tools)
+	return New(NewStatic("anthropic", client, pricing), tools, nil)
 }
 
 func run(t *testing.T, e *Executor, config string) (executor.Result, error) {
@@ -252,7 +252,7 @@ func TestProviderErrorsFollowTheRetryModel(t *testing.T) {
 }
 
 func TestNotConfiguredAndBadResolvedConfig(t *testing.T) {
-	_, err := run(t, New(nil, nil), `{"model":"m","prompt":"p","max_iterations":1}`)
+	_, err := run(t, New(nil, nil, nil), `{"model":"m","prompt":"p","max_iterations":1}`)
 	var permanent *executor.PermanentError
 	if !errors.As(err, &permanent) || permanent.Code != "llm_not_configured" {
 		t.Fatalf("err = %v", err)

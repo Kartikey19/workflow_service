@@ -98,6 +98,11 @@ type VaultConfig struct {
 type LLMConfig struct {
 	AnthropicAPIKey  string `env:"ANTHROPIC_API_KEY"`
 	AnthropicBaseURL string `env:"ANTHROPIC_BASE_URL"` // default https://api.anthropic.com
+	// OpenAIBaseURL and GeminiBaseURL let an operator route those providers
+	// through a proxy. Tenants cannot choose a URL for them; only for
+	// openai_compatible connections.
+	OpenAIBaseURL string `env:"OPENAI_BASE_URL"` // default https://api.openai.com/v1
+	GeminiBaseURL string `env:"GEMINI_BASE_URL"` // default https://generativelanguage.googleapis.com
 	// PricingJSON overrides the built-in per-model price estimates, e.g.
 	// {"claude-sonnet-5-5": {"input_per_mtok": 3, "output_per_mtok": 15}}.
 	PricingJSON string `env:"LLM_PRICING_JSON"`

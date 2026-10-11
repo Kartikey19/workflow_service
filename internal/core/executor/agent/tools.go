@@ -15,6 +15,8 @@ type Call struct {
 	TenantID uuid.UUID
 	RunID    uuid.UUID
 	NodeID   string
+	// AllowedHosts is the agent's allow-list for tools that reach the network.
+	AllowedHosts []string
 }
 
 // Tool is a function an agent may call. Tools run inside the agent's attempt:

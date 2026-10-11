@@ -680,10 +680,30 @@ operating rule: deploy the new key to every process before running it.
   (M15) and MCP tools (M15).
 
 **Acceptance**
-- [ ] Each of Anthropic, OpenAI, OpenAI-compatible and Gemini passes the connection
+- [x] Each of Anthropic, OpenAI, OpenAI-compatible and Gemini passes the connection
       test and runs a structured-output agent in a workflow.
-- [ ] `max_iterations` is enforced; schema-violating output is a permanent failure;
+- [x] `max_iterations` is enforced; schema-violating output is a permanent failure;
       429 is retryable and honours Retry-After.
+
+**Built (2026-10-11).** `pkg/llm` gained OpenAI (also the client for any compatible
+server) and Gemini, each with a `ListModels` for the connection test; migration
+`0012_providers_agents.sql`; `internal/services/providers` (encrypted keys, test
+before save, a client per named connection, every request through the egress guard)
+and `internal/services/agents` (definitions, validation, test runs); `/v1/providers`
+and `/v1/agents` (`04 §4d`). The `agent` node runs a stored agent
+(`agent: <name>, input: {...}`) as well as the inline form, and a fail-closed
+`http_request` tool joins `current_time`. Connector, database and MCP tools arrive
+with M14 and M15. Acceptance is checked against local fake servers for all four
+provider kinds; a manual check against real accounts has not been done. Prices for
+non-Anthropic models are not built in: set `LLM_PRICING_JSON`, otherwise their
+`cost_usd` is 0 and `cost_known` is false.
+
+**A wiring bug found along the way.** `app.Build` was missing the agent, sub-workflow
+and vault wiring from M7, M9 and M12: the integration tests assemble their own
+harness, so they passed while the real binaries lacked those node types and routes.
+It is fixed, and `TestAppWiringEndToEnd` now assembles the application through
+`app.Build`, runs a real worker and drives a pipeline across the vault, a stored
+agent on a tenant connection, a platform-provider agent and a sub-workflow.
 
 ### M14 — Email and app integrations (1.5 weeks)
 
