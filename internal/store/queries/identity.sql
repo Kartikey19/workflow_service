@@ -174,3 +174,7 @@ returning runs;
 -- name: RunsThisMonth :one
 select coalesce((select runs from organization_usage
                   where org_id = @org_id and month = date_trunc('month', now() at time zone 'utc')::date), 0)::bigint;
+
+-- name: LockBootstrap :exec
+-- Serialize first-user creation across API replicas; released at transaction end.
+select pg_advisory_xact_lock(748319602);

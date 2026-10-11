@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+web/node_modules
+web/test-results
+web/playwright-report
+web/dist
+*.log
+
+**/.env
+**/.env.*
+**/__pycache__

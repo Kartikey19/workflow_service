@@ -1,0 +1,120 @@
+name: workflow
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+x-app: &app
+  image: ${WORKFLOW_IMAGE:?Set WORKFLOW_IMAGE to an image tag or digest}
+  env_file: ${WORKFLOW_ENV_FILE:-.env}
+  environment: &environment
+    APP_ENV: production
+    COOKIE_SECURE: "true"
+    PUBLIC_URL: https://${DOMAIN:?Set DOMAIN}
+    DATABASE_URL: postgres://${POSTGRES_USER:-workflow}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-workflow}?sslmode=disable
+    DB_MAX_CONNS: ${DB_MAX_CONNS:-8}
+    HTTP_ADDRESS: :8080
+    WORKER_METRICS_ADDRESS: :9091
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 40s
+  logging: *logging
+  networks: [backend]
+  depends_on:
+    postgres: {condition: service_healthy}
+    migrate: {condition: service_completed_successfully}
+  healthcheck: &api-health
+    test: [CMD, /app/api, healthcheck, http://127.0.0.1:8080/readyz]
+    interval: 10s
+    timeout: 6s
+    start_period: 10s
+    retries: 6
+  labels: &api-labels
+    wf.observe: "true"
+    wf.metrics: "true"
+    wf.port: "8080"
+    wf.component: api
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-workflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-workflow}
+    command: [postgres, -c, shared_buffers=256MB, -c, effective_cache_size=768MB, -c, max_connections=120, -c, log_min_duration_statement=1000]
+    volumes: [postgres:/var/lib/postgresql/data]
+    shm_size: 256mb
+    restart: unless-stopped
+    logging: *logging
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  migrate:
+    <<: *app
+    command: [migrate]
+    restart: "no"
+    depends_on: {postgres: {condition: service_healthy}}
+    healthcheck: {disable: true}
+    labels: {wf.observe: "true", wf.component: migrate}
+  api_blue:
+    <<: *app
+  api_green:
+    <<: *app
+  worker:
+    <<: *app
+    entrypoint: [/app/worker]
+    healthcheck: &worker-health
+      <<: *api-health
+      test: [CMD, /app/api, healthcheck, http://127.0.0.1:9091/readyz]
+    labels: &worker-labels
+      wf.observe: "true"
+      wf.metrics: "true"
+      wf.port: "9091"
+      wf.component: worker
+  worker_next:
+    <<: *app
+    entrypoint: [/app/worker]
+    profiles: [deploy]
+    healthcheck: *worker-health
+    labels: *worker-labels
+  caddy:
+    image: caddy:2-alpine
+    environment: {DOMAIN: '${DOMAIN:?Set DOMAIN}', ACME_EMAIL: '${ACME_EMAIL:-}'}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+    restart: unless-stopped
+    logging: *logging
+    networks: [backend]
+    depends_on:
+      api_blue: {condition: service_healthy}
+      api_green: {condition: service_healthy}
+  backup:
+    build: {context: backup}
+    profiles: [backups]
+    env_file: ${WORKFLOW_ENV_FILE:-.env}
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-workflow}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-workflow}
+    volumes: [backups:/backups]
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [backend]
+    restart: unless-stopped
+    logging: *logging
+  alloy:
+    image: grafana/alloy:v1.15.0
+    profiles: [observability]
+    env_file: ${WORKFLOW_ENV_FILE:-.env}
+    command: [run, --storage.path=/var/lib/alloy, /etc/alloy/config.alloy]
+    volumes: ["./observability/config.alloy:/etc/alloy/config.alloy:ro", "/var/run/docker.sock:/var/run/docker.sock:ro", "alloy:/var/lib/alloy"]
+    networks: [backend]
+    restart: unless-stopped
+    logging: *logging
+volumes: {postgres: {}, caddy_data: {}, caddy_config: {}, backups: {}, alloy: {}}
+networks: {backend: {}}

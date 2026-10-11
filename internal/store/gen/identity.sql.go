@@ -729,6 +729,16 @@ func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
 	return items, nil
 }
 
+const lockBootstrap = `-- name: LockBootstrap :exec
+select pg_advisory_xact_lock(748319602)
+`
+
+// Serialize first-user creation across API replicas; released at transaction end.
+func (q *Queries) LockBootstrap(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockBootstrap)
+	return err
+}
+
 const lockInviteByTokenHash = `-- name: LockInviteByTokenHash :one
 select id, org_id, org_name, email, role, token_hash, invited_by, created_at, expires_at, accepted_at from invites where token_hash = $1 for update
 `

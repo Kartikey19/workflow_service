@@ -16,6 +16,7 @@ or compliance processes all run on the same seven tables.
 | 03 | [Engine runtime](03-engine.md) | Executor interface, claim loop, dispatcher, resolver, retries, leases, sweeper |
 | 04 | [HTTP API](04-api.md) | Workflows, runs, signals, tasks and admin endpoints; error model; idempotency semantics |
 | 05 | [Implementation plan](05-implementation-plan.md) | Product scope and decisions, repo layout, engine M0–M9 and product M10–M19 with acceptance criteria, testing, ops, hosting |
+| 06 | [Operations runbook](06-runbook.md) | Local UI, deployment baseline, releases, backups, restore, observability and key rotation |
 
 If you only read two: **01** for the schema and **03 §5** for the resolver. Those
 two are where correctness lives; everything else is plumbing around them.
@@ -158,3 +159,16 @@ process termination behavior. PostgreSQL is closed after the API has stopped.
 In `all` mode the API and the worker run side by side; the first to fail stops
 the other, and both drain on shutdown (the worker releases its leases).
 `make check` includes `go mod tidy -diff` to enforce reproducible module metadata.
+
+## Web application and release packaging
+
+The API embeds a React/Vite workspace. Run `make ui-install ui-build` after
+frontend changes; Go-only builds use the committed bundle. Sign in at the API
+root to manage workflows, agents, connections, run events, tasks, secrets,
+webhooks, members, API keys, and usage. Workflows can be created from agents
+without editing YAML, or drafted by the assistant using ASSISTANT_PROVIDER,
+ASSISTANT_API_KEY, and ASSISTANT_MODEL (or a tenant provider connection).
+
+See [the operations runbook](06-runbook.md) for the provisional Docker/Compose
+setup and local backup/rolling-release acceptance. Production hosting remains
+open for discussion; nothing has been deployed remotely.

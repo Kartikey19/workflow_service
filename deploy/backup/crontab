@@ -1,0 +1,2 @@
+# Daily at 02:00 UTC. The process environment carries database/S3 credentials.
+0 2 * * * python3 /usr/local/bin/backup.py

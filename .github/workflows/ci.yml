@@ -1,5 +1,6 @@
 name: CI
 on:
+  workflow_call:
   push:
   pull_request:
 permissions:
@@ -42,7 +43,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make ui-install ui-check
+      - run: npx --prefix web playwright install --with-deps chromium
       - run: make check
+      - run: make ui-browser
       - name: Verify migration command and repeat run
         run: |
           make migrate
@@ -51,3 +60,20 @@ jobs:
         run: make lint-workflows
       - run: go test -race ./...
       - run: go test -race -count=1 -tags=integration ./test/integration
+  packaging:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the embedded UI and distroless binaries
+        run: docker build -f deploy/Dockerfile -t workflow-service:acceptance .
+      - name: Local HTTPS, rolling replacement and backup restore acceptance
+        run: python3 deploy/test-local.py
+      - name: Validate Alloy configuration
+        run: |
+          GRAFANA_METRICS_URL=http://localhost:9090/api/v1/write \
+          GRAFANA_LOKI_URL=http://localhost:3100/loki/api/v1/push \
+          docker run --rm -e GRAFANA_METRICS_URL -e GRAFANA_LOKI_URL \
+            -v "$PWD/deploy/observability/config.alloy:/etc/alloy/config.alloy:ro" \
+            grafana/alloy:v1.15.0 validate /etc/alloy/config.alloy

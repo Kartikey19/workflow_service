@@ -1,0 +1,28 @@
+groups:
+  - name: workflow
+    rules:
+      - alert: WorkflowAPIUnavailable
+        expr: max(up{job="workflow",component="api"}) == 0 or absent(up{job="workflow",component="api"})
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "No API replica is being scraped", runbook_url: "docs/06-runbook.md#incident-response"}
+      - alert: WorkflowWorkersUnavailable
+        expr: max(up{job="workflow",component="worker"}) == 0 or absent(up{job="workflow",component="worker"})
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "No worker is being scraped", runbook_url: "docs/06-runbook.md#incident-response"}
+      - alert: WorkflowBacklogGrowing
+        expr: max(wf_ready_backlog) > 100 and deriv(wf_ready_backlog[10m]) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Ready work is accumulating; inspect capacity and upstream latency"}
+      - alert: WorkflowExpiredLeases
+        expr: sum(increase(wf_lease_expired_total[10m])) > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Workers are losing leases; inspect crashes, load and database connectivity"}
+      - alert: WorkflowRunFailureRate
+        expr: sum(rate(wf_runs_finished_total{status="failed"}[15m])) / clamp_min(sum(rate(wf_runs_finished_total[15m])), 0.001) > 0.1 and sum(increase(wf_runs_finished_total[15m])) > 10
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "More than 10% of workflow runs are failing"}

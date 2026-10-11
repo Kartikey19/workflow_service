@@ -767,14 +767,14 @@ M15_PUBLIC_MCP_URL=https://mcp.deepwiki.com/mcp \
   go test -count=1 -tags=integration ./test/integration -run '^TestMCPPublicAgent$'
 ```
 
-### M16 — Webhook triggers (2–3 days)
+### M16 — Webhook triggers (complete locally)
 
 `triggers(org, workflow, kind, token_hash, secret, enabled)`. Calling
 `POST /hooks/{token}` starts a run with the JSON body as input (or
 `{body, headers, query}` when `input_mode: envelope`); an optional HMAC signature
 check; the `Idempotency-Key` header is honoured (9). Plan run limits apply.
 
-### M17 — Workflow assistant (4–5 days)
+### M17 — Workflow assistant (implemented; real-provider acceptance pending)
 
 `POST /v1/assistant/workflows`: requirements text in, YAML out. The prompt
 includes the spec rules, `GET /v1/executors` descriptions, and the organization's
@@ -784,9 +784,10 @@ rounds. It runs on a platform key (`ASSISTANT_PROVIDER`, `ASSISTANT_API_KEY`) or
 the organization's own provider connection.
 
 **Acceptance**
-- [ ] Ten reference prompts produce YAML that compiles without errors.
+- [x] Ten reference prompts exercise compilation and bounded repair through a scripted provider.
+- [ ] Repeat the reference prompts against a real model and assess semantic quality.
 
-### M18 — Web UI (2–3 weeks)
+### M18 — Web UI (complete locally)
 
 Pages: login and accept invite; workflows (list, YAML editor with live
 validation, DAG graph, versions, run button with an input form); assistant
@@ -796,12 +797,12 @@ over SSE, cancel); agents (create, test, use); connections and integrations
 plan and usage.
 
 **Acceptance**
-- [ ] A new user can go from invite to a successful run with an agent node
+- [x] Chromium acceptance: a new user can go from invite to a successful run with an agent node
       without touching YAML by hand.
 
-### M19 — Production (3–4 days)
+### M19 — Production (packaging complete; hosting decision pending)
 
-Multi-stage Dockerfile (UI build, Go build, distroless); `deploy/compose.yml`
+Multi-stage Dockerfile (UI build, Go build, distroless); `deploy/compose.yaml`
 with Caddy (automatic HTTPS), `migrate` one-shot, `api`, `worker`
 (scalable), PostgreSQL 16 with tuned settings, nightly `pg_dump` to S3-compatible
 storage with retention, and Grafana Alloy shipping metrics and logs to Grafana
@@ -810,8 +811,14 @@ builds and pushes images to GHCR and deploys over SSH; runbook updates.
 
 **Acceptance**
 - [ ] Fresh host to a working HTTPS deployment with one documented command.
-- [ ] A restore from last night's backup is tested.
-- [ ] A rolling deploy mid-run causes no failed runs.
+- [x] Local backup/restore tooling tested against PostgreSQL, including checksum and decryption.
+- [ ] Restore last night's production backup after a host/bucket have been selected.
+- [x] Local API/worker replacement during a running node causes no failed runs.
+- [ ] Verify rolling deployment on the chosen production host.
+
+Local implementation and verification are documented in [the runbook](06-runbook.md).
+No provider/host has been selected and no remote deployment has been performed.
+Real OAuth, SMTP, LLM, S3, and Grafana Cloud account validation remains pending.
 
 ### Later
 

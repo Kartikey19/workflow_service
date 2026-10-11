@@ -312,7 +312,19 @@ func (s *Service) Bootstrap(ctx context.Context, email, password string) (bool, 
 	if err != nil {
 		return false, err
 	}
+	created := false
 	err = pgxTx(ctx, s.pool, func(q *gen.Queries) error {
+		if err := q.LockBootstrap(ctx); err != nil {
+			return fmt.Errorf("lock administrator bootstrap: %w", err)
+		}
+		count, err := q.CountUsers(ctx)
+		if err != nil {
+			return fmt.Errorf("recheck users: %w", err)
+		}
+		if count > 0 {
+			return nil
+		}
+
 		user, err := q.CreateUser(ctx, gen.CreateUserParams{ID: newID(), Email: email, Name: "Platform admin", PasswordHash: hash, PlatformAdmin: true})
 		if err != nil {
 			return fmt.Errorf("create bootstrap admin: %w", err)
@@ -321,10 +333,14 @@ func (s *Service) Bootstrap(ctx context.Context, email, password string) (bool, 
 		if err != nil {
 			return err
 		}
-		return q.UpsertMembership(ctx, gen.UpsertMembershipParams{OrgID: org.ID, UserID: user.ID, Role: auth.RoleOwner})
+		if err := q.UpsertMembership(ctx, gen.UpsertMembershipParams{OrgID: org.ID, UserID: user.ID, Role: auth.RoleOwner}); err != nil {
+			return err
+		}
+		created = true
+		return nil
 	})
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	return created, nil
 }

@@ -566,3 +566,66 @@ gRPC entry point.
 ---
 
 **Next:** `05-implementation-plan.md` — repo layout, milestones, testing.
+
+## 4f. Webhook triggers
+
+Editors can list `GET /v1/triggers`. Organization admins create
+`POST /v1/triggers` with `{name, workflow, input_mode: "body"|"envelope", signed,
+enabled?}`; the workflow must be active and belong to that organization.
+The response includes a one-time token and, when signed, a signing_secret.
+Only the token's SHA-256 is stored; the signing secret is encrypted in the
+versioned vault keyring. Lists return metadata only.
+
+Admins can `PATCH /v1/triggers/{id}` with enabled/input_mode, delete that route,
+and `POST /v1/triggers/{id}/rotate-token`. Rotation returns the new token once
+and immediately invalidates the old URL. Foreign-organization IDs return 404.
+
+`POST /hooks/{token}` is public and authenticated by the unguessable token.
+Disabled, deleted, or unknown tokens return 404. `body` requires a JSON object
+and passes it as workflow input. `envelope` accepts any JSON body and passes
+`{body, headers, query}`; header/query values are arrays. Authorization, Cookie,
+signature, and Idempotency-Key headers are excluded from the envelope. Request
+bodies share the API's 1 MiB limit.
+
+Signed hooks require `X-Workflow-Signature: sha256=<hex digest>`, computed with
+HMAC-SHA256 using the UTF-8 signing_secret exactly as returned (do not base64
+decode it), over the **exact raw request bytes**. Missing/incorrect signatures
+return 401. Use HTTPS and keep token URLs out of access logs.
+
+Idempotency-Key (up to 200 bytes) is scoped to each trigger. A matching replay
+returns the existing run with 200; new runs return 201. Reusing a key with
+different resolved input returns 409. Monthly plan limits apply atomically to
+new runs; valid replays do not consume another allowance. Runs identify their
+trigger as webhook and the creating webhook name. They pin the workflow version
+current at the time the first request starts the run.
+
+## 4g. Workflow assistant
+
+Editors call `POST /v1/assistant/workflows` with
+`{requirements, connection?, model?}`. Requirements are capped at 16,000
+UTF-8 bytes. connection is a tenant provider connection name; when omitted,
+the dedicated platform assistant provider/key is used. model defaults to
+ASSISTANT_MODEL, if configured, and otherwise must be supplied.
+
+The assistant receives the workflow specification, executor descriptions, and
+organization agent/connection/secret names and schemas. It never receives
+connection credentials or vault values. It returns a draft rather than
+publishing or starting a run. The compiler validates every draft, feeding
+errors back for at most three repair rounds (four model calls total).
+
+A valid draft returns 200 with `{yaml, valid: true, attempts, diagnostics, spec,
+tokens_in, tokens_out, cost_usd, cost_known}`. An invalid final draft returns
+422 with the same draft/diagnostics and valid:false, allowing manual repair.
+Absent configuration returns 501, provider failure 502, and timeout 504. The
+request is capped at two minutes and the YAML at 64 KiB. Unknown model pricing
+is reported with cost_known:false. Token costs are estimates; calls use the
+selected provider's billing account.
+
+## 4h. Embedded web application
+
+The API serves the React/Vite application at `/` and its page paths, including
+`/accept-invite?token=…`. Hashed assets are immutable; HTML is not cached.
+Unknown `/v1` and `/hooks` endpoints remain 404 rather than falling back to HTML.
+The browser uses same-origin session cookies and SSE; no credential is stored
+in localStorage. Public authentication mutations also reject mismatched browser
+origins. The worker's health/metrics server does not serve the UI.

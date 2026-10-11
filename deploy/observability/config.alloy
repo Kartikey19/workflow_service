@@ -1,0 +1,76 @@
+// All credentials come from the host's private deploy/.env.
+logging { level = "info" }
+discovery.docker "workflow" {
+ host = "unix:///var/run/docker.sock"
+ filter {
+  name = "label"
+  values = ["wf.observe=true"]
+ }
+}
+discovery.relabel "metrics" {
+ targets = discovery.docker.workflow.targets
+ rule {
+  source_labels = ["__meta_docker_container_label_wf_metrics"]
+  regex = "true"
+  action = "keep"
+ }
+ rule {
+  source_labels = ["__meta_docker_network_ip", "__meta_docker_container_label_wf_port"]
+  separator = ":"
+  target_label = "__address__"
+ }
+ rule {
+  source_labels = ["__meta_docker_container_label_wf_component"]
+  target_label = "component"
+ }
+ rule {
+  target_label = "job"
+  replacement = "workflow"
+ }
+}
+prometheus.scrape "workflow" {
+ targets = discovery.relabel.metrics.output
+ forward_to = [prometheus.remote_write.cloud.receiver]
+ scrape_interval = "15s"
+}
+prometheus.remote_write "cloud" {
+ endpoint {
+  url = sys.env("GRAFANA_METRICS_URL")
+  basic_auth {
+   username = sys.env("GRAFANA_METRICS_USER")
+   password = sys.env("GRAFANA_TOKEN")
+  }
+ }
+}
+discovery.relabel "logs" {
+ targets = discovery.docker.workflow.targets
+ rule {
+  source_labels = ["__meta_docker_container_label_wf_component"]
+  target_label = "component"
+ }
+ rule {
+  source_labels = ["__meta_docker_container_name"]
+  regex = "/(.*)"
+  replacement = "$1"
+  target_label = "container"
+ }
+ rule {
+  target_label = "job"
+  replacement = "workflow"
+ }
+}
+loki.source.docker "workflow" {
+ host = "unix:///var/run/docker.sock"
+ targets = discovery.docker.workflow.targets
+ relabel_rules = discovery.relabel.logs.rules
+ forward_to = [loki.write.cloud.receiver]
+}
+loki.write "cloud" {
+ endpoint {
+  url = sys.env("GRAFANA_LOKI_URL")
+  basic_auth {
+   username = sys.env("GRAFANA_LOKI_USER")
+   password = sys.env("GRAFANA_TOKEN")
+  }
+ }
+}

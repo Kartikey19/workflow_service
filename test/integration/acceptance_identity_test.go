@@ -582,3 +582,38 @@ func TestIdentityTenantIsolationWithKeys(t *testing.T) {
 		t.Fatalf("org B's key cancelling org A's run = %d, want 404", status)
 	}
 }
+
+// Two API replicas may start together on a fresh database. Exactly one creates
+// the administrator, and both starts must succeed.
+func TestConcurrentAdministratorBootstrap(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, ctx)
+	_, identity := h.identityAPI()
+	type outcome struct {
+		created bool
+		err     error
+	}
+	results := make(chan outcome, 2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-start
+			created, err := identity.Bootstrap(ctx, "root@example.com", adminPassword)
+			results <- outcome{created, err}
+		}()
+	}
+	close(start)
+	created := 0
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.created {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created %d administrators", created)
+	}
+}
