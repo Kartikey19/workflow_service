@@ -135,7 +135,12 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 
 	// 4. Resolve config. Secrets are resolved for the executor only; the stored
 	// input is resolved again with every secret replaced by "***" (03 §4.2 (a)).
-	stored, resolvedCfg, err := d.resolveConfig(ctx, run, node, programs.Config, bindings)
+	stored, resolvedCfg, secretValues, err := d.resolveConfig(ctx, run, node, programs.Config, bindings)
+	var missing *missingSecretError
+	if errors.As(err, &missing) {
+		d.failPermanent(ctx, ne, compiled, "E_SECRET_MISSING", err)
+		return
+	}
 	if err != nil {
 		d.failPermanent(ctx, ne, compiled, "E_EXPR_EVAL", err)
 		return
@@ -172,6 +177,12 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 	}
 	started := time.Now()
 	res, execErr := d.execute(attemptCtx, ex, ne, req)
+	if len(secretValues) > 0 {
+		// An upstream can echo a credential back, and transport errors can quote a
+		// URL that carried one: neither may reach the stored output or error.
+		res.Output = scrubBytes(res.Output, secretValues)
+		execErr = scrubError(execErr, secretValues)
+	}
 	elapsed := time.Since(started)
 	metrics := encodeMetrics(res.Metrics, elapsed)
 
@@ -201,9 +212,9 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 	d.persist(parent, ctx, ne, compiled, o)
 }
 
-func (d *Dispatcher) resolveConfig(ctx context.Context, run gen.Run, node spec.NodeSpec, template *expr.Template, bindings expr.Bindings) (stored, resolved []byte, err error) {
+func (d *Dispatcher) resolveConfig(ctx context.Context, run gen.Run, node spec.NodeSpec, template *expr.Template, bindings expr.Bindings) (stored, resolved []byte, secretValues []string, err error) {
 	if template == nil {
-		return []byte(`{}`), []byte(`{}`), nil
+		return []byte(`{}`), []byte(`{}`), nil, nil
 	}
 	usesSecrets := false
 	if raw, err := json.Marshal(node.Config); err == nil {
@@ -212,38 +223,47 @@ func (d *Dispatcher) resolveConfig(ctx context.Context, run gen.Run, node spec.N
 	if usesSecrets && d.secrets != nil {
 		values, err := d.secrets.Secrets(ctx, run.TenantID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("load vault secrets: %w", err)
+			return nil, nil, nil, fmt.Errorf("load vault secrets: %w", err)
+		}
+		if missing := missingSecrets(node.Config, values); len(missing) > 0 {
+			return nil, nil, nil, &missingSecretError{names: missing}
 		}
 		real := bindings
 		real.Secrets = values
 		value, err := template.Resolve(ctx, real)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolve config: %w", err)
+			return nil, nil, nil, fmt.Errorf("resolve config: %w", err)
 		}
 		if resolved, err = json.Marshal(value); err != nil {
-			return nil, nil, fmt.Errorf("encode resolved config: %w", err)
+			return nil, nil, nil, fmt.Errorf("encode resolved config: %w", err)
 		}
-		redacted := bindings
-		redacted.Secrets = make(map[string]string, len(values))
+		masked := bindings
+		masked.Secrets = make(map[string]string, len(values))
 		for name := range values {
-			redacted.Secrets[name] = "***"
+			masked.Secrets[name] = redactionMark
 		}
-		value, err = template.Resolve(ctx, redacted)
+		value, err = template.Resolve(ctx, masked)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolve config: %w", err)
+			return nil, nil, nil, fmt.Errorf("resolve config: %w", err)
 		}
 		stored, err = json.Marshal(value)
-		return stored, resolved, err
+		return stored, resolved, secretValueList(values), err
+	}
+	if usesSecrets {
+		// No vault is configured: say so, instead of a generic expression failure.
+		if missing := missingSecrets(node.Config, nil); len(missing) > 0 {
+			return nil, nil, nil, &missingSecretError{names: missing}
+		}
 	}
 	value, err := template.Resolve(ctx, bindings)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve config: %w", err)
+		return nil, nil, nil, fmt.Errorf("resolve config: %w", err)
 	}
 	resolved, err = json.Marshal(value)
 	if err != nil {
-		return nil, nil, fmt.Errorf("encode resolved config: %w", err)
+		return nil, nil, nil, fmt.Errorf("encode resolved config: %w", err)
 	}
-	return resolved, resolved, nil
+	return resolved, resolved, nil, nil
 }
 
 // execute turns an executor panic into a permanent failure of this node rather

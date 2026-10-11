@@ -15,6 +15,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/services/identity"
 	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/services/tasks"
+	"github.com/kartikey/workflow_service/internal/services/vault"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
 	"github.com/kartikey/workflow_service/internal/store/gen"
 	"github.com/kartikey/workflow_service/pkg/auth"
@@ -94,6 +95,16 @@ type IdentityService interface {
 	SetOrganizationPlan(ctx context.Context, orgID pgtype.UUID, planID string) error
 }
 
+// VaultService is the secrets use-cases.
+type VaultService interface {
+	Put(ctx context.Context, orgID pgtype.UUID, name, value, actor string) error
+	List(ctx context.Context, orgID pgtype.UUID) ([]vault.Info, error)
+	Delete(ctx context.Context, orgID pgtype.UUID, name string) error
+	Rotate(ctx context.Context) (vault.RotateResult, error)
+	KeyVersions(ctx context.Context) (map[int]int64, error)
+	Current() int
+}
+
 // AdminService is the operator interventions for stuck work (04 §5.1).
 type AdminService interface {
 	RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, actor string) (runs.NodeAdminResult, error)
@@ -120,6 +131,8 @@ type Services struct {
 	CookieSecure bool
 	// PublicURL is the externally visible base URL, used to build invite links.
 	PublicURL string
+	// Vault enables /v1/secrets; nil leaves them unregistered.
+	Vault VaultService
 	// Tasks enables the /v1/tasks routes; nil leaves them unregistered.
 	Tasks TaskService
 	// Admin enables the /v1/admin routes; nil leaves them unregistered.
@@ -187,6 +200,13 @@ func (h *Handler) Register(r Router) {
 
 	if h.services.Identity != nil {
 		h.registerIdentity(r)
+	}
+	if h.services.Vault != nil {
+		r.Handle("GET /v1/secrets", auth.RoleEditor, h.listSecrets)
+		r.Handle("PUT /v1/secrets/{name}", auth.RoleAdmin, h.putSecret)
+		r.Handle("DELETE /v1/secrets/{name}", auth.RoleAdmin, h.deleteSecret)
+		r.HandleAdmin("POST /v1/admin/vault/rotate", h.rotateVault)
+		r.HandleAdmin("GET /v1/admin/vault", h.vaultStatus)
 	}
 
 	if h.services.Admin != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	"github.com/kartikey/workflow_service/internal/services/runs"
+	vaultsvc "github.com/kartikey/workflow_service/internal/services/vault"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
 	"github.com/kartikey/workflow_service/pkg/netguard"
 )
@@ -72,6 +73,8 @@ type harness struct {
 	flow     *runs.Service
 	script   *scripted
 	llm      *fakeLLM
+	secrets  engine.SecretSource
+	vaultSvc *vaultsvc.Service
 	tenant   pgtype.UUID
 	registry *executor.Registry
 	publish  *workflows.Service
@@ -110,7 +113,7 @@ func workerConfig(id string) engine.Config {
 func (h *harness) startWorkers(n int) {
 	for i := range n {
 		cfg := workerConfig(fmt.Sprintf("worker-%d-%s", i, randomHex(h.t, 3)))
-		dispatcher := engine.NewDispatcher(cfg, h.flow, h.registry, nil, testLogger())
+		dispatcher := engine.NewDispatcher(cfg, h.flow, h.registry, h.secrets, testLogger())
 		worker := engine.NewWorker(cfg, testLogger(), h.pool, h.flow, dispatcher.Run)
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})

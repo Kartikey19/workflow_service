@@ -655,9 +655,17 @@ Values are write-only via the API (list returns names only). The worker's
 `SecretSource` decrypts per run; expressions use `${secrets.NAME}`.
 
 **Acceptance**
-- [ ] A secret used in an http header reaches the upstream but the stored node
+- [x] A secret used in an http header reaches the upstream but the stored node
       input shows `***`.
-- [ ] Rotating `VAULT_MASTER_KEY` via key versions re-encrypts without downtime.
+- [x] Rotating `VAULT_MASTER_KEY` via key versions re-encrypts without downtime.
+
+**Built (2026-10-11).** `pkg/vault` (AES-256-GCM keyring with versions and additional
+authenticated data), migration `0011_secrets.sql`, `internal/services/vault` (put,
+list, delete, per-run decryption as the engine's `SecretSource`, and online
+rotation with compare-and-set row updates), `/v1/secrets` and the rotation admin
+routes (`04 §4c`). Beyond the plan, the dispatcher also scrubs secret values from a
+node's stored output and error and fails a missing secret by name. Rotation has an
+operating rule: deploy the new key to every process before running it.
 
 ### M13 — LLM providers and agents (1–1.5 weeks)
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
+	"github.com/kartikey/workflow_service/pkg/vault"
 )
 
 type Config struct {
@@ -23,6 +24,7 @@ type Config struct {
 	Egress   EgressConfig
 	LLM      LLMConfig
 	Auth     AuthConfig
+	Vault    VaultConfig
 }
 
 type AppConfig struct {
@@ -78,6 +80,16 @@ type AuthConfig struct {
 	// The first platform admin is created from these when no user exists.
 	BootstrapAdminEmail    string `env:"BOOTSTRAP_ADMIN_EMAIL"`
 	BootstrapAdminPassword string `env:"BOOTSTRAP_ADMIN_PASSWORD"`
+}
+
+// VaultConfig configures secret encryption. Without a master key the vault is
+// off and /v1/secrets answers 501. To rotate: set the new key as VAULT_MASTER_KEY
+// with a higher VAULT_KEY_VERSION, list the previous key in VAULT_OLD_KEYS, restart,
+// POST /v1/admin/vault/rotate, and remove the old key once nothing uses it.
+type VaultConfig struct {
+	MasterKey  string `env:"VAULT_MASTER_KEY"`                 // 32 bytes, base64
+	KeyVersion int    `env:"VAULT_KEY_VERSION" envDefault:"1"` // version of VAULT_MASTER_KEY
+	OldKeys    string `env:"VAULT_OLD_KEYS"`                   // "1:base64,2:base64"
 }
 
 // LLMConfig configures the platform-managed model provider used by agent
@@ -196,6 +208,11 @@ func (c *Config) Validate() error {
 	}
 	if c.App.Environment == "production" && !c.Auth.CookieSecure {
 		add("COOKIE_SECURE must be true in production")
+	}
+	if c.Vault.MasterKey != "" {
+		if _, err := vault.ParseKeyring(c.Vault.MasterKey, c.Vault.KeyVersion, c.Vault.OldKeys); err != nil {
+			add("VAULT_MASTER_KEY / VAULT_KEY_VERSION / VAULT_OLD_KEYS: " + strings.TrimPrefix(err.Error(), "vault: "))
+		}
 	}
 	if (c.Auth.BootstrapAdminEmail == "") != (c.Auth.BootstrapAdminPassword == "") {
 		add("BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together")

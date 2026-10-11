@@ -135,6 +135,18 @@ type RunWait struct {
 	Schema          []byte             `json:"schema"`
 }
 
+type Secret struct {
+	ID         pgtype.UUID        `json:"id"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	Name       string             `json:"name"`
+	Ciphertext []byte             `json:"ciphertext"`
+	Nonce      []byte             `json:"nonce"`
+	KeyVersion int32              `json:"key_version"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	UpdatedBy  pgtype.Text        `json:"updated_by"`
+}
+
 type Session struct {
 	ID         pgtype.UUID        `json:"id"`
 	UserID     pgtype.UUID        `json:"user_id"`

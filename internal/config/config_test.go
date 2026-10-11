@@ -82,6 +82,18 @@ func TestConfigValidate(t *testing.T) {
 			wantError: "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together",
 		},
 		{
+			name:      "vault key must be valid",
+			configure: func(c *Config) { c.Vault = VaultConfig{MasterKey: "not-a-key", KeyVersion: 1} },
+			wantError: "VAULT_MASTER_KEY",
+		},
+		{
+			name: "vault with a valid key and an old key is accepted",
+			configure: func(c *Config) {
+				key := "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+				c.Vault = VaultConfig{MasterKey: key, KeyVersion: 2, OldKeys: "1:" + key}
+			},
+		},
+		{
 			name:      "negative session lifetime",
 			configure: func(c *Config) { c.Auth.SessionTTL = -time.Hour },
 			wantError: "SESSION_TTL cannot be negative",

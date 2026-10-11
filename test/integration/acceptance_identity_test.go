@@ -35,10 +35,14 @@ func (h *harness) identityAPI() (string, *identity.Service) {
 	}
 	h.publish.Plans = ident.Plans()
 	h.flow.Allowance = ident.Plans()
-	srv, err := server.New(server.Config{Address: "127.0.0.1:0", API: &api.Services{
+	services := &api.Services{
 		Pool: h.pool, Workflows: h.publish, Runs: h.flow, Executors: h.registry, Tasks: tasks.NewService(h.flow),
 		Admin: h.flow, Identity: ident, PublicURL: "http://app.test", Auth: ident.Authenticator(),
-	}}, h.pool, nil)
+	}
+	if h.vaultSvc != nil {
+		services.Vault = h.vaultSvc
+	}
+	srv, err := server.New(server.Config{Address: "127.0.0.1:0", API: services}, h.pool, nil)
 	if err != nil {
 		h.t.Fatal(err)
 	}

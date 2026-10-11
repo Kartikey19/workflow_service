@@ -327,6 +327,45 @@ invite and API-key tokens are random and stored only as SHA-256 hashes.
 
 ---
 
+## 4c. Secrets (M12)
+
+A vault of per-organization credentials that workflows reference as
+`${secrets.NAME}`, for example `Authorization: "Bearer ${secrets.API_KEY}"`.
+Values are encrypted with AES-256-GCM before they are stored, bound to their
+organization and name, and are **write-only**: nothing returns a value, and the
+list shows names only.
+
+| Endpoint | Role | Purpose |
+|---|---|---|
+| `GET /v1/secrets` | editor | names and metadata, plus the `${secrets.NAME}` reference to paste |
+| `PUT /v1/secrets/{name}` | admin | `{"value": "..."}` creates or replaces; takes effect on the next node |
+| `DELETE /v1/secrets/{name}` | admin | workflows that still use it fail with `E_SECRET_MISSING` |
+| `GET /v1/admin/vault` | platform admin | how many secrets use each master-key version |
+| `POST /v1/admin/vault/rotate` | platform admin | re-seal every secret under the current master key |
+
+Names are `[A-Z][A-Z0-9_]{0,63}`; values are 8 bytes to 64 KiB (short values could
+not be scrubbed reliably). Without `VAULT_MASTER_KEY` the vault is off and these
+routes answer `501 vault_not_configured`.
+
+**What a workflow run does with a secret.** The worker decrypts the organization's
+secrets only when a node's config mentions `secrets`, hands the real value to the
+executor, and stores the node input with the value replaced by `***`. The value is
+also scrubbed from the node's stored output and error, so an upstream that echoes a
+header back, or a transport error that quotes a URL, cannot leak it. Secrets never
+reach logs or run events. Referring to a secret that does not exist fails the node
+once, permanently, with `E_SECRET_MISSING` and the secret's name.
+
+**Rotating the master key** needs no downtime: (1) generate a new 32-byte key;
+(2) deploy **every** process (API and workers) with it as `VAULT_MASTER_KEY`, a
+higher `VAULT_KEY_VERSION`, and the previous key in `VAULT_OLD_KEYS=<version>:<key>`;
+(3) only then `POST /v1/admin/vault/rotate` (repeat until `failed` is 0; it is
+safe while serving, and each row is replaced compare-and-set on its old version);
+(4) when `GET /v1/admin/vault` shows nothing under the old version, remove the old
+key. Step 2 must finish first: a process that does not yet hold the new key cannot
+read secrets that were already re-sealed.
+
+---
+
 ## 5. Operations
 
 | Endpoint | Purpose |

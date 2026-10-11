@@ -76,6 +76,11 @@ Sign-in uses sessions and API keys (`04 §4b`). Set `BOOTSTRAP_ADMIN_EMAIL` and
 lifetime, and `COOKIE_SECURE=true` is required in production. Outside production
 the development `X-Tenant-ID` header still works, alongside real credentials.
 
+The vault (`04 §4c`) turns on with `VAULT_MASTER_KEY`, a base64 32-byte key
+(`openssl rand -base64 32`); `VAULT_KEY_VERSION` (default 1) and `VAULT_OLD_KEYS`
+(`1:<key>,2:<key>`) support rotation. Every API and worker process needs the same
+keys. Losing the key loses the secrets: back it up apart from the database.
+
 Only `DATABASE_URL` is required; every other setting has a default (see
 `internal/config/config.go`, where each field's `env` tag names its variable).
 
