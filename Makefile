@@ -1,7 +1,10 @@
-.PHONY: migrate test test-integration fmt check-fmt generate check-generated vet check check-mod
+.PHONY: migrate lint-workflows test test-integration fmt check-fmt generate check-generated vet check check-mod
 
 migrate:
 	go run ./cmd/api migrate
+
+lint-workflows:
+	go test -count=1 -tags=integration ./test/integration -run '^TestWorkflowLint$$'
 
 test:
 	go test ./...

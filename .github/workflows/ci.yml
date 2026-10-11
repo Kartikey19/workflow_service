@@ -34,5 +34,7 @@ jobs:
         run: |
           make migrate
           make migrate
+      - name: Lint workflows (POST /v1/workflows?dry_run=true)
+        run: make lint-workflows
       - run: go test -race ./...
       - run: go test -race -count=1 -tags=integration ./test/integration

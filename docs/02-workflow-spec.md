@@ -181,7 +181,7 @@ publish time, so a malformed `config` is a 400 on publish, never a runtime failu
     headers:
       Authorization: "Bearer ${secrets.INVENTORY_TOKEN}"
       Content-Type: application/json
-    body: {order_id: ${input.order_id}, items: ${nodes.fetch.output.items}}
+    body: {order_id: '${input.order_id}', items: '${nodes.fetch.output.items}'}
     timeout: 10s
     expect_status: [200, 201]          # anything else => error
     send_idempotency_key: true         # adds Idempotency-Key: <node key>. default true
@@ -313,7 +313,7 @@ run-level `timeout` is far too coarse to bound agent spend.
     form: care_plan_v2
     assignee: ${nodes.lookup.output.nurse_id}   # optional
     sla: 24h
-    payload: {patient: ${input.patient_id}, plan: ${nodes.create_care_plan.output}}
+    payload: {patient: '${input.patient_id}', plan: '${nodes.create_care_plan.output}'}
   on_timeout: escalate_to_physician
 ```
 
@@ -351,7 +351,7 @@ nodes:
       method: POST
       url: "https://inv.internal/v1/reserve"
       headers: {Authorization: "Bearer ${secrets.INV_TOKEN}"}
-      body: {order_id: ${input.order_id}}
+      body: {order_id: '${input.order_id}'}
 
   - id: assign_rider
     type: http
@@ -360,7 +360,7 @@ nodes:
     config:
       method: POST
       url: "https://dispatch.internal/v1/assign"
-      body: {reservation: ${nodes.reserve_stock.output.body.reservation_id}}
+      body: {reservation: '${nodes.reserve_stock.output.body.reservation_id}'}
 
   - id: await_pickup
     type: wait_event
@@ -377,7 +377,7 @@ nodes:
     config:
       method: POST
       url: "https://dispatch.internal/v1/reassign"
-      body: {order_id: ${input.order_id}}
+      body: {order_id: '${input.order_id}'}
 
   - id: notify_customer
     type: http
@@ -396,7 +396,7 @@ nodes:
     config:
       method: POST
       url: "https://inv.internal/v1/release"
-      body: {reservation: ${nodes.reserve_stock.output.body.reservation_id}}
+      body: {reservation: '${nodes.reserve_stock.output.body.reservation_id}'}
 
 outputs:
   reservation: ${nodes.reserve_stock.output.body.reservation_id}
@@ -446,7 +446,7 @@ nodes:
   - id: page_oncall
     type: http
     needs: [route]
-    config: {method: POST, url: "https://pager.internal/v1/page", body: {ticket: ${input.ticket_id}}}
+    config: {method: POST, url: "https://pager.internal/v1/page", body: {ticket: '${input.ticket_id}'}}
 
   - id: auto_reply
     type: agent
@@ -464,7 +464,7 @@ nodes:
     config:
       method: POST
       url: "https://desk.internal/v1/tickets/${input.ticket_id}/triage"
-      body: {severity: ${nodes.classify.output.severity}}
+      body: {severity: '${nodes.classify.output.severity}'}
 ```
 
 Note `join: any` on `record`. This is the merge-after-branch pattern, and it is
@@ -489,7 +489,7 @@ nodes:
     config:
       method: POST
       url: "https://ehr.internal/v1/care-plans"
-      body: {patient: ${input.patient_id}}
+      body: {patient: '${input.patient_id}'}
 
   - id: nurse_review
     type: human_task
@@ -499,7 +499,7 @@ nodes:
       queue: rn-review
       form: care_plan_v2
       sla: 24h
-      payload: {plan: ${nodes.create_care_plan.output.body}}
+      payload: {plan: '${nodes.create_care_plan.output.body}'}
 
   - id: escalate
     type: http
@@ -518,7 +518,7 @@ nodes:
     config:
       method: POST
       url: "https://crm.internal/v1/tasks"
-      body: {patient: ${input.patient_id}, kind: followup_call}
+      body: {patient: '${input.patient_id}', kind: followup_call}
 ```
 
 Three domains. Same seven tables, same engine, same resolver. The only thing

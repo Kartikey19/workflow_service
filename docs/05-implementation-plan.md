@@ -917,14 +917,16 @@ production.
 ## 10. Definition of done for v1
 
 - [ ] All three example workflows in `02 §5` run end to end against real HTTP
-      upstreams, including the timeout and compensation paths.
-- [ ] Invariants I1–I7 asserted by `checkInvariants` in every engine test.
-- [ ] 8-worker diamond test, 200 iterations, zero duplicates, with `-race`.
-- [ ] Kill -9 chaos test: every run terminal, no duplicate `succeeded` rows.
-- [ ] Rolling restart mid-run costs <1s, not a lease TTL.
-- [ ] A 30-day `sleep` holds one row, zero goroutines (asserted, not assumed).
-- [ ] `?dry_run=true` wired into CI as a workflow lint.
-- [ ] Runbook §7 written, and every admin endpoint in it actually exists.
+      upstreams, including the timeout and compensation paths. Delivery (5.1)
+      is done, with happy, timeout and compensation tests; Agentic (5.2) waits
+      for M7 and Healthcare (5.3) for M8. The lint already compiles all three.
+- [x] Invariants I1–I7 asserted by `checkInvariants` in every engine test.
+- [x] 8-worker diamond test, 200 iterations, zero duplicates, with `-race`.
+- [x] Kill -9 chaos test: every run terminal, no duplicate `succeeded` rows.
+- [x] Rolling restart mid-run costs <1s, not a lease TTL.
+- [x] A 30-day `sleep` holds one row, zero goroutines (asserted, not assumed).
+- [x] `?dry_run=true` wired into CI as a workflow lint.
+- [x] Runbook §7 written, and every admin endpoint in it actually exists.
 
 ---
 
