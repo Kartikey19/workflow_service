@@ -328,17 +328,17 @@ Build: `spec` and `expr` packages end to end. `POST /v1/workflows` with
 get all six errors in one response.
 
 **Acceptance**
-- [ ] Golden tests: `test/golden/*.yaml` → expected compiled spec JSON. One
+- [x] Golden tests: `test/golden/*.yaml` → expected compiled spec JSON. One
       golden per feature; `-update` flag to regenerate.
-- [ ] Every rule in `02 §6.2` has a failing-fixture test asserting the exact code.
+- [x] Every rule in `02 §6.2` has a failing-fixture test asserting the exact code.
 - [x] `expr.Resolve` table test, ≥30 cases, covering `$${literal}`,
       `"a${x}b${y}c"`, whole-value objects/arrays/numbers/null, nested braces
       inside string literals, and unclosed `${`.
 - [x] Cycle detection reports the actual cycle path, not just "cycle found".
-- [ ] `spec_hash` is stable across map iteration order — compile the same YAML
+- [x] `spec_hash` is stable across map iteration order — compile the same YAML
       1 000 times, assert one distinct hash. (This will fail the first time you
       write it. Canonicalise before hashing.)
-- [ ] Republishing identical YAML returns 200 `unchanged: true` and creates no row.
+- [x] Republishing identical YAML returns 200 `unchanged: true` and creates no row.
 
 **M1 progress (2026-09-06)**
 - [x] Implemented strict decoding, defaults, structural validation, graph building,
@@ -353,10 +353,10 @@ get all six errors in one response.
       workflow outputs may reference all nodes. Conditions must produce booleans.
 - [x] Separated serializable normalized spec data from in-memory CEL programs.
       Durations are nanoseconds and normalized node lists are sorted.
-- [ ] Add input-schema typing, executor registry/config validation, and remaining
+- [x] Add input-schema typing, executor registry/config validation, and remaining
       structural/expression validation fixtures before treating compilation as
       sufficient for publication. Dynamic input/output field types remain runtime checked.
-- [ ] Add canonical hashing, golden fixtures, and publish/read APIs. This compiler
+- [x] Add canonical hashing, golden fixtures, and publish/read APIs. This compiler
       stage does not yet validate registered executor types or persist workflows.
 
 **M1 progress (2026-10-10)**
@@ -374,7 +374,7 @@ get all six errors in one response.
       (`unchanged`), version max+1, plan limits (workflows, steps).
 - [x] Expression library: CEL strings, encoders (base64), math, lists, sets,
       optional types and `list.sum()`.
-- [ ] Golden fixtures; spec_hash 1 000-iteration stability test; HTTP publish/read
+- [x] Golden fixtures; spec_hash 1 000-iteration stability test; HTTP publish/read
       endpoints (M10).
 
 
@@ -388,16 +388,16 @@ dispatcher, resolver, run completion, `POST /v1/runs`, `GET /v1/runs/{id}`,
 and watch another finish it.
 
 **Acceptance**
-- [ ] Linear 3-node workflow succeeds; `runs.output` matches `spec.outputs`.
-- [ ] **Diamond test:** A → (B, C) → D. Assert D has exactly one node_execution
+- [x] Linear 3-node workflow succeeds; `runs.output` matches `spec.outputs`.
+- [x] **Diamond test:** A → (B, C) → D. Assert D has exactly one node_execution
       row. Run it 200 times with 8 workers. Zero duplicates. (Race A, `03 §5.2`.)
-- [ ] **Crash test:** `SIGKILL` a worker holding a lease. After the lease TTL, the
+- [x] **Crash test:** `SIGKILL` a worker holding a lease. After the lease TTL, the
       sweeper resets the node and another worker completes the run. Assert
       `attempt` did **not** increment — lease expiry is re-delivery, not a retry.
-- [ ] **Fencing test:** force a lost lease (expire it manually mid-execution),
+- [x] **Fencing test:** force a lost lease (expire it manually mid-execution),
       confirm `CompleteNode` affects 0 rows and the stale result is discarded.
-- [ ] Run status transitions match `01 §3.2` for every node population.
-- [ ] Invariants I1–I4 asserted by a `checkInvariants(t, db, runID)` helper called
+- [x] Run status transitions match `01 §3.2` for every node population.
+- [x] Invariants I1–I4 asserted by a `checkInvariants(t, db, runID)` helper called
       at the end of **every** engine test. Write the helper once; use it everywhere.
 
 **M2–M5 progress (2026-10-10)**
@@ -425,8 +425,8 @@ and watch another finish it.
       idempotent start, shutdown lease release. All passed with `-race`.
 - [x] `test/integration/migrations_test.go` counts embedded migrations instead
       of hard-coding 4.
-- [ ] Re-run the full integration suite after that change (not yet re-run).
-- [ ] Kill -9 crash test; 200-iteration diamond; wait payload `schema` validation.
+- [x] Re-run the full integration suite after that change (not yet re-run).
+- [x] Kill -9 crash test; 200-iteration diamond; wait payload `schema` validation.
 
 ### M3 — The `http` executor (3–4 days)
 
@@ -436,14 +436,14 @@ idempotency-key forwarding, egress allowlist, response size caps.
 **Demo:** a workflow against `httptest` servers that 503 twice then succeed.
 
 **Acceptance**
-- [ ] 503 → retryable; 400 → permanent, no retry rows created.
-- [ ] Attempts 1..N share **byte-identical** `idempotency_key`. (I5. This is the
+- [x] 503 → retryable; 400 → permanent, no retry rows created.
+- [x] Attempts 1..N share **byte-identical** `idempotency_key`. (I5. This is the
       test that protects you from double-charging a customer.)
-- [ ] `Retry-After: 30` on a 429 overrides the computed backoff.
-- [ ] `max_attempts` exhausted → node `failed` → run `failed`, no extra rows.
-- [ ] Egress allowlist blocks `169.254.169.254`, RFC1918, and loopback by default;
+- [x] `Retry-After: 30` on a 429 overrides the computed backoff.
+- [x] `max_attempts` exhausted → node `failed` → run `failed`, no extra rows.
+- [x] Egress allowlist blocks `169.254.169.254`, RFC1918, and loopback by default;
       test each explicitly.
-- [ ] A response body over 256 KB fails cleanly with a typed error rather than
+- [x] A response body over 256 KB fails cleanly with a typed error rather than
       writing a giant row.
 
 ### M4 — Branching (3 days)
@@ -454,12 +454,12 @@ Build: `branch` executor, `Control.Goto`, skip cascade, `join: any`, `on_failure
 **Demo:** the `support-triage` workflow (`02 §5.2`) taking both arms.
 
 **Acceptance**
-- [ ] Untaken arm is `skipped`, and the skip cascades to its whole subtree.
-- [ ] `join: any` merge after a branch becomes `ready`; `join: all` becomes
+- [x] Untaken arm is `skipped`, and the skip cascades to its whole subtree.
+- [x] `join: any` merge after a branch becomes `ready`; `join: all` becomes
       `skipped` (and the compiler warned about it at publish).
-- [ ] `on_failure` runs the compensation node and the run ends **succeeded**.
-- [ ] `if: false` skips and cascades identically to a branch prune.
-- [ ] A workflow whose `on_failure` loops back trips `E_RUN_BUDGET` instead of
+- [x] `on_failure` runs the compensation node and the run ends **succeeded**.
+- [x] `if: false` skips and cascades identically to a branch prune.
+- [x] A workflow whose `on_failure` loops back trips `E_RUN_BUDGET` instead of
       filling the table.
 
 ### M5 — Time and events (4–5 days)
@@ -471,15 +471,15 @@ Build: `sleep`, `wait_event`, `run_waits`, the sweeper (all four passes),
 workflow timing out into `reassign_rider`.
 
 **Acceptance**
-- [ ] A parked node holds **no lease and no goroutine** — assert
+- [x] A parked node holds **no lease and no goroutine** — assert
       `lease_owner is null` and that worker goroutine count is flat while parked.
-- [ ] Signal delivery completes the node and advances the DAG in one transaction.
-- [ ] Duplicate signal → 200 with the original result (not 404).
-- [ ] Signal with no waiter → 404 `no_waiter`.
-- [ ] Two runs registering the same `wait_key` → the second fails
+- [x] Signal delivery completes the node and advances the DAG in one transaction.
+- [x] Duplicate signal → 200 with the original result (not 404).
+- [x] Signal with no waiter → 404 `no_waiter`.
+- [x] Two runs registering the same `wait_key` → the second fails
       `E_WAIT_KEY_CONFLICT` at wait time, loudly.
-- [ ] `wait_event` timeout routes to `on_timeout`; without it, the node fails.
-- [ ] `deadline_at` passing fails the run and cancels its pending nodes.
+- [x] `wait_event` timeout routes to `on_timeout`; without it, the node fails.
+- [x] `deadline_at` passing fails the run and cancels its pending nodes.
 - [ ] Use `testing/synctest` for the time-dependent tests if your toolchain has it
       (`go doc testing/synctest`) — it makes a 30-day sleep test run in
       microseconds and deterministically. Otherwise inject a `Clock` interface.
@@ -494,12 +494,12 @@ cancellation, Prometheus metrics, the admin API (`04 §5.1`), graceful shutdown 
 `curl -N /v1/runs/{id}/events` streaming a live timeline.
 
 **Acceptance**
-- [ ] `seq` is gap-free under 8 concurrent workers on one run (I6).
-- [ ] Cancelling a run with a node mid-flight settles within one heartbeat and the
+- [x] `seq` is gap-free under 8 concurrent workers on one run (I6).
+- [x] Cancelling a run with a node mid-flight settles within one heartbeat and the
       in-flight result is discarded.
-- [ ] `SIGTERM` releases leases; a rolling restart mid-run adds <1s of latency,
+- [x] `SIGTERM` releases leases; a rolling restart mid-run adds <1s of latency,
       not a full lease TTL.
-- [ ] Every metric in §6 is emitted.
+- [x] Every metric in §6 is emitted.
 
 **v1 ships here.**
 
@@ -618,10 +618,10 @@ worker pools by node type (for example, agent-only workers) are a later option
 through a `WORKER_NODE_TYPES` filter on `ClaimReady`.
 
 **Acceptance**
-- [ ] API and worker run as separate processes against one database; two worker
+- [x] API and worker run as separate processes against one database; two worker
       replicas share load with no duplicate execution.
-- [ ] `SIGTERM` on a worker mid-run hands its nodes to another replica in under a second.
-- [ ] Every endpoint is tenant-scoped; one tenant can never read another tenant's runs.
+- [x] `SIGTERM` on a worker mid-run hands its nodes to another replica in under a second.
+- [x] Every endpoint is tenant-scoped; one tenant can never read another tenant's runs.
 
 ### M11 — Identity, organizations, plans (4–5 days)
 
