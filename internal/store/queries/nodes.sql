@@ -201,3 +201,14 @@ select *
 
 -- name: GetNodeExecution :one
 select * from node_executions where id = @id;
+
+-- name: AdminStopNode :one
+-- Operator intervention: take a live node out of play as cancelled or skipped.
+-- Only non-terminal rows change, and clearing the lease token makes the fenced
+-- writes of any worker still holding the old lease affect zero rows.
+update node_executions
+   set status = @status::text, ended_at = now(),
+       lease_owner = null, lease_token = null, lease_expires_at = null
+ where id = @id
+   and status in ('ready', 'running', 'waiting')
+returning *;

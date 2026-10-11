@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const adminStopNode = `-- name: AdminStopNode :one
+update node_executions
+   set status = $1::text, ended_at = now(),
+       lease_owner = null, lease_token = null, lease_expires_at = null
+ where id = $2
+   and status in ('ready', 'running', 'waiting')
+returning id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token
+`
+
+type AdminStopNodeParams struct {
+	Status string      `json:"status"`
+	ID     pgtype.UUID `json:"id"`
+}
+
+// Operator intervention: take a live node out of play as cancelled or skipped.
+// Only non-terminal rows change, and clearing the lease token makes the fenced
+// writes of any worker still holding the old lease affect zero rows.
+func (q *Queries) AdminStopNode(ctx context.Context, arg AdminStopNodeParams) (NodeExecution, error) {
+	row := q.db.QueryRow(ctx, adminStopNode, arg.Status, arg.ID)
+	var i NodeExecution
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.TenantID,
+		&i.NodeID,
+		&i.NodeType,
+		&i.BranchKey,
+		&i.Attempt,
+		&i.Status,
+		&i.Input,
+		&i.Output,
+		&i.Error,
+		&i.Metrics,
+		&i.IdempotencyKey,
+		&i.RunAfter,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.LeaseToken,
+	)
+	return i, err
+}
+
 const cancelRunNodes = `-- name: CancelRunNodes :many
 update node_executions
    set status = 'cancelled', ended_at = now(),

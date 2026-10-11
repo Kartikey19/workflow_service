@@ -276,14 +276,17 @@ binary. It costs nothing — you already have the registry.
 Manual interventions for stuck work, so nobody hand-writes UPDATEs in production.
 Every route requires a principal with the platform-admin flag
 (`auth.Principal.PlatformAdmin`); tenant roles, including `owner`, are not enough.
-Responses use the same problem+json errors as the rest of the API. Each call
-writes a `run_events` row recording the actor.
+Responses use the same problem+json errors as the rest of the API. Node
+interventions write an `admin.node_retried` or `admin.node_skipped` row to the
+run's `run_events` recording the actor; releasing leases is logged with the
+actor and counted in `wf_sweeper_actions_total{action="lease_released"}`. With
+the development authenticator, `X-Platform-Admin: true` grants the flag.
 
 | Endpoint | Effect |
 |---|---|
-| `POST /v1/admin/node-executions/{id}/retry` | insert attempt+1 as `ready` |
-| `POST /v1/admin/node-executions/{id}/skip` | force-skip a wedged node, then advance the run |
-| `POST /v1/admin/workers/{worker_id}/release-leases` | release a crashed worker's leases so rows are reclaimed now rather than at `LeaseTTL` |
+| `POST /v1/admin/node-executions/{id}/retry` | cancel a live attempt (fencing its worker) and insert attempt+1 as `ready`; a failed attempt in a live run is retried as is. `409` for a finished run or a node that already has a later attempt |
+| `POST /v1/admin/node-executions/{id}/skip` | force-skip a ready, running or waiting node, then advance the run with normal skip semantics. `409` otherwise |
+| `POST /v1/admin/workers/{worker_id}/release-leases` | release a crashed worker's running nodes so rows are reclaimed now rather than at `LeaseTTL`; returns `{released: n}` |
 
 These go through the same fenced SQL as the engine: a zero-row write means the
 node moved on and the call returns `409`, never a forced update. Run

@@ -75,7 +75,8 @@ type Authenticator interface {
 	Authenticate(r *http.Request) (Principal, error)
 }
 
-// DevHeader trusts an X-Tenant-ID header and grants the owner role. It exists
+// DevHeader trusts an X-Tenant-ID header and grants the owner role; the
+// X-Platform-Admin: true header additionally grants platform-admin. It exists
 // for local development and tests only; production uses sessions and API keys.
 type DevHeader struct{}
 
@@ -84,5 +85,8 @@ func (DevHeader) Authenticate(r *http.Request) (Principal, error) {
 	if err != nil {
 		return Principal{}, ErrUnauthenticated
 	}
-	return Principal{TenantID: tenant, Role: RoleOwner, Via: "dev"}, nil
+	return Principal{
+		TenantID: tenant, Role: RoleOwner, Via: "dev",
+		PlatformAdmin: r.Header.Get("X-Platform-Admin") == "true",
+	}, nil
 }

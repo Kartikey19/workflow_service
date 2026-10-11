@@ -35,7 +35,7 @@ func (h *harness) apiServer(authenticator auth.Authenticator) string {
 		authenticator = auth.DevHeader{}
 	}
 	srv, err := server.New(server.Config{Address: "127.0.0.1:0", API: &api.Services{
-		Pool: h.pool, Workflows: h.publish, Runs: h.flow, Executors: h.registry, Auth: authenticator,
+		Pool: h.pool, Workflows: h.publish, Runs: h.flow, Executors: h.registry, Admin: h.flow, Auth: authenticator,
 	}}, h.pool, zap.NewNop())
 	if err != nil {
 		h.t.Fatal(err)

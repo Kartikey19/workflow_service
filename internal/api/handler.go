@@ -27,6 +27,8 @@ type HandlerFunc func(http.ResponseWriter, *http.Request, auth.Principal)
 // server package implements it.
 type Router interface {
 	Handle(pattern, role string, h HandlerFunc)
+	// HandleAdmin registers a route for platform administrators only.
+	HandleAdmin(pattern string, h HandlerFunc)
 }
 
 // WorkflowService is the workflow use-cases the handlers need.
@@ -52,6 +54,13 @@ type RunService interface {
 	Signal(ctx context.Context, tenantID pgtype.UUID, key string, payload json.RawMessage) (runs.SignalResult, error)
 }
 
+// AdminService is the operator interventions for stuck work (04 §5.1).
+type AdminService interface {
+	RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, actor string) (runs.NodeAdminResult, error)
+	SkipNode(ctx context.Context, nodeExecutionID pgtype.UUID, actor string) (runs.NodeAdminResult, error)
+	ReleaseWorkerLeases(ctx context.Context, workerID string) (int, error)
+}
+
 // ExecutorCatalog describes the registered node types.
 type ExecutorCatalog interface {
 	Descriptions() []executor.Description
@@ -64,7 +73,9 @@ type Services struct {
 	Workflows WorkflowService
 	Runs      RunService
 	Executors ExecutorCatalog
-	Auth      auth.Authenticator
+	// Admin enables the /v1/admin routes; nil leaves them unregistered.
+	Admin AdminService
+	Auth  auth.Authenticator
 	// Extra registers routes added by later milestones (identity, vault,
 	// agents, webhooks, UI).
 	Extra []func(Router)
@@ -116,6 +127,12 @@ func (h *Handler) Register(r Router) {
 
 	r.Handle("POST /v1/signals", auth.RoleEditor, h.signal)
 	r.Handle("GET /v1/executors", auth.RoleViewer, h.listExecutors)
+
+	if h.services.Admin != nil {
+		r.HandleAdmin("POST /v1/admin/node-executions/{id}/retry", h.adminRetryNode)
+		r.HandleAdmin("POST /v1/admin/node-executions/{id}/skip", h.adminSkipNode)
+		r.HandleAdmin("POST /v1/admin/workers/{worker_id}/release-leases", h.adminReleaseLeases)
+	}
 
 	for _, register := range h.services.Extra {
 		register(r)

@@ -74,7 +74,7 @@ func EgressPolicy(cfg config.EgressConfig) (netguard.Policy, error) {
 func (d *Deps) Services() *api.Services {
 	return &api.Services{
 		Pool: d.Pool, Workflows: d.Workflows, Runs: d.Runs, Executors: d.Registry,
-		Auth: d.Auth, Extra: d.Extra,
+		Admin: d.Runs, Auth: d.Auth, Extra: d.Extra,
 	}
 }
 

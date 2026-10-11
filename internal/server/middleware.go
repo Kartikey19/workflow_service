@@ -26,12 +26,18 @@ var _ api.Router = router{}
 
 // Handle registers pattern for principals with at least role.
 func (r router) Handle(pattern, role string, h api.HandlerFunc) {
-	r.mux.Handle(pattern, r.server.authed(role, h))
+	r.mux.Handle(pattern, r.server.authed(role, false, h))
+}
+
+// HandleAdmin registers pattern for platform administrators only; tenant
+// roles, including owner, are not enough.
+func (r router) HandleAdmin(pattern string, h api.HandlerFunc) {
+	r.mux.Handle(pattern, r.server.authed(auth.RoleViewer, true, h))
 }
 
 // authed resolves the principal, checks the minimum role, bounds the body and
 // records request metrics.
-func (s *Server) authed(role string, h api.HandlerFunc) http.Handler {
+func (s *Server) authed(role string, platformAdmin bool, h api.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := httpx.NewStatusRecorder(w)
@@ -41,6 +47,10 @@ func (s *Server) authed(role string, h api.HandlerFunc) http.Handler {
 		principal, err := s.services.Auth.Authenticate(r)
 		if err != nil {
 			exception.Write(recorder, r, exception.Unauthorized())
+			return
+		}
+		if platformAdmin && !principal.PlatformAdmin {
+			exception.Write(recorder, r, exception.Forbidden("this action needs the platform-admin flag"))
 			return
 		}
 		if !principal.Can(role) {
