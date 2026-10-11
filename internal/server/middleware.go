@@ -3,7 +3,9 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kartikey/workflow_service/internal/api"
@@ -38,6 +40,10 @@ func (r router) HandlePublic(pattern string, h func(http.ResponseWriter, *http.R
 		defer func() {
 			obs.HTTPRequests.WithLabelValues(req.Pattern, strconv.Itoa(recorder.Status)).Observe(time.Since(started).Seconds())
 		}()
+		if !strings.HasPrefix(req.URL.Path, "/hooks/") && !r.server.validBrowserOrigin(req) {
+			exception.Write(recorder, req, exception.Forbidden("request origin does not match this server"))
+			return
+		}
 		req.Body = http.MaxBytesReader(recorder, req.Body, maxBodyBytes)
 		h(recorder, req)
 	}))
@@ -74,4 +80,34 @@ func (s *Server) authed(role string, platformAdmin bool, h api.HandlerFunc) http
 		r.Body = http.MaxBytesReader(recorder, r.Body, maxBodyBytes)
 		h(recorder, r.WithContext(auth.WithPrincipal(r.Context(), principal)), principal)
 	})
+}
+
+// Unsafe browser requests carry an Origin. Check it before accepting session
+// cookies, including login and invite acceptance; non-browser API clients may
+// omit it. Public webhook authentication is independent of browser sessions.
+func (s *Server) validBrowserOrigin(r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return r.Header.Get("Sec-Fetch-Site") != "cross-site"
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if s.services.PublicURL != "" {
+		public, err := url.Parse(s.services.PublicURL)
+		if err != nil {
+			return false
+		}
+		host, scheme = public.Host, public.Scheme
+	}
+	return parsed.Scheme == scheme && strings.EqualFold(parsed.Host, host)
 }

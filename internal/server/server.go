@@ -14,6 +14,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/api"
 	"github.com/kartikey/workflow_service/pkg/events"
 	"github.com/kartikey/workflow_service/pkg/obs"
+	"github.com/kartikey/workflow_service/web"
 	"go.uber.org/zap"
 )
 
@@ -91,6 +92,7 @@ func New(cfg Config, readiness ReadinessChecker, logger *zap.Logger) (*Server, e
 			return nil, err
 		}
 		api.NewHandler(cfg.API, server.events, server.closing, logger).Register(router{server, mux})
+		mux.Handle("/", web.Handler())
 	}
 
 	server.httpServer = &http.Server{

@@ -33,3 +33,15 @@ check-mod:
 	go mod tidy -diff
 
 check: check-mod check-fmt check-generated vet test test-integration
+
+.PHONY: ui-install ui-build ui-check ui-browser
+ui-install:
+	npm ci --prefix web --no-audit --no-fund
+ui-build:
+	npm run build --prefix web
+ui-check:
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	cp -R web/dist "$$tmp/dist"; \
+	npm run build --prefix web && diff -ru "$$tmp/dist" web/dist
+ui-browser:
+	RUN_UI_TESTS=true go test -count=1 -tags=integration ./test/integration -run '^TestWebUIBrowser$$' -timeout=100s
