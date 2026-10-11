@@ -261,6 +261,22 @@ type TaskDetail struct {
 	WorkflowName    string             `json:"workflow_name"`
 }
 
+type Trigger struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	Name             string             `json:"name"`
+	Workflow         string             `json:"workflow"`
+	Kind             string             `json:"kind"`
+	TokenHash        []byte             `json:"token_hash"`
+	InputMode        string             `json:"input_mode"`
+	Enabled          bool               `json:"enabled"`
+	SecretCiphertext []byte             `json:"secret_ciphertext"`
+	SecretNonce      []byte             `json:"secret_nonce"`
+	SecretKeyVersion pgtype.Int4        `json:"secret_key_version"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type User struct {
 	ID            pgtype.UUID        `json:"id"`
 	Email         string             `json:"email"`

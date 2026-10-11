@@ -18,15 +18,22 @@ import (
 )
 
 type Config struct {
-	App      AppConfig
-	Log      LogConfig
-	Database DatabaseConfig
-	Worker   WorkerConfig
-	Egress   EgressConfig
-	LLM      LLMConfig
-	Auth     AuthConfig
-	Vault    VaultConfig
-	Services ServicesConfig
+	App       AppConfig
+	Log       LogConfig
+	Database  DatabaseConfig
+	Worker    WorkerConfig
+	Egress    EgressConfig
+	LLM       LLMConfig
+	Auth      AuthConfig
+	Vault     VaultConfig
+	Services  ServicesConfig
+	Assistant AssistantConfig
+}
+
+type AssistantConfig struct {
+	Provider string `env:"ASSISTANT_PROVIDER" envDefault:"anthropic"`
+	APIKey   string `env:"ASSISTANT_API_KEY"`
+	Model    string `env:"ASSISTANT_MODEL"`
 }
 
 type AppConfig struct {
@@ -191,6 +198,16 @@ func (c *Config) Validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		add("LOG_LEVEL must be debug, info, warn, or error")
+	}
+	if c.Assistant.APIKey != "" {
+		switch c.Assistant.Provider {
+		case "anthropic", "openai", "gemini":
+		default:
+			add("ASSISTANT_PROVIDER must be anthropic, openai or gemini")
+		}
+		if strings.TrimSpace(c.Assistant.Model) == "" {
+			add("ASSISTANT_MODEL is required with ASSISTANT_API_KEY")
+		}
 	}
 	if c.Database.URL == "" {
 		add("DATABASE_URL is required")

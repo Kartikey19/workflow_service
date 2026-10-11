@@ -181,6 +181,21 @@ type source struct {
 func (s *Service) sources() []source {
 	return []source{
 		{
+			table: "triggers",
+			list: func(ctx context.Context, current int32, after pgtype.UUID) ([]sealed, error) {
+				rows, err := s.q.ListTriggerSecretsToRotate(ctx, gen.ListTriggerSecretsToRotateParams{CurrentVersion: pgtype.Int4{Int32: current, Valid: true}, AfterID: after, Lim: rotateBatch})
+				out := make([]sealed, 0, len(rows))
+				for _, r := range rows {
+					out = append(out, sealed{r.ID, vault.AAD(uid.String(r.OrgID), "trigger:"+uid.String(r.ID)), uid.String(r.ID), r.SecretCiphertext, r.SecretNonce, r.SecretKeyVersion.Int32})
+				}
+				return out, err
+			},
+			replace: func(ctx context.Context, row sealed, ciphertext, nonce []byte, version int32) (int64, error) {
+				return s.q.RotateTriggerSecret(ctx, gen.RotateTriggerSecretParams{ID: row.id, Ciphertext: ciphertext, Nonce: nonce, NewVersion: pgtype.Int4{Int32: version, Valid: true}, OldVersion: pgtype.Int4{Int32: row.version, Valid: true}})
+			},
+		},
+
+		{
 			table: "secrets",
 			list: func(ctx context.Context, current int32, after pgtype.UUID) ([]sealed, error) {
 				rows, err := s.q.ListSecretsToRotate(ctx, gen.ListSecretsToRotateParams{CurrentVersion: current, AfterID: after, Lim: rotateBatch})

@@ -175,6 +175,9 @@ type Services struct {
 	// Providers and Agents enable /v1/providers and /v1/agents.
 	Providers ProviderService
 	Agents    AgentService
+	// Assistant and Triggers enable draft generation and webhook routes.
+	Assistant AssistantService
+	Triggers  TriggerService
 	// Tasks enables the /v1/tasks routes; nil leaves them unregistered.
 	Tasks TaskService
 	// Admin enables the /v1/admin routes; nil leaves them unregistered.
@@ -232,6 +235,17 @@ func (h *Handler) Register(r Router) {
 	r.Handle("POST /v1/signals", auth.RoleEditor, h.signal)
 	r.Handle("GET /v1/executors", auth.RoleViewer, h.listExecutors)
 
+	if h.services.Assistant != nil {
+		r.Handle("POST /v1/assistant/workflows", auth.RoleEditor, h.assistantWorkflow)
+	}
+	if h.services.Triggers != nil {
+		r.HandlePublic("POST /hooks/{token}", h.webhook)
+		r.Handle("POST /v1/triggers", auth.RoleAdmin, h.createTrigger)
+		r.Handle("GET /v1/triggers", auth.RoleEditor, h.listTriggers)
+		r.Handle("PATCH /v1/triggers/{id}", auth.RoleAdmin, h.updateTrigger)
+		r.Handle("DELETE /v1/triggers/{id}", auth.RoleAdmin, h.deleteTrigger)
+		r.Handle("POST /v1/triggers/{id}/rotate-token", auth.RoleAdmin, h.rotateTrigger)
+	}
 	if h.services.Tasks != nil {
 		r.Handle("GET /v1/tasks", auth.RoleViewer, h.listTasks)
 		r.Handle("GET /v1/tasks/{id}", auth.RoleViewer, h.getTask)

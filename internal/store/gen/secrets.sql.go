@@ -18,6 +18,8 @@ select key_version, sum(total)::bigint as total from (
   select key_version, count(*) from provider_connections where key_version is not null group by key_version
   union all
   select secret_key_version, count(*) from connections where secret_key_version is not null group by secret_key_version
+  union all
+  select secret_key_version,count(*) from triggers where secret_key_version is not null group by secret_key_version
 ) all_sealed group by key_version order by key_version
 `
 

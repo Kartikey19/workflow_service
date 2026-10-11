@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kartikey/workflow_service/internal/api"
@@ -17,16 +18,20 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	mcpexec "github.com/kartikey/workflow_service/internal/core/executor/mcp"
 	"github.com/kartikey/workflow_service/internal/services/agents"
+	"github.com/kartikey/workflow_service/internal/services/assistant"
 	"github.com/kartikey/workflow_service/internal/services/connections"
 	"github.com/kartikey/workflow_service/internal/services/identity"
 	"github.com/kartikey/workflow_service/internal/services/providers"
 	"github.com/kartikey/workflow_service/internal/services/runs"
 	"github.com/kartikey/workflow_service/internal/services/tasks"
+	"github.com/kartikey/workflow_service/internal/services/triggers"
 	"github.com/kartikey/workflow_service/internal/services/vault"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
 	"github.com/kartikey/workflow_service/pkg/auth"
 	"github.com/kartikey/workflow_service/pkg/llm"
 	"github.com/kartikey/workflow_service/pkg/llm/anthropic"
+	"github.com/kartikey/workflow_service/pkg/llm/gemini"
+	"github.com/kartikey/workflow_service/pkg/llm/openai"
 	"github.com/kartikey/workflow_service/pkg/netguard"
 	vaultcrypto "github.com/kartikey/workflow_service/pkg/vault"
 	"go.uber.org/zap"
@@ -45,6 +50,8 @@ type Deps struct {
 	Providers *providers.Service
 	Agents    *agents.Service
 	Conns     *connections.Service
+	Triggers  *triggers.Service
+	Assistant *assistant.Service
 	Auth      auth.Authenticator
 	Secrets   engine.SecretSource
 	Extra     []func(api.Router)
@@ -132,8 +139,24 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	deps := &Deps{
 		Pool: pool, Log: log, Registry: registry, Runs: svc, Tasks: tasks.NewService(svc),
 		Workflows: workflows.NewService(pool, registry), Identity: ident, Vault: vaultSvc,
-		Providers: providerSvc, Agents: agentSvc, Conns: connectionSvc, cfgAuth: cfg.Auth,
+		Providers: providerSvc, Agents: agentSvc, Conns: connectionSvc, Triggers: triggers.New(pool, keyring, svc), cfgAuth: cfg.Auth,
 	}
+	var assistantPlatform agent.Clients = agent.Unconfigured{}
+	if cfg.Assistant.APIKey != "" {
+		var client llm.Client
+		switch cfg.Assistant.Provider {
+		case "openai":
+			client = openai.New(cfg.Assistant.APIKey, cfg.LLM.OpenAIBaseURL, policy.Client(2*time.Minute))
+		case "gemini":
+			client = gemini.New(cfg.Assistant.APIKey, cfg.LLM.GeminiBaseURL, policy.Client(2*time.Minute))
+		case "anthropic", "":
+			client = anthropic.New(cfg.Assistant.APIKey, cfg.LLM.AnthropicBaseURL, policy.Client(2*time.Minute))
+		default:
+			return nil, fmt.Errorf("unsupported assistant provider")
+		}
+		assistantPlatform = agent.NewStatic(cfg.Assistant.Provider, client, pricing)
+	}
+	deps.Assistant = assistant.New(pool, agent.Router{Named: providerSvc, Default: assistantPlatform}, deps.Workflows, registry, cfg.Assistant.Model)
 	deps.Workflows.Plans = ident.Plans()
 	deps.Runs.Allowance = ident.Plans()
 	if keyring != nil {
@@ -162,7 +185,7 @@ func (d *Deps) Services() *api.Services {
 	return &api.Services{
 		Pool: d.Pool, Workflows: d.Workflows, Runs: d.Runs, Executors: d.Registry,
 		Tasks: d.Tasks, Admin: d.Runs, Identity: d.Identity, Vault: d.Vault,
-		Providers: d.Providers, Agents: d.Agents, Connections: d.Conns,
+		Assistant: d.Assistant, Triggers: d.Triggers, Providers: d.Providers, Agents: d.Agents, Connections: d.Conns,
 		CookieSecure: d.cfgAuth.CookieSecure, PublicURL: d.cfgAuth.PublicURL, Auth: d.Auth, Extra: d.Extra,
 	}
 }
