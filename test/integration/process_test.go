@@ -323,8 +323,10 @@ func TestCombinedAPIWorkerMigratesAndRestarts(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 	c := apiClient{t: t, base: "http://" + address, tenant: h.tenant}
 	for restart := range 2 {
+		// HTTP shutdown may need several seconds to drain newly accepted
+		// connections; the worker-only helper's 300ms grace is too short.
 		p := h.spawn("api", "HTTP_ADDRESS="+address, "API_RUNS_WORKER=true",
-			"MIGRATE_ON_START=true", "WORKER_ID=combined")
+			"MIGRATE_ON_START=true", "WORKER_ID=combined", "SHUTDOWN_GRACE=8s")
 		deadline := time.Now().Add(15 * time.Second)
 		for {
 			res, err := client.Get(c.base + "/readyz")
