@@ -14,7 +14,7 @@ or compliance processes all run on the same seven tables.
 | 01 | [Data model](01-data-model.md) | Full DDL, state machines, invariants, the query cookbook, **worked row traces** |
 | 02 | [Workflow spec](02-workflow-spec.md) | The YAML surface, expressions, every node type, the compiler, validation rules |
 | 03 | [Engine runtime](03-engine.md) | Executor interface, claim loop, dispatcher, resolver, retries, leases, sweeper |
-| 04 | [HTTP API](04-api.md) | Nine endpoints, error model, idempotency semantics |
+| 04 | [HTTP API](04-api.md) | Workflows, runs, signals, tasks and admin endpoints; error model; idempotency semantics |
 | 05 | [Implementation plan](05-implementation-plan.md) | Product scope and decisions, repo layout, engine M0–M9 and product M10–M19 with acceptance criteria, testing, ops, hosting |
 
 If you only read two: **01** for the schema and **03 §5** for the resolver. Those

@@ -19,6 +19,7 @@ import (
 
 	"github.com/kartikey/workflow_service/internal/api"
 	"github.com/kartikey/workflow_service/internal/server"
+	"github.com/kartikey/workflow_service/internal/services/tasks"
 	"github.com/kartikey/workflow_service/pkg/auth"
 	"github.com/kartikey/workflow_service/pkg/uid"
 )
@@ -35,7 +36,7 @@ func (h *harness) apiServer(authenticator auth.Authenticator) string {
 		authenticator = auth.DevHeader{}
 	}
 	srv, err := server.New(server.Config{Address: "127.0.0.1:0", API: &api.Services{
-		Pool: h.pool, Workflows: h.publish, Runs: h.flow, Executors: h.registry, Admin: h.flow, Auth: authenticator,
+		Pool: h.pool, Workflows: h.publish, Runs: h.flow, Executors: h.registry, Tasks: tasks.NewService(h.flow), Admin: h.flow, Auth: authenticator,
 	}}, h.pool, zap.NewNop())
 	if err != nil {
 		h.t.Fatal(err)

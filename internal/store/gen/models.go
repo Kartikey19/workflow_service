@@ -79,6 +79,45 @@ type RunWait struct {
 	Schema          []byte             `json:"schema"`
 }
 
+type Task struct {
+	ID              pgtype.UUID        `json:"id"`
+	TenantID        pgtype.UUID        `json:"tenant_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	NodeExecutionID pgtype.UUID        `json:"node_execution_id"`
+	WaitID          pgtype.UUID        `json:"wait_id"`
+	NodeID          string             `json:"node_id"`
+	Queue           string             `json:"queue"`
+	Form            pgtype.Text        `json:"form"`
+	Assignee        pgtype.Text        `json:"assignee"`
+	Payload         []byte             `json:"payload"`
+	DueAt           pgtype.Timestamptz `json:"due_at"`
+	ClaimedBy       pgtype.Text        `json:"claimed_by"`
+	ClaimedAt       pgtype.Timestamptz `json:"claimed_at"`
+	CompletedBy     pgtype.Text        `json:"completed_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type TaskDetail struct {
+	ID              pgtype.UUID        `json:"id"`
+	TenantID        pgtype.UUID        `json:"tenant_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	NodeExecutionID pgtype.UUID        `json:"node_execution_id"`
+	WaitID          pgtype.UUID        `json:"wait_id"`
+	NodeID          string             `json:"node_id"`
+	Queue           string             `json:"queue"`
+	Form            pgtype.Text        `json:"form"`
+	Assignee        pgtype.Text        `json:"assignee"`
+	Payload         []byte             `json:"payload"`
+	DueAt           pgtype.Timestamptz `json:"due_at"`
+	ClaimedBy       pgtype.Text        `json:"claimed_by"`
+	ClaimedAt       pgtype.Timestamptz `json:"claimed_at"`
+	CompletedBy     pgtype.Text        `json:"completed_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Status          string             `json:"status"`
+	WaitKey         string             `json:"wait_key"`
+	WorkflowName    string             `json:"workflow_name"`
+}
+
 type Workflow struct {
 	ID          pgtype.UUID        `json:"id"`
 	TenantID    pgtype.UUID        `json:"tenant_id"`

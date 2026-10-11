@@ -113,8 +113,8 @@ func Validate(document *Document) []Diagnostic {
 		}
 		if node.OnTimeout != "" {
 			checkReference(node.OnTimeout, path+".on_timeout")
-			if node.Type != "wait_event" && node.Type != "sleep" {
-				add("E_ON_TIMEOUT", "on_timeout is only supported by wait_event and sleep", node.ID, path+".on_timeout")
+			if node.Type != "wait_event" && node.Type != "sleep" && node.Type != "human_task" {
+				add("E_ON_TIMEOUT", "on_timeout is only supported by wait_event, sleep and human_task", node.ID, path+".on_timeout")
 			}
 		}
 	}

@@ -59,7 +59,7 @@ dispatches on it. Reject unknown values.
     retry_on: [timeout, upstream_5xx, rate_limited]  # optional whitelist
   timeout: 30s              # optional. per-attempt deadline
   on_failure: refund_stock  # optional. node id to run instead of failing the run
-  on_timeout: reassign      # optional. wait_event / sleep only
+  on_timeout: reassign      # optional. wait_event / sleep / human_task only
 ```
 
 ### Field semantics
@@ -320,8 +320,14 @@ run-level `timeout` is far too coarse to bound agent spend.
 ```
 
 Implemented as `wait_event` with key `task:${run.id}:${node.id}` plus a row in a
-`tasks` read-model table for the worklist UI. `POST /v1/tasks/{id}/complete` is
-sugar over the signals endpoint. Same wait table, same timeout path.
+`tasks` read-model table for the worklist. `sla` is the wait's timeout (default
+7 days), so `on_timeout` escalates exactly like a `wait_event`. The task is
+completed with `POST /v1/tasks/{id}/complete`, a thin layer over the signals
+endpoint, and its payload becomes the node's output. `queue` is required; `form`
+names a form for the UI, `assignee` restricts who may claim or complete, and
+`payload` is shown to whoever works the task. See `04 §4.2`.
+
+---
 
 ### 4.8 `noop` (M2)
 

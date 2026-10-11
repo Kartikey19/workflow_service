@@ -532,6 +532,24 @@ with `LLM_PRICING_JSON`. Without `output_schema` the output is `{"text": ...}`.
 Task read-model table, queues, claim/complete API, SLA escalation via the existing
 timeout path.
 
+**Built (2026-10-11).** Migration `0008_tasks.sql` adds `tasks` and a
+`task_details` view that derives status from the wait (open, claimed, completed,
+expired, cancelled), so timeouts and cancelled runs need no extra bookkeeping.
+`executor.WaitSpec` carries an optional `TaskSpec`; the engine writes the task row
+in the same transaction as the wait. `human_task` is a built-in node,
+`internal/services/tasks` is the service (list, get, claim, release, complete over
+the signal path) and `/v1/tasks` the routes (`04 §4.2`). `on_timeout` is now also
+allowed on `human_task`.
+
+**Acceptance**
+- [x] A task appears in its queue, can be claimed, released and completed, and its
+      payload becomes the node's output.
+- [x] An SLA timeout escalates through `on_timeout`; the task shows as expired and
+      can no longer be completed.
+- [x] Assigned tasks are workable only by the assignee or an admin; another
+      organization never sees a task.
+- [x] The healthcare example (`02 §5.3`) runs end to end, including the SLA path.
+
 ### M9 — `foreach` and sub-workflows (1–2 weeks)
 
 Where `branch_key` finally earns the column you added in M0. Fan-out inserts N
@@ -925,9 +943,9 @@ production.
 
 ## 10. Definition of done for v1
 
-- [ ] All three example workflows in `02 §5` run end to end against real HTTP
-      upstreams, including the timeout and compensation paths. Delivery (5.1)
-      and Agentic (5.2) are done; Healthcare (5.3) waits for M8. The lint already compiles all three.
+- [x] All three example workflows in `02 §5` run end to end against real HTTP
+      upstreams, including the timeout and compensation paths (delivery, agentic and healthcare
+      each have acceptance tests, and the lint compiles all three).
 - [x] Invariants I1–I7 asserted by `checkInvariants` in every engine test.
 - [x] 8-worker diamond test, 200 iterations, zero duplicates, with `-race`.
 - [x] Kill -9 chaos test: every run terminal, no duplicate `succeeded` rows.

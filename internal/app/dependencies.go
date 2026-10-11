@@ -14,6 +14,7 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	"github.com/kartikey/workflow_service/internal/services/runs"
+	"github.com/kartikey/workflow_service/internal/services/tasks"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
 	"github.com/kartikey/workflow_service/pkg/auth"
 	"github.com/kartikey/workflow_service/pkg/llm"
@@ -29,6 +30,7 @@ type Deps struct {
 	Registry  *executor.Registry
 	Workflows *workflows.Service
 	Runs      *runs.Service
+	Tasks     *tasks.Service
 	Auth      auth.Authenticator
 	Secrets   engine.SecretSource
 	Extra     []func(api.Router)
@@ -54,7 +56,7 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 		svc.MaxNodesPerRun = cfg.Worker.MaxNodesPerRun
 	}
 	deps := &Deps{
-		Pool: pool, Log: log, Registry: registry, Runs: svc,
+		Pool: pool, Log: log, Registry: registry, Runs: svc, Tasks: tasks.NewService(svc),
 		Workflows: workflows.NewService(pool, registry),
 	}
 	if cfg.App.Environment == "production" {
@@ -77,7 +79,7 @@ func EgressPolicy(cfg config.EgressConfig) (netguard.Policy, error) {
 func (d *Deps) Services() *api.Services {
 	return &api.Services{
 		Pool: d.Pool, Workflows: d.Workflows, Runs: d.Runs, Executors: d.Registry,
-		Admin: d.Runs, Auth: d.Auth, Extra: d.Extra,
+		Tasks: d.Tasks, Admin: d.Runs, Auth: d.Auth, Extra: d.Extra,
 	}
 }
 

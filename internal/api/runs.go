@@ -126,7 +126,8 @@ func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, p auth.Princi
 	}
 	var next *string
 	if more {
-		cursor := encodeCursor(rows[len(rows)-1].Run)
+		last := rows[len(rows)-1].Run
+		cursor := encodeCursor(last.CreatedAt, last.ID)
 		next = &cursor
 	}
 	items := make([]map[string]any, 0, len(rows))

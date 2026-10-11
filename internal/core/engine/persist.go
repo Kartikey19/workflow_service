@@ -110,14 +110,26 @@ func (d *Dispatcher) persist(parent, ctx context.Context, ne gen.NodeExecution, 
 			}
 			payload := map[string]any{"until": o.park.until.UTC().Format(time.RFC3339)}
 			if o.park.wait != nil {
+				waitID := uid.New()
 				if err := q.InsertWait(ctx, gen.InsertWaitParams{
-					ID: uid.New(), TenantID: ne.TenantID, RunID: ne.RunID, NodeExecutionID: ne.ID,
+					ID: waitID, TenantID: ne.TenantID, RunID: ne.RunID, NodeExecutionID: ne.ID,
 					WaitKey: o.park.wait.Key, ExpiresAt: pgtype.Timestamptz{Time: o.park.wait.Expires, Valid: true},
-					Schema: waitSchema(o.park.wait.Schema),
+					Schema: optionalJSON(o.park.wait.Schema),
 				}); err != nil {
 					return fmt.Errorf("register wait: %w", err)
 				}
 				payload["key"] = o.park.wait.Key
+				if task := o.park.wait.Task; task != nil {
+					taskID := uid.New()
+					if err := q.InsertTask(ctx, gen.InsertTaskParams{
+						ID: taskID, TenantID: ne.TenantID, RunID: ne.RunID, NodeExecutionID: ne.ID, WaitID: waitID,
+						NodeID: ne.NodeID, Queue: task.Queue, Form: optionalText(task.Form), Assignee: optionalText(task.Assignee),
+						Payload: optionalJSON(task.Payload), DueAt: pgtype.Timestamptz{Time: o.park.wait.Expires, Valid: true},
+					}); err != nil {
+						return fmt.Errorf("register task: %w", err)
+					}
+					payload["task_id"] = uid.String(taskID)
+				}
 			}
 			if err := runs.AppendEvent(ctx, q, run, "node.waiting", ne.NodeID, ne.Attempt, payload); err != nil {
 				return err
@@ -244,8 +256,12 @@ func encodeMetrics(metrics map[string]any, duration time.Duration) []byte {
 	return encoded
 }
 
-// waitSchema stores a wait_event payload schema; JSON null means none.
-func waitSchema(schema json.RawMessage) []byte {
+// optionalJSON stores a wait_event payload schema; JSON null means none.
+func optionalText(value string) pgtype.Text {
+	return pgtype.Text{String: value, Valid: value != ""}
+}
+
+func optionalJSON(schema json.RawMessage) []byte {
 	if len(schema) == 0 || string(schema) == "null" {
 		return nil
 	}

@@ -62,6 +62,17 @@ type WaitSpec struct {
 	Key     string
 	Expires time.Time
 	Schema  json.RawMessage // optional; validates the signal payload
+	// Task, when set, makes the wait a human task: the engine records a worklist
+	// row in the same transaction that registers the wait (02 §4.7).
+	Task *TaskSpec
+}
+
+// TaskSpec describes a human task for the worklist read model.
+type TaskSpec struct {
+	Queue    string
+	Form     string
+	Assignee string
+	Payload  json.RawMessage // shown to whoever works the task
 }
 
 // Retryable: transient. The engine will schedule attempt+1 if budget remains.

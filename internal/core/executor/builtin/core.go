@@ -1,5 +1,5 @@
-// Package builtin implements the engine's built-in node types: transform, branch,
-// sleep and wait_event. Control flow is expressed by returning executor.Control,
+// Package builtin implements the engine's built-in node types: noop, transform, branch,
+// sleep, wait_event and human_task. Control flow is expressed by returning executor.Control,
 // never by touching engine state (03 §3).
 package builtin
 
@@ -16,7 +16,7 @@ import (
 
 // All returns the built-in executors.
 func All() []executor.Executor {
-	return []executor.Executor{Noop{}, Transform{}, Branch{}, Sleep{}, WaitEvent{}}
+	return []executor.Executor{Noop{}, Transform{}, Branch{}, Sleep{}, WaitEvent{}, HumanTask{}}
 }
 
 // Transform returns its resolved value: pure CEL glue, no I/O (02 §4.2).

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/kartikey/workflow_service/internal/store/gen"
 	"github.com/kartikey/workflow_service/pkg/exception"
 	"github.com/kartikey/workflow_service/pkg/uid"
 	"net/http"
@@ -13,20 +12,20 @@ import (
 	"time"
 )
 
-// runCursor is the opaque keyset cursor over (created_at, id) descending.
-type runCursor struct {
+// pageCursor is the opaque keyset cursor over (created_at, id) descending.
+type pageCursor struct {
 	CreatedAt time.Time `json:"t"`
 	ID        string    `json:"id"`
 }
 
-func encodeCursor(run gen.Run) string {
-	data, _ := json.Marshal(runCursor{CreatedAt: run.CreatedAt.Time, ID: uid.String(run.ID)})
+func encodeCursor(createdAt pgtype.Timestamptz, id pgtype.UUID) string {
+	data, _ := json.Marshal(pageCursor{CreatedAt: createdAt.Time, ID: uid.String(id)})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
 func decodeCursor(text string) (pgtype.Timestamptz, pgtype.UUID, error) {
 	data, err := base64.RawURLEncoding.DecodeString(text)
-	var cursor runCursor
+	var cursor pageCursor
 	if err == nil {
 		err = json.Unmarshal(data, &cursor)
 	}

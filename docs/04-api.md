@@ -1,6 +1,7 @@
 # 04 — HTTP API
 
-Small surface. Nine tenant endpoints ship v1, plus a small admin surface (§5.1). Everything is JSON except workflow
+Small surface: workflows, runs, signals, tasks and the executor catalogue, plus a
+small admin surface (§5.1). Everything is JSON except workflow
 publishing, which takes YAML.
 
 Base path `/v1`. Auth is out of scope for this document — assume middleware
@@ -251,11 +252,26 @@ already-fulfilled wait returns **200** with the original result rather than 404.
 Without this, a courier's at-least-once webhook produces spurious 404s and
 someone will eventually "fix" it by removing the retry.
 
-### 4.2 `POST /v1/tasks/{task_id}/complete` (M8)
+### 4.2 Tasks (M8)
 
-Sugar over §4.1 for human tasks; resolves `task_id` to its wait key. Body is the
-form payload. Also `POST /v1/tasks/{id}/claim` and `GET /v1/tasks?queue=rn-review`
-for the worklist.
+The worklist for `human_task` nodes. A task's state is derived from the wait it
+parks on, so completing one is delivering that wait's signal and an SLA timeout
+is the wait's ordinary timeout path.
+
+| Endpoint | Role | Purpose |
+|---|---|---|
+| `GET /v1/tasks` | viewer | the worklist, newest first, keyset paginated (`limit`, `after`); filters `queue`, `status`, `assignee`, and `mine=true` for tasks the caller claimed |
+| `GET /v1/tasks/{id}` | viewer | one task: queue, form, assignee, payload, `due_at`, claim, status |
+| `POST /v1/tasks/{id}/claim` | editor | reserve an open task; claiming your own task again is a no-op |
+| `POST /v1/tasks/{id}/release` | editor | give a claimed task back; only the claimer or an admin |
+| `POST /v1/tasks/{id}/complete` | editor | body `{"payload": ...}`; the payload becomes the node's output and the run advances |
+
+`status` is `open`, `claimed`, `completed`, `expired` (the SLA passed) or
+`cancelled` (the run ended). A task with an `assignee` can only be claimed or
+completed by that person or an organization admin; an admin may also complete a
+task someone else claimed. Errors: `409 task_claimed`, `409 task_closed`
+(completed, expired or cancelled), `403` for a non-assignee, `404` for another
+organization's task.
 
 ---
 
@@ -338,7 +354,7 @@ gRPC entry point.
   batch endpoint then — not before you have the numbers.
 - **No CLI.** Everything, including operator interventions, is reachable over
   HTTP; use `curl` or any HTTP client.
-- **No GraphQL.** Nine tenant endpoints.
+- **No GraphQL.**
 
 ---
 

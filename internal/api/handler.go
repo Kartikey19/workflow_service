@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kartikey/workflow_service/internal/core/executor"
 	"github.com/kartikey/workflow_service/internal/services/runs"
+	"github.com/kartikey/workflow_service/internal/services/tasks"
 	"github.com/kartikey/workflow_service/internal/services/workflows"
 	"github.com/kartikey/workflow_service/internal/store/gen"
 	"github.com/kartikey/workflow_service/pkg/auth"
@@ -54,6 +55,15 @@ type RunService interface {
 	Signal(ctx context.Context, tenantID pgtype.UUID, key string, payload json.RawMessage) (runs.SignalResult, error)
 }
 
+// TaskService is the human-task worklist use-cases the handlers need.
+type TaskService interface {
+	List(ctx context.Context, f tasks.Filter, limit int) ([]gen.TaskDetail, bool, error)
+	Get(ctx context.Context, tenantID, id pgtype.UUID) (gen.TaskDetail, error)
+	Claim(ctx context.Context, tenantID, id pgtype.UUID, actor tasks.Actor) (gen.TaskDetail, error)
+	Release(ctx context.Context, tenantID, id pgtype.UUID, actor tasks.Actor) (gen.TaskDetail, error)
+	Complete(ctx context.Context, tenantID, id pgtype.UUID, actor tasks.Actor, payload json.RawMessage) (runs.SignalResult, error)
+}
+
 // AdminService is the operator interventions for stuck work (04 §5.1).
 type AdminService interface {
 	RetryNode(ctx context.Context, nodeExecutionID pgtype.UUID, actor string) (runs.NodeAdminResult, error)
@@ -73,6 +83,8 @@ type Services struct {
 	Workflows WorkflowService
 	Runs      RunService
 	Executors ExecutorCatalog
+	// Tasks enables the /v1/tasks routes; nil leaves them unregistered.
+	Tasks TaskService
 	// Admin enables the /v1/admin routes; nil leaves them unregistered.
 	Admin AdminService
 	Auth  auth.Authenticator
@@ -127,6 +139,14 @@ func (h *Handler) Register(r Router) {
 
 	r.Handle("POST /v1/signals", auth.RoleEditor, h.signal)
 	r.Handle("GET /v1/executors", auth.RoleViewer, h.listExecutors)
+
+	if h.services.Tasks != nil {
+		r.Handle("GET /v1/tasks", auth.RoleViewer, h.listTasks)
+		r.Handle("GET /v1/tasks/{id}", auth.RoleViewer, h.getTask)
+		r.Handle("POST /v1/tasks/{id}/claim", auth.RoleEditor, h.claimTask)
+		r.Handle("POST /v1/tasks/{id}/release", auth.RoleEditor, h.releaseTask)
+		r.Handle("POST /v1/tasks/{id}/complete", auth.RoleEditor, h.completeTask)
+	}
 
 	if h.services.Admin != nil {
 		r.HandleAdmin("POST /v1/admin/node-executions/{id}/retry", h.adminRetryNode)
