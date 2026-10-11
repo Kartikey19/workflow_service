@@ -59,7 +59,9 @@ export function Workflows({
   }, [detail.data]);
   useEffect(() => {
     if (mode !== "editor" || !editable) return;
-    setSpec(null);
+    // Keep the last result while checking an edit: blurring a pending field
+    // must not disable Publish before its click fires. The server validates
+    // the current draft again when publishing.
     setDiagnostics([]);
     setValidating(true);
     const abort = new AbortController();
@@ -70,12 +72,14 @@ export function Workflows({
           setDiagnostics(r.warnings || []);
         })
         .catch((e) => {
-          if (!abort.signal.aborted)
+          if (!abort.signal.aborted) {
+            setSpec(null);
             setDiagnostics(
               e instanceof APIError
                 ? e.body.errors || [{ message: e.message }]
                 : [{ message: e.message }],
             );
+          }
         })
         .finally(() => {
           if (!abort.signal.aborted) setValidating(false);
@@ -392,7 +396,7 @@ export function Workflows({
               {editable && (
                 <AsyncButton
                   primary
-                  disabled={!spec || validating || blank}
+                  disabled={!spec || blank}
                   run={() => publish(source)}
                 >
                   Publish version

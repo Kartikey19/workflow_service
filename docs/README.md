@@ -17,7 +17,7 @@ or compliance processes all run on the same seven tables.
 | 04 | [HTTP API](04-api.md) | Workflows, runs, signals, tasks and admin endpoints; error model; idempotency semantics |
 | 05 | [Implementation plan](05-implementation-plan.md) | Product scope and decisions, repo layout, engine M0–M9 and product M10–M19 with acceptance criteria, testing, ops, hosting |
 | 06 | [Operations runbook](06-runbook.md) | Local UI, deployment baseline, releases, backups, restore, observability and key rotation |
-| 07 | [Deployment guide](07-deployment.md) | Hosting cost, Neon, GoDaddy DNS, environment separation and CI/CD setup |
+| 07 | [Deployment guide](07-deployment.md) | App Platform, DO Container Registry, Neon, CI/CD and rollback |
 | 08 | [Custom code nodes](08-code-nodes.md) | Scope, contract, sandbox options, threat model and milestones for running Python, TypeScript and Go in a workflow |
 
 If you only read two: **01** for the schema and **03 §5** for the resolver. Those
@@ -123,7 +123,7 @@ and `-- +goose Down` markers, wrapping dollar-quoted function bodies in
 `-- +goose StatementBegin` / `-- +goose StatementEnd`. Do not edit applied files.
 
 Database-node tests also run against MySQL when `MYSQL_URL` is set (a go-sql-driver DSN,
-e.g. `user:pass@tcp(127.0.0.1:3306)/dbname`); CI provides one.
+e.g. `user:pass@tcp(127.0.0.1:3306)/dbname`).
 
 For integration tests, export `DATABASE_URL` (or source your trusted `.env` with
 `set -a; source .env; set +a`) and run `make test-integration`.
@@ -137,9 +137,13 @@ make generate         # regenerate sqlc after query changes
 make check            # formatting, sqlc freshness, vet, unit + integration tests
 ```
 
-GitHub Actions runs these checks with a PostgreSQL 16 service, checks the migration
-command twice, and runs integration tests with the race detector. The workflow
-will run on pushes and pull requests once this project is in a GitHub repository.
+GitHub Actions runs module, formatting, sqlc, vet, unit and unit race checks,
+browser tests, migration checks, the combined API/worker startup smoke test and
+container acceptance. PostgreSQL 16 remains for these smoke checks. The full
+database integration suites,
+including the race run, are commented out in `.github/workflows/ci.yml` and remain
+available locally with `make test-integration` or
+`go test -race -count=1 -tags=integration ./test/integration`.
 
 ## Application lifecycle
 

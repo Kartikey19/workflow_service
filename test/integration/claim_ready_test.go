@@ -156,6 +156,9 @@ func newEmptyPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("parse test DATABASE_URL: %v", err)
 	}
+	// Concurrency tests run eight workers, each holding a LISTEN connection.
+	// Reserve room for their queries independently of the runner's CPU count.
+	testConfig.MaxConns = 16
 	if testConfig.ConnConfig.RuntimeParams == nil {
 		testConfig.ConnConfig.RuntimeParams = make(map[string]string)
 	}

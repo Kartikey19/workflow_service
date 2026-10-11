@@ -28,6 +28,11 @@ func Main(name, mode string) int {
 		fmt.Fprintf(os.Stderr, "%s: load configuration: %v\n", name, err)
 		return 1
 	}
+	if mode == "api" && cfg.App.MigrateOnStart {
+		if code := Migrate(name); code != 0 {
+			return code
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Restore normal signal handling when graceful shutdown begins, so a second

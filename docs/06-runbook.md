@@ -1,9 +1,8 @@
 # Operations runbook
 
-The cost-focused remote setup is described in [Deployment](07-deployment.md):
-one API and worker, Neon, GHCR, Caddy, and separate staging/production
-configuration. Staging is on demand and can be stopped independently. No cloud
-resource or deployment has been created by the local tests.
+The default remote setup is described in [Deployment](07-deployment.md): one
+App Platform container serving the API/UI and worker, external PostgreSQL, and
+images published to DigitalOcean Container Registry by GitHub Actions.
 
 ## Local application
 
@@ -31,59 +30,43 @@ Node is needed to rebuild frontend changes.
 
 ## Remote startup, release and rollback
 
-Follow [the deployment setup checklist](07-deployment.md#1-create-the-neon-databases)
-for Neon direct connections with verified TLS, private environment files,
-GoDaddy records, the shared Caddy edge and GitHub environment secrets. The
-remote configuration lives in `deploy/environments/staging/.env` and
-`deploy/environments/production/.env`; do not use the local repository `.env`.
-API/worker ports are unpublished. Start the shared `deploy/edge` stack once,
-then deploy each application environment independently.
+Follow [the deployment guide](07-deployment.md) for the one-time registry,
+Neon, App Platform runtime secrets and GitHub environment configuration.
+`API_RUNS_WORKER=true` combines the API and worker in one process;
+`MIGRATE_ON_START=true` applies migrations before serving requests, under a
+PostgreSQL session lock. Remove both bootstrap administrator variables after
+initial sign-in. Keep the vault key persistent across deploys.
 
-**Build release image** validates the project and publishes a digest to GHCR.
-Run **Deploy staging** with that digest, verify sign-in/workflows/events, then
-run **Deploy production** with the same digest. Production is manual and honors
-configured environment reviewers. Run **Deploy staging**, action `stop`, when
-testing ends so its Neon database can suspend. Auto staging deployment is off
-unless the repository variable `STAGING_AUTO_DEPLOY=true` is explicitly set.
+**Build and deploy App Platform** checks the project, publishes an immutable
+DOCR digest and deploys production on each push to `main`. For a code rollback,
+run **Deploy production** with a previous retained DOCR `image@sha256:digest`.
+Optional **Deploy staging** uses the staging GitHub environment's separate app
+ID and database. Migrations remain additive and compatible with the previous
+image; do not reverse deployed schema migrations.
 
-The equivalent host commands, from `/opt/workflow/deploy`, are:
+CI reads the current cloud app spec and updates only the `web` image. Change
+runtime secrets, domains, capacity and other settings directly in App Platform;
+repository template changes are not automatically applied to existing apps.
+The job waits for cloud deployment readiness. On failure or timeout, inspect
+the app's deployment/runtime logs and active digest before retrying. Verify
+sign-in, a small known run and its events after a release. Execution can repeat
+external side effects after failures; use connector idempotency and request
+Idempotency-Key where supported. SSE clients reconnect/replay after shutdown.
 
-```sh
-./env-deploy.sh staging ghcr.io/<owner>/<repository>@sha256:<digest>
-./env-deploy.sh production ghcr.io/<owner>/<repository>@sha256:<digest>
-./env-deploy.sh staging stop
-```
-
-The script validates configuration, pulls the digest, runs migrations before
-replacement and waits for API/worker readiness. A migration failure leaves the
-application untouched. This inexpensive single-replica layout has a brief API
-interruption during replacement; it does not provide rolling availability.
-If readiness fails after replacement, the old successful digest remains in
-`.env`, but containers may already run the failed image. Inspect the stack and
-redeploy the previous compatible digest. Successful releases record the old
-and new digests in the selected environment's `.release-history`.
-
-Migrations must remain additive and compatible with the previous image. Roll
-back **code** through the same workflow/script using a previous digest; do not
-reverse deployed schema migrations. Verify sign-in, a small known run and its
-events after every release. Execution can repeat external side effects after
-failures; use connector idempotency and request Idempotency-Key where supported.
-SSE clients reconnect/replay after API shutdown.
-
-The remote template limits each pool to four connections and each worker to
-four concurrent nodes initially. Dedicated database listeners also consume
-connections. Tune capacity against Neon, upstream services and measured host
-memory before scaling. Continuous polling/readiness keeps Neon active; a full
-month at 0.25 CU exceeds Free's 100 CU-hour allowance. See the deployment guide's
-[budget calculation](07-deployment.md#neon-free-and-always-on-workers).
+The template has one 512 MiB instance, six pooled database connections and four
+concurrent worker nodes. Dedicated listeners also consume connections. Measure
+capacity before scaling. Continuous polling/readiness keeps Neon active; plan
+for always-on database compute. App Platform provides ingress/TLS and runtime
+logs; the Docker Compose backup and Alloy stacks below require independent
+hosting/configuration.
 
 ### Original self-hosted PostgreSQL deployment
 
 `deploy/compose.yaml`, `bootstrap.sh` and `deploy.sh` remain the larger baseline
 and the target of the disposable local HTTPS/backup drill. They run local
 PostgreSQL, two API replicas, workers and Caddy, with a separate private
-`deploy/.env`. They are an alternative to the Neon setup, not the environment
-workflows' runtime stack. `bootstrap.sh` initializes that file and database;
+`deploy/.env`. They are an alternative to App Platform and are not the GitHub
+release workflows' runtime stack. `bootstrap.sh` initializes that file and database;
 `deploy.sh <digest>` replaces API replicas in sequence and drains worker pools.
 Do not start its Caddy beside `deploy/edge` on the same ports. The backup and
 Alloy commands below apply to this original layout unless stated otherwise.

@@ -222,6 +222,27 @@ func TestLoadConfigDefaultsAndDedicatedMode(t *testing.T) {
 	}
 }
 
+// One container can serve the API and run the worker, and its worker settings
+// are then checked like a dedicated worker's.
+func TestAPIRunsWorker(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("DATABASE_URL", "postgres://localhost/workflow")
+	t.Setenv("API_RUNS_WORKER", "")
+	plain, err := LoadConfig("api")
+	if err != nil || plain.RunsWorker() {
+		t.Fatalf("api alone: runs worker = %v, %v", plain.RunsWorker(), err)
+	}
+	t.Setenv("API_RUNS_WORKER", "true")
+	both, err := LoadConfig("api")
+	if err != nil || !both.RunsWorker() {
+		t.Fatalf("API_RUNS_WORKER: runs worker = %v, %v", both.RunsWorker(), err)
+	}
+	t.Setenv("WORKER_CONCURRENCY", "0")
+	if _, err := LoadConfig("api"); err == nil || !strings.Contains(err.Error(), "WORKER_CONCURRENCY") {
+		t.Fatalf("invalid worker settings = %v, want them rejected", err)
+	}
+}
+
 func TestLoadConfigRequiresDatabaseURL(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("DATABASE_URL", "")

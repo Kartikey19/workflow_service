@@ -55,6 +55,9 @@ func (d *Dispatcher) Run(parent context.Context, ne gen.NodeExecution) {
 	obs.NodesClaimed.Inc()
 	ctx, stopHeartbeat, err := d.startHeartbeat(parent, ne)
 	if err != nil {
+		if errors.Is(err, errLeaseLost) {
+			d.cancelStale(parent, ne, nil)
+		}
 		d.logLeaseError(parent, ne, err)
 		return
 	}
