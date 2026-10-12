@@ -62,7 +62,7 @@ test("invite to successful agent workflow, administration, and responsive naviga
   await page.getByRole("button", { name: "New agent", exact: true }).click();
   await page.getByLabel("Agent name", { exact: true }).fill("browser-agent");
   await page
-    .getByLabel("Provider connection", { exact: true })
+    .getByLabel("Provider account", { exact: true })
     .selectOption("browser-provider");
   await page.getByLabel("Model", { exact: true }).fill("fake-model");
   await page
@@ -86,6 +86,11 @@ test("invite to successful agent workflow, administration, and responsive naviga
   await page
     .getByLabel("Agent prompt", { exact: true })
     .fill("Summarize the test.");
+  await page.getByLabel("Override model", { exact: true }).check();
+  await page.getByLabel("Model", { exact: true }).fill("fake-model-override");
+  await expect(
+    page.getByLabel("Provider account", { exact: true }),
+  ).toBeDisabled();
   const publication = page.waitForRequest(
     (request) =>
       request.method() === "POST" &&
@@ -94,9 +99,15 @@ test("invite to successful agent workflow, administration, and responsive naviga
   await page
     .getByRole("button", { name: "Publish version", exact: true })
     .click();
-  expect((await publication).postDataJSON().yaml).toContain(
-    "Summarize the test.",
-  );
+  const publishedYAML = (await publication).postDataJSON().yaml;
+  expect(publishedYAML).toContain("Summarize the test.");
+  expect(publishedYAML).toContain("model: fake-model-override");
+  expect(publishedYAML).not.toContain("connection:");
+  const unchangedAgent = await (
+    await page.request.get("/be/v1/agents/browser-agent")
+  ).json();
+  expect(unchangedAgent.model).toBe("fake-model");
+  expect(unchangedAgent.connection).toBe("browser-provider");
   await expect(
     page.getByRole("heading", { name: "Run browser-workflow", exact: true }),
   ).toBeVisible();
@@ -273,7 +284,7 @@ test("typed agent inputs, provider test-before-save, live validation and version
   await page.getByRole("button", { name: "New agent", exact: true }).click();
   await page.getByLabel("Agent name", { exact: true }).fill("typed-agent");
   await page
-    .getByLabel("Provider connection", { exact: true })
+    .getByLabel("Provider account", { exact: true })
     .selectOption("browser-second-provider");
   await page.getByLabel("Model", { exact: true }).fill("fake-model");
   await page
@@ -418,7 +429,7 @@ test("shared connectors, explicit agent permissions, and visual workflow builder
   await page.getByRole("button", { name: "New agent", exact: true }).click();
   await page.getByLabel("Agent name", { exact: true }).fill("connector-reader");
   await page
-    .getByLabel("Provider connection", { exact: true })
+    .getByLabel("Provider account", { exact: true })
     .selectOption("browser-provider");
   await page.getByLabel("Model", { exact: true }).fill("fake-model");
   await page
@@ -696,4 +707,283 @@ test("a platform administrator invites a customer organization", async ({
     page.getByRole("cell", { name: "Browser Co", exact: true }),
   ).toBeVisible();
   await shot(page, "05-platform");
+});
+
+test("set up two client accounts inside a fresh workflow and keep its draft", async ({
+  page,
+}) => {
+  await page.goto("/ui/");
+  await page
+    .getByLabel("Email", { exact: true })
+    .fill("freshsetup@example.com");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("owner-long-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("two-client-workflow");
+  await addStep(page, "AI step");
+  await page.getByLabel("Model", { exact: true }).fill("fake-model");
+  await page
+    .getByLabel("Agent prompt", { exact: true })
+    .fill("Keep this prompt while connecting accounts.");
+  await page
+    .getByLabel("Instructions", { exact: true })
+    .fill("Keep these instructions too.");
+  for (const name of ["client-one", "client-two"]) {
+    await page
+      .getByRole("button", { name: "Add provider account", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "Add provider account",
+      exact: true,
+    });
+    await dialog.getByLabel("Search providers").fill("compatible");
+    await dialog
+      .getByRole("radio", { name: "Custom (OpenAI-compatible)", exact: true })
+      .click();
+    await dialog.getByLabel("Connection name", { exact: true }).fill(name);
+    await dialog
+      .getByLabel("Base URL", { exact: true })
+      .fill(process.env.UI_TEST_PROVIDER_URL!);
+    await dialog
+      .getByLabel("API key", { exact: true })
+      .fill(`${name}-fake-key`);
+    await dialog
+      .getByRole("button", { name: "Test and save", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/ui\/workflows$/);
+    await expect(
+      page.getByLabel("Provider account", { exact: true }),
+    ).toHaveValue(name);
+    await expect(page.getByLabel("Model", { exact: true })).toHaveValue(
+      "fake-model",
+    );
+    await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
+      "Keep this prompt while connecting accounts.",
+    );
+  }
+  await page
+    .getByRole("button", { name: "Add provider account", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close setup" })
+    .press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Add provider account", exact: true }),
+  ).toBeFocused();
+  // Closing a pending save must abort it rather than update this draft later.
+  let releaseSave!: () => void;
+  const heldSave = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route("**/be/v1/providers", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await heldSave;
+    await route
+      .fulfill({
+        status: 201,
+        json: {
+          id: "late-account",
+          name: "cancelled-account",
+          provider: "openai_compatible",
+        },
+      })
+      .catch(() => {});
+  });
+  await page
+    .getByRole("button", { name: "Add provider account", exact: true })
+    .click();
+  const cancelled = page.getByRole("dialog", {
+    name: "Add provider account",
+    exact: true,
+  });
+  await cancelled
+    .getByLabel("Connection name", { exact: true })
+    .fill("cancelled-account");
+  await cancelled
+    .getByLabel("API key", { exact: true })
+    .fill("fixture-only-key");
+  const pendingSave = page.waitForRequest(
+    (r) =>
+      r.method() === "POST" && new URL(r.url()).pathname === "/be/v1/providers",
+  );
+  await cancelled
+    .getByRole("button", { name: "Test and save", exact: true })
+    .click();
+  await pendingSave;
+  const cancelledRequest = page.waitForEvent("requestfailed", {
+    predicate: (r) =>
+      r.method() === "POST" && new URL(r.url()).pathname === "/be/v1/providers",
+  });
+  await cancelled.getByRole("button", { name: "Close setup" }).click();
+  await cancelledRequest;
+  releaseSave();
+  await page.unroute("**/be/v1/providers");
+  await expect(
+    page.getByLabel("Provider account", { exact: true }),
+  ).toHaveValue("client-two");
+  await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
+    "Keep this prompt while connecting accounts.",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "Add provider account", exact: true })
+    .click();
+  const mobileDialog = page.getByRole("dialog", {
+    name: "Add provider account",
+    exact: true,
+  });
+  const bounds = await mobileDialog.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await shot(page, "07-mobile-provider-modal");
+  await mobileDialog.getByRole("button", { name: "Close setup" }).click();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await shot(page, "07-inline-ai-accounts");
+  const publication = page.waitForRequest(
+    (r) =>
+      r.method() === "POST" && new URL(r.url()).pathname === "/be/v1/workflows",
+  );
+  await page
+    .getByRole("button", { name: "Publish version", exact: true })
+    .click();
+  const yaml = (await publication).postDataJSON().yaml;
+  expect(yaml).toContain("connection: client-two");
+  expect(yaml).toContain("model: fake-model");
+  expect(yaml).not.toContain("fake-key");
+  await page.getByRole("button", { name: "Start run", exact: true }).click();
+  await expect(page.locator(".run-detail .status").first()).toHaveText(
+    "succeeded",
+  );
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Workflows", exact: true })
+    .click();
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("connector-draft");
+  await page
+    .getByRole("button", { name: "Add first step", exact: true })
+    .first()
+    .click();
+  await page.getByLabel("Search steps and apps").fill("Send a Slack message");
+  await page.getByRole("dialog").getByRole("option").first().click();
+  const connector = page.getByRole("dialog", {
+    name: "Connect Slack",
+    exact: true,
+  });
+  await connector
+    .getByLabel("Connection name", { exact: true })
+    .fill("client-slack");
+  await connector
+    .getByLabel("Integration token", { exact: true })
+    .fill("fake-slack-token");
+  await shot(page, "08-inline-connector-modal");
+  await connector
+    .getByRole("button", { name: "Test and save", exact: true })
+    .click();
+  await expect(connector).toHaveCount(0);
+  await expect(
+    page.getByLabel("Connector account", { exact: true }),
+  ).toHaveValue("client-slack");
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "connector-draft",
+  );
+  await page.getByRole("button", { name: "Add step", exact: true }).click();
+  await page.getByLabel("Search steps and apps").fill("Gmail send");
+  await page.getByRole("dialog").getByRole("option").first().click();
+  const gmail = page.getByRole("dialog", {
+    name: "Connect Gmail",
+    exact: true,
+  });
+  await expect(gmail).toContainText("not enabled in this workspace yet");
+  await expect(
+    gmail.getByRole("button", { name: "Connect account", exact: true }),
+  ).toBeDisabled();
+  await gmail.getByRole("button", { name: "Close setup" }).click();
+  await expect(page).toHaveURL(/\/ui\/workflows$/);
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "connector-draft",
+  );
+});
+
+test("OAuth popup returns to the workflow without discarding its prompt", async ({
+  page,
+  context,
+}) => {
+  // Only external sign-in is simulated here; backend PKCE/state/token checks
+  // have their own real HTTP integration coverage in TestOAuthConnectFlow.
+  const connection = { name: "popup-gmail", kind: "gmail", config: {} };
+  let connected = false;
+  await context.route("**/be/v1/integrations", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.items.find(
+      (k: { kind: string }) => k.kind === "gmail",
+    ).oauth_configured = true;
+    await route.fulfill({ response, json: body });
+  });
+  await context.route("**/be/v1/connections/oauth/start", async (route) => {
+    connected = true;
+    await route.fulfill({
+      json: {
+        authorize_url:
+          process.env.UI_TEST_URL + "/ui/connectors?connected=popup-gmail",
+      },
+    });
+  });
+  await context.route("**/be/v1/connections/popup-gmail", async (route) => {
+    await route.fulfill({ json: connection });
+  });
+  await context.route("**/be/v1/connections", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (connected) body.items.push(connection);
+    await route.fulfill({ response, json: body });
+  });
+  await signInOwner(page);
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByLabel("Workflow name", { exact: true }).fill("oauth-draft");
+  await addStep(page, "AI step");
+  await page
+    .getByLabel("Agent prompt", { exact: true })
+    .fill("Keep my original task after OAuth.");
+  await page.getByRole("button", { name: "Add step", exact: true }).click();
+  await page.getByLabel("Search steps and apps").fill("Send Gmail");
+  await page.getByRole("dialog").getByRole("option").first().click();
+  const dialog = page.getByRole("dialog", {
+    name: "Connect Gmail",
+    exact: true,
+  });
+  await dialog
+    .getByLabel("Connection name", { exact: true })
+    .fill("popup-gmail");
+  const popupPromise = page.waitForEvent("popup");
+  await dialog
+    .getByRole("button", { name: "Connect account", exact: true })
+    .click();
+  const popup = await popupPromise;
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => popup.isClosed()).toBe(true);
+  await expect(page).toHaveURL(/\/ui\/workflows$/);
+  await expect(
+    page.getByLabel("Connector account", { exact: true }),
+  ).toHaveValue("popup-gmail");
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "oauth-draft",
+  );
+  await page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }).click();
+  await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
+    "Keep my original task after OAuth.",
+  );
 });

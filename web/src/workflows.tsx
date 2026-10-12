@@ -4,6 +4,7 @@ const Builder = lazy(() =>
   import("./builder").then((m) => ({ default: m.Builder })),
 );
 import { parse, stringify } from "yaml";
+import { ModelFields, ProviderForm, SetupModal } from "./setup";
 import { isBlankWorkflow, problemsFor } from "./problems";
 import { api, APIError, enc, type RecordData } from "./api";
 import {
@@ -20,11 +21,13 @@ const initial =
   "apiVersion: workflow/v1\nname: my-workflow\nnodes:\n  - id: done\n    type: noop\n    config: {}\n";
 export function Workflows({
   editable,
+  admin,
   agentName,
   onRun,
   organizationID,
 }: {
   editable: boolean;
+  admin: boolean;
   agentName: string;
   onRun: (id: string) => void;
   organizationID: string;
@@ -46,6 +49,9 @@ export function Workflows({
   const [requirements, setRequirements] = useState(""),
     [draft, setDraft] = useState<RecordData | null>(null),
     [published, setPublished] = useState("");
+  const [assistantConnection, setAssistantConnection] = useState(""),
+    [assistantModel, setAssistantModel] = useState(""),
+    [addingProvider, setAddingProvider] = useState(false);
   const [version, setVersion] = useState<RecordData | null>(null);
   const detail = useResource(selected ? `/workflows/${enc(selected)}` : null);
   useEffect(() => {
@@ -160,6 +166,20 @@ export function Workflows({
       : "—";
   return (
     <>
+      {addingProvider && (
+        <SetupModal
+          title="Add provider account"
+          onClose={() => setAddingProvider(false)}
+        >
+          <ProviderForm
+            onSaved={(provider) => {
+              providers.reload();
+              setAssistantConnection(provider.name);
+              setAddingProvider(false);
+            }}
+          />
+        </SetupModal>
+      )}
       {mode === "list" && (
         <section className="overview">
           <div className="toolbar">
@@ -257,20 +277,17 @@ export function Workflows({
                 placeholder="Classify incoming tickets with my triage agent, then email urgent issues to the support team."
               />
             </Field>
-            <Field label="Provider">
-              <select name="connection">
-                <option value="">Platform assistant</option>
-                {providers.data?.items.map((p: RecordData) => (
-                  <option key={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field
-              label="Model"
-              hint="Leave blank to use the platform assistant model."
-            >
-              <input name="model" />
-            </Field>
+            <ModelFields
+              providers={providers.data?.items || []}
+              connection={assistantConnection}
+              model={assistantModel}
+              modelRequired={false}
+              onChange={(connection, model) => {
+                setAssistantConnection(connection);
+                setAssistantModel(model);
+              }}
+              onAdd={admin ? () => setAddingProvider(true) : undefined}
+            />
           </ActionForm>
         </section>
       )}
@@ -423,6 +440,7 @@ export function Workflows({
               organizationID={organizationID}
               source={source}
               editable={editable}
+              admin={admin}
               selected={step}
               onSelect={setStep}
               problems={problems}

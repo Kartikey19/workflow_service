@@ -37,6 +37,15 @@ func TestAgentsAPIRulesAndRevisions(t *testing.T) {
 		"name": "compat", "provider": "openai_compatible", "base_url": s.fakes.servers["openai_compatible"].URL, "api_key": "compat-key-123456",
 	}, 201)
 
+	modelsPath := "/be/v1/providers/" + conn["id"].(string) + "/models"
+	models := editor.mustOK("GET", modelsPath, nil, 200)
+	if !strings.Contains(toJSON(models), "fake-model") || strings.Contains(toJSON(models), "compat-key-123456") {
+		t.Fatalf("model catalog = %v", models)
+	}
+	if status, _ := viewer.call("GET", modelsPath, nil); status != 403 {
+		t.Fatalf("viewer model catalog = %d", status)
+	}
+
 	// Validation: each of these is a 400 and creates nothing.
 	for name, mutate := range map[string]func(map[string]any){
 		"bad name":             func(b map[string]any) { b["name"] = "Not Valid" },
@@ -114,6 +123,10 @@ func TestAgentsAPIRulesAndRevisions(t *testing.T) {
 	if status, body := other.call("POST", "/be/v1/agents", agentBody("mine", "compat")); status != 400 {
 		t.Fatalf("another organization using our connection = %d %v, want 400", status, body)
 	}
+	if status, _ := other.call("GET", modelsPath, nil); status != 404 {
+		t.Fatalf("another organization model catalog = %d", status)
+	}
+
 	if status, _ := other.call("DELETE", "/be/v1/providers/"+conn["id"].(string), nil); status != 404 {
 		t.Fatalf("another organization deleting our connection = %d, want 404", status)
 	}

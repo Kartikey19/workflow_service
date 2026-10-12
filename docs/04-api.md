@@ -396,6 +396,7 @@ connectors.
 | `POST /be/v1/providers` | admin | `{name, provider, base_url?, api_key, skip_test?}`; **tests first and saves only if the test passes**; returns the connection and the models found |
 | `GET /be/v1/providers` | editor | connections, with how many agents use each |
 | `GET /be/v1/provider-kinds` | editor | every kind: `{id, title, base_url, key_optional, native}` |
+| `GET /be/v1/providers/{id}/models` | editor | list available models using this organization’s saved account; returns `{ok, models}`, never the key |
 | `POST /be/v1/providers/{id}/test` | admin | re-test a saved connection |
 | `DELETE /be/v1/providers/{id}` | admin | `409 connection_in_use` while an agent uses it |
 
@@ -447,7 +448,7 @@ characters) and, for OAuth connections, the connected account.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `GET /be/v1/integrations` | editor | the kinds this installation offers, configuration fields, and `actions: [{name, title, kinds, read_only, input_schema}]` |
+| `GET /be/v1/integrations` | editor | all supported kinds, `oauth`, `oauth_configured`, configuration fields, and `actions: [{name, title, kinds, read_only, input_schema}]` |
 | `POST /be/v1/connections/test` | admin | `{kind, config, secret}`: prove settings and credentials work, save nothing |
 | `POST /be/v1/connections` | admin | `{name, kind, config, secret, skip_test?}`; **tests first and saves only if the test passes** (`422 connection_test_failed`; the message never echoes a credential) |
 | `GET /be/v1/connections`, `GET /be/v1/connections/{name}` | editor | settings and hint, never credentials |
@@ -471,7 +472,7 @@ Notion requests pin API version `2025-09-03`.
 
 **OAuth connections** (Gmail, Google Drive, Google Docs, Sheets, Calendar, Dropbox, OneDrive) are created by signing
 in with the provider, not by pasting credentials, and appear in `GET /be/v1/integrations`
-(with `oauth: true`) only when the operator registered an OAuth app for the provider:
+(with `oauth: true`). Sign-in is available only when `oauth_configured: true`, after the operator registers an OAuth app for the provider:
 
 1. `POST /be/v1/connections/oauth/start` (admin) with `{kind, name}` returns an
    `authorize_url`. It carries a one-time `state` bound to your organization and a PKCE

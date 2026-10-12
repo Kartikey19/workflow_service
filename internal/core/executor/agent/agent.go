@@ -48,20 +48,24 @@ func (e *Executor) Describe() executor.Description {
 		Description: "Calls a language model in a loop capped by max_iterations. `tools` lists saved connectors the model may " +
 			"search with three read-only tools: glob lists what a connector holds, grep searches it, read opens one item " +
 			"(and mcp:<server> adds a saved MCP server's tools). " +
-			"Run a stored agent with `agent: <name>` and `input`, or configure model, prompt and limits inline. " +
+			"Run a stored agent with `agent: <name>` and `input`; optional connection and model override its defaults for this step only. " +
+			"Or configure connection, model, prompt and limits inline. " +
 			"With an output schema the reply must be JSON that matches it; a violation fails the node permanently. " +
 			"429 and 5xx responses are retried.",
 		Example: `- id: classify
   type: agent
   needs: [fetch_ticket]
   config:
-    agent: ticket-classifier          # defined under /v1/agents
+    agent: ticket-classifier          # defined under /be/v1/agents
+    # connection: client-two         # optional account override
+    # model: another-model          # optional model override
     input: {text: '${nodes.fetch_ticket.output.body.description}'}
 
 # or, inline:
 - id: classify
   type: agent
   config:
+    connection: acme-anthropic       # omit to use the platform provider
     model: claude-sonnet-5-5
     system: "Classify the ticket. Respond with JSON only."
     prompt: ${nodes.fetch_ticket.output.body.description}
@@ -80,9 +84,11 @@ type config struct {
 	// Agent mode: run a stored definition.
 	Agent string          `json:"agent"`
 	Input json.RawMessage `json:"input"`
+	// A workflow can choose its own account and model without editing the agent.
+	Connection *string `json:"connection"`
+	Model      *string `json:"model"`
 
 	// Inline mode: configure the call here.
-	Model         string          `json:"model"`
 	System        string          `json:"system"`
 	Prompt        json.RawMessage `json:"prompt"`
 	Tools         []string        `json:"tools"`
@@ -94,11 +100,11 @@ type config struct {
 
 // inlineOnly are the fields that, with `agent`, would conflict with the stored
 // definition.
-var inlineOnly = []string{"model", "system", "tools", "max_iterations", "max_tokens", "temperature", "output_schema"}
+var inlineOnly = []string{"system", "tools", "max_iterations", "max_tokens", "temperature", "output_schema"}
 
 // ValidateConfig checks the shape at publish time. A node either names a stored
-// agent (`agent`, with optional `input` and `prompt`) or configures the call
-// inline. Inline max_iterations is mandatory and must be a literal: the run-level
+// agent (`agent`, with optional `input`, `prompt`, `connection` and `model`)
+// or configures the call inline. Inline max_iterations is mandatory and must be a literal: the run-level
 // timeout is far too coarse to bound agent spend. (A stored agent's limits are
 // checked when the agent is saved.)
 func (e *Executor) ValidateConfig(raw json.RawMessage) error {
@@ -117,6 +123,8 @@ func (e *Executor) validateNamed(raw json.RawMessage, c map[string]any) error {
 		{Name: "agent", Kind: "string", Required: true},
 		{Name: "input", Kind: "any"},
 		{Name: "prompt", Kind: "any"},
+		{Name: "connection", Kind: "string"},
+		{Name: "model", Kind: "string"},
 	}); err != nil {
 		for _, name := range inlineOnly {
 			if _, present := c[name]; present {
@@ -127,6 +135,9 @@ func (e *Executor) validateNamed(raw json.RawMessage, c map[string]any) error {
 	}
 	if name, ok := c["agent"].(string); ok && !executor.IsExpression(name) && strings.TrimSpace(name) == "" {
 		return errors.New("agent must name a stored agent")
+	}
+	if model, present := c["model"].(string); present && strings.TrimSpace(model) == "" {
+		return errors.New("model must not be empty; omit it to use the agent's default")
 	}
 	_, hasInput := c["input"]
 	_, hasPrompt := c["prompt"]
@@ -139,6 +150,7 @@ func (e *Executor) validateNamed(raw json.RawMessage, c map[string]any) error {
 func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 	if err := executor.CheckFields(raw, []executor.Field{
 		{Name: "model", Kind: "string", Required: true},
+		{Name: "connection", Kind: "string"},
 		{Name: "system", Kind: "string"},
 		{Name: "prompt", Kind: "any", Required: true},
 		{Name: "tools", Kind: "array"},
@@ -150,6 +162,9 @@ func (e *Executor) validateInline(raw json.RawMessage, c map[string]any) error {
 		return err
 	}
 	var problems []error
+	if model, ok := c["model"].(string); ok && strings.TrimSpace(model) == "" {
+		problems = append(problems, errors.New("model is required"))
+	}
 	if err := literalInt(c, "max_iterations", 1, maxIterationsLimit); err != nil {
 		problems = append(problems, err)
 	}
@@ -210,12 +225,16 @@ func literalInt(config map[string]any, key string, lo, hi int) error {
 // validateResolved checks an inline configuration after its expressions are
 // resolved. Stored agents were validated when they were saved.
 func (c *config) validateResolved() error {
-	return validateLimits(c.Model, c.Prompt, true, c.MaxIterations, c.MaxTokens, c.Temperature, c.Tools, c.OutputSchema)
+	model := ""
+	if c.Model != nil {
+		model = *c.Model
+	}
+	return validateLimits(model, c.Prompt, true, c.MaxIterations, c.MaxTokens, c.Temperature, c.Tools, c.OutputSchema)
 }
 
 func validateLimits(model string, prompt json.RawMessage, requirePrompt bool, maxIterations, maxTokens int, temperature *float64, toolNames []string, outputSchema json.RawMessage) error {
 	switch {
-	case model == "":
+	case strings.TrimSpace(model) == "":
 		return errors.New("model is required")
 	case requirePrompt && (len(prompt) == 0 || string(prompt) == "null"):
 		return errors.New("prompt is required")

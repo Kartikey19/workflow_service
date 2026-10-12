@@ -44,8 +44,10 @@ type KindInfo struct {
 	Title  string
 	Fields []Field
 	// OAuth kinds are created by signing in with the provider, not by entering
-	// credentials; they are listed only when the operator configured the provider.
-	OAuth bool
+	// credentials. OAuthConfigured distinguishes available sign-in from setup
+	// that still needs an operator to register an OAuth app.
+	OAuth           bool
+	OAuthConfigured bool
 }
 
 type kind struct {

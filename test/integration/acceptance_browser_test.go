@@ -20,7 +20,7 @@ func TestWebUIBrowser(t *testing.T) {
 	if os.Getenv("RUN_UI_TESTS") != "true" {
 		t.Skip("set RUN_UI_TESTS=true after npm ci and playwright install chromium")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 	workspaceAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -32,6 +32,7 @@ func TestWebUIBrowser(t *testing.T) {
 		c.Services.IntegrationEndpoints = string(ep)
 	})
 	owner := s.owner(t, "Browser Co")
+	s.owner(t, "Fresh Setup") // no agents, connectors or provider accounts
 	owner.mustOK("POST", "/be/v1/connections", dbConnection("browser-database", postgresBackend(t)), 201)
 	for _, kind := range []string{"slack", "notion"} {
 		owner.mustOK("POST", "/be/v1/connections", map[string]any{"name": "browser-" + kind, "kind": kind, "secret": map[string]string{"access_token": "browser-workspace-token"}}, 201)

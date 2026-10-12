@@ -83,8 +83,12 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 		if err := c.validateResolved(); err != nil {
 			return plan{}, executor.Permanent("bad_config", err)
 		}
+		connection := ""
+		if c.Connection != nil {
+			connection = *c.Connection
+		}
 		return plan{
-			ref: ProviderRef{Model: c.Model}, system: c.System, prompt: promptText(c.Prompt), tools: c.Tools,
+			ref: ProviderRef{Connection: connection, Model: *c.Model}, system: c.System, prompt: promptText(c.Prompt), tools: c.Tools,
 			maxIterations: c.MaxIterations, maxTokens: c.MaxTokens, temperature: c.Temperature, outputSchema: c.OutputSchema,
 		}, nil
 	}
@@ -117,8 +121,18 @@ func (e *Executor) plan(ctx context.Context, req executor.Request, c config) (pl
 			return plan{}, executor.Permanent("invalid_input", fmt.Errorf("input does not match the agent's input schema: %s", strings.Join(parts, "; ")))
 		}
 	}
+	ref := ProviderRef{Connection: def.Connection, Model: def.Model}
+	if c.Connection != nil {
+		ref.Connection = *c.Connection
+	}
+	if c.Model != nil {
+		if strings.TrimSpace(*c.Model) == "" {
+			return plan{}, executor.Permanent("bad_config", errors.New("model override must not be empty"))
+		}
+		ref.Model = *c.Model
+	}
 	return plan{
-		ref: ProviderRef{Connection: def.Connection, Model: def.Model}, system: def.System,
+		ref: ref, system: def.System,
 		prompt: agentPrompt(c.Prompt, input), tools: def.Tools,
 		maxIterations: def.MaxIterations, maxTokens: def.MaxTokens, temperature: def.Temperature,
 		outputSchema: def.OutputSchema, agent: def.Name, revision: def.Revision,

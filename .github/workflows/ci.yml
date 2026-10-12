@@ -43,6 +43,7 @@ jobs:
       - name: Check App Platform release safeguards
         run: python3 deploy/test-app-platform.py
       - run: make ui-install ui-check
+      - run: npm run test:unit --prefix web
       - run: npx --prefix web playwright install --with-deps chromium
       - name: Check Go modules, formatting, generated code, vet and unit tests
         run: make check-mod check-fmt check-generated vet test

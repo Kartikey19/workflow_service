@@ -46,6 +46,7 @@ import {
 } from "./components";
 import { connectorActions, kindIcon } from "./connectors";
 import { NodeCreator, type CreatorEntry } from "./creator";
+import { ConnectorForm, ModelFields, ProviderForm, SetupModal } from "./setup";
 import { StepPicker, type PickerItem } from "./picker";
 import { isPlaceholder, type Problem } from "./problems";
 import "@xyflow/react/dist/style.css";
@@ -254,10 +255,12 @@ export function Builder({
   onSelect,
   problems,
   starter,
+  admin,
 }: {
   source: string;
   onChange: (source: string) => void;
   editable: boolean;
+  admin: boolean;
   organizationID: string;
   selected: string;
   onSelect: (id: string) => void;
@@ -270,6 +273,7 @@ export function Builder({
   const connections = useResource(editable ? "/connections" : null),
     kinds = useResource("/integrations"),
     agents = useResource("/agents"),
+    providers = useResource(editable ? "/providers" : null),
     executors = useResource("/executors"),
     secrets = useResource(editable ? "/secrets" : null);
   const storageKey = `workflow-layout:${organizationID}:${doc?.name || "draft"}`;
@@ -291,6 +295,11 @@ export function Builder({
     [diagram, setDiagram] = useState(false),
     [startOpen, setStartOpen] = useState(false),
     [inputsError, setInputsError] = useState("");
+  const [setup, setSetup] = useState<{
+    kind: "provider" | "connector";
+    nodeID: string;
+    descriptor?: RecordData;
+  } | null>(null);
   const rows: RecordData[] = doc?.nodes || [];
   const empty = isPlaceholder(rows);
   const ordered = empty ? [] : runOrder(rows);
@@ -319,16 +328,18 @@ export function Builder({
     const action = (kinds.data?.items || [])
       .flatMap((k: RecordData) => k.actions || [])
       .find((a: RecordData) => a.name === (n.config?.action || n.type));
-    const Icon: Icon = n.config?.agent
-      ? Bot
-      : n.config?.connection
-        ? kindIcon(conn?.kind)
-        : typeIcons[n.type] || Shuffle;
-    const subtitle = n.config?.agent
-      ? `Agent ${n.config.agent}`
-      : n.config?.connection
-        ? `${action?.title || n.config.action || n.type} · ${n.config.connection}`
-        : cardDetail(n.config) || info?.title || n.type;
+    const Icon: Icon =
+      n.type === "agent"
+        ? Bot
+        : n.config?.connection
+          ? kindIcon(conn?.kind)
+          : typeIcons[n.type] || Shuffle;
+    const subtitle =
+      n.type === "agent"
+        ? `${n.config?.agent || n.config?.model || "Choose a model"}${n.config?.connection ? ` · ${n.config.connection}` : ""}`
+        : n.config?.connection
+          ? `${action?.title || n.config.action || n.type} · ${n.config.connection}`
+          : cardDetail(n.config) || info?.title || n.type;
     return { Icon, subtitle, title: info?.title || n.type, action };
   };
   const sinks = rows.filter((n) => !rows.some((m) => m.needs?.includes(n.id)));
@@ -511,15 +522,14 @@ export function Builder({
           connected: mine.length > 0,
           children: connectorActions(kinds.data?.items, k.kind).map((a) => {
             const id = `action:${k.kind}:${a.name}`;
-            if (mine.length)
-              build.set(id, () => ({
-                type: "connector.call",
-                config: {
-                  connection: mine[0].name,
-                  action: a.name,
-                  arguments: newArguments(a.input_schema),
-                },
-              }));
+            build.set(id, () => ({
+              type: "connector.call",
+              config: {
+                connection: mine[0]?.name || "",
+                action: a.name,
+                arguments: newArguments(a.input_schema),
+              },
+            }));
             return {
               id,
               title: a.title,
@@ -529,8 +539,7 @@ export function Builder({
                 ? undefined
                 : {
                     reason: `Connect ${k.title || k.kind} first.`,
-                    href: "/ui/connectors",
-                    action: "Open connectors",
+                    action: admin ? "Connect account here" : "Configure step",
                   },
             };
           }),
@@ -560,17 +569,16 @@ export function Builder({
         };
       },
     );
-    if (!ai.length)
-      ai.push({
-        id: "agent:none",
-        title: "Agent",
-        icon: icon(Bot),
-        blocked: {
-          reason: "Create an agent first.",
-          href: "/ui/agents",
-          action: "Open agents",
-        },
-      });
+    build.set("agent:inline", () => ({
+      type: "agent",
+      config: { model: "", prompt: "", max_iterations: 8 },
+    }));
+    ai.unshift({
+      id: "agent:inline",
+      title: "AI step",
+      hint: "Choose a model and account here",
+      icon: icon(Bot),
+    });
     const viaConnector = new Set(
       (kinds.data?.items || []).flatMap((k: RecordData) =>
         connectorActions(kinds.data?.items, k.kind).map((a) => a.name),
@@ -605,7 +613,7 @@ export function Builder({
       {
         id: "ai",
         title: "AI",
-        hint: "Run one of your agents",
+        hint: "Choose a model or use a saved agent",
         icon: icon(Bot),
         children: ai,
       },
@@ -632,7 +640,7 @@ export function Builder({
       },
     ];
     return { entries, build };
-  }, [connections.data, kinds.data, agents.data, executors.data]);
+  }, [connections.data, kinds.data, agents.data, executors.data, admin]);
   function add(id: string, after = adding?.after) {
     const entry = catalog.build.get(id);
     if (!doc || !entry) return;
@@ -677,6 +685,7 @@ export function Builder({
     setAdding(null);
     focusSettings.current = true;
     onSelect(nodeID);
+    return nodeID;
   }
   useEffect(() => {
     if (starter && editable && !started.current && catalog.build.has(starter)) {
@@ -715,6 +724,17 @@ export function Builder({
               input: readInput(data, selectedAgent.input_schema, true),
             }
           : { ...config, prompt: data.get("prompt") };
+      } else if (node.type === "agent" && !node.config?.agent) {
+        config = {
+          ...config,
+          prompt:
+            typeof config.prompt !== "string" &&
+            data.get("prompt") === JSON.stringify(config.prompt || "")
+              ? config.prompt
+              : data.get("prompt"),
+          system: data.get("system") || "",
+          max_iterations: Number(data.get("max_iterations")),
+        };
       } else {
         const next =
           parse(quoteExpressions(String(data.get("config") || ""))) ?? {};
@@ -774,10 +794,12 @@ export function Builder({
       ? "action"
       : selectedAgent
         ? "agent"
-        : (node.type === "agent" && !agents.data) ||
-            (node.type === "connector.call" && !kinds.data)
-          ? "loading"
-          : "settings";
+        : node.type === "agent" && !node.config?.agent
+          ? "inline-agent"
+          : (node.type === "agent" && !agents.data) ||
+              (node.type === "connector.call" && !kinds.data)
+            ? "loading"
+            : "settings";
   // Saved connectors that can run the selected connector step's action.
   const accounts = (connections.data?.items || []).filter((c: RecordData) =>
     selectedAction?.kinds?.includes(c.kind),
@@ -812,22 +834,133 @@ export function Builder({
           ))}
         </ul>
       )}
-      {editable && node.type === "connector.call" && accounts.length > 1 && (
-        <Field label="Connector">
-          <select
-            value={node.config.connection}
-            onChange={(e) =>
-              updateNode({
-                ...node,
-                config: { ...node.config, connection: e.target.value },
-              })
-            }
+      {node.type === "connector.call" && (
+        <div className="account-controls">
+          <Field
+            label="Connector account"
+            hint="Choose the saved account this step should use."
           >
-            {accounts.map((c: RecordData) => (
-              <option key={c.name}>{c.name}</option>
-            ))}
-          </select>
-        </Field>
+            <select
+              value={node.config?.connection || ""}
+              disabled={!editable}
+              onChange={(e) =>
+                updateNode({
+                  ...node,
+                  config: { ...node.config, connection: e.target.value },
+                })
+              }
+            >
+              <option value="">Choose an account</option>
+              {node.config?.connection &&
+                !accounts.some(
+                  (c: RecordData) => c.name === node.config.connection,
+                ) && (
+                  <option value={node.config.connection}>
+                    {node.config.connection} (unavailable)
+                  </option>
+                )}
+              {accounts.map((c: RecordData) => (
+                <option key={c.name} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {editable && admin && (
+            <button
+              type="button"
+              onClick={() =>
+                setSetup({
+                  kind: "connector",
+                  nodeID: node.id,
+                  descriptor: kinds.data?.items.find((k: RecordData) =>
+                    selectedAction?.kinds?.includes(k.kind),
+                  ),
+                })
+              }
+            >
+              Add connector account
+            </button>
+          )}
+          {!accounts.length && !admin && (
+            <p className="notice">
+              An administrator needs to connect an account. You can keep
+              configuring this step here.
+            </p>
+          )}
+        </div>
+      )}
+      {node.type === "agent" && (
+        <div className="agent-model-controls">
+          {selectedAgent && (
+            <>
+              <p className="notice">
+                Agent defaults:{" "}
+                {selectedAgent.connection || "Platform provider"} ·{" "}
+                {selectedAgent.model}. Overrides apply only to this step.
+              </p>
+              <div className="row wrap">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Object.hasOwn(node.config || {}, "connection")}
+                    disabled={!editable}
+                    onChange={(e) => {
+                      const config = { ...node.config };
+                      if (e.target.checked)
+                        config.connection = selectedAgent.connection || "";
+                      else delete config.connection;
+                      updateNode({ ...node, config });
+                    }}
+                  />
+                  Override provider account
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Object.hasOwn(node.config || {}, "model")}
+                    disabled={!editable}
+                    onChange={(e) => {
+                      const config = { ...node.config };
+                      if (e.target.checked) config.model = selectedAgent.model;
+                      else delete config.model;
+                      updateNode({ ...node, config });
+                    }}
+                  />
+                  Override model
+                </label>
+              </div>
+            </>
+          )}
+          <ModelFields
+            providers={providers.data?.items || []}
+            connection={
+              node.config?.connection ?? selectedAgent?.connection ?? ""
+            }
+            model={node.config?.model ?? selectedAgent?.model ?? ""}
+            disabled={!editable}
+            connectionDisabled={
+              !!selectedAgent && !Object.hasOwn(node.config || {}, "connection")
+            }
+            modelDisabled={
+              !!selectedAgent && !Object.hasOwn(node.config || {}, "model")
+            }
+            onChange={(connection, model, changed) => {
+              const config = { ...node.config };
+              if (changed === "connection") {
+                config.connection = connection;
+                if (!selectedAgent || Object.hasOwn(config, "model"))
+                  config.model = model;
+              } else config.model = model;
+              updateNode({ ...node, config });
+            }}
+            onAdd={
+              admin && editable
+                ? () => setSetup({ kind: "provider", nodeID: node.id })
+                : undefined
+            }
+          />
+        </div>
       )}
       {editable && secretItems.length > 0 && (
         <div className="insert-secret">
@@ -894,6 +1027,45 @@ export function Builder({
                 />
               </Field>
             )
+          ) : mode === "inline-agent" ? (
+            <>
+              <Field
+                label="Instructions"
+                hint="Optional guidance for this AI step."
+              >
+                <textarea
+                  name="system"
+                  defaultValue={node.config?.system || ""}
+                />
+              </Field>
+              <Field
+                label="Agent prompt"
+                hint="Describe the task. You can reference workflow inputs and previous steps."
+              >
+                <textarea
+                  name="prompt"
+                  defaultValue={
+                    typeof node.config?.prompt === "string"
+                      ? node.config.prompt
+                      : JSON.stringify(node.config?.prompt || "")
+                  }
+                  required
+                />
+              </Field>
+              <Field
+                label="Maximum iterations"
+                hint="A hard limit on model calls for this step."
+              >
+                <input
+                  name="max_iterations"
+                  type="number"
+                  min={1}
+                  max={50}
+                  defaultValue={node.config?.max_iterations || 8}
+                  required
+                />
+              </Field>
+            </>
           ) : (
             <Field
               label="Settings"
@@ -1190,10 +1362,66 @@ export function Builder({
           <Controls showInteractive={false} position="bottom-left" />
         </ReactFlow>
       </section>
+      {setup && (
+        <SetupModal
+          title={
+            setup.kind === "provider"
+              ? "Add provider account"
+              : `Connect ${setup.descriptor?.title || "account"}`
+          }
+          onClose={() => setSetup(null)}
+        >
+          {setup.kind === "provider" ? (
+            <ProviderForm
+              onSaved={(provider) => {
+                providers.reload();
+                const target = rows.find((n) => n.id === setup.nodeID);
+                if (target)
+                  updateNode({
+                    ...target,
+                    config: { ...target.config, connection: provider.name },
+                  });
+                setSetup(null);
+              }}
+            />
+          ) : setup.descriptor ? (
+            <ConnectorForm
+              descriptor={setup.descriptor}
+              popup
+              onSaved={(connection) => {
+                connections.reload();
+                const target = rows.find((n) => n.id === setup.nodeID);
+                if (target)
+                  updateNode({
+                    ...target,
+                    config: { ...target.config, connection: connection.name },
+                  });
+                setSetup(null);
+              }}
+            />
+          ) : (
+            <p role="alert">
+              This connector’s setup is unavailable. Close this dialog and retry
+              when the catalog has loaded.
+            </p>
+          )}
+        </SetupModal>
+      )}
       {adding && (
         <NodeCreator
           entries={catalog.entries}
           onPick={(id) => add(id)}
+          onSetup={(id) => {
+            const nodeID = add(id);
+            if (admin && nodeID)
+              setSetup({
+                kind: "connector",
+                nodeID,
+                descriptor: kinds.data?.items.find(
+                  (k: RecordData) => k.kind === id.split(":")[1],
+                ),
+              });
+          }}
           onClose={() => setAdding(null)}
           title={
             adding.after ? `Add a step after ${adding.after}` : "Add a step"

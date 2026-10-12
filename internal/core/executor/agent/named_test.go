@@ -129,6 +129,7 @@ func TestValidateConfigNamedAgent(t *testing.T) {
 	for _, ok := range []string{
 		`{"agent":"classifier","input":{"text":"${input.t}"}}`,
 		`{"agent":"${input.which}","prompt":"go"}`,
+		`{"agent":"classifier","input":{},"connection":"client-two","model":"other-model"}`,
 	} {
 		if err := e.ValidateConfig(json.RawMessage(ok)); err != nil {
 			t.Errorf("%s: %v", ok, err)
@@ -136,7 +137,8 @@ func TestValidateConfigNamedAgent(t *testing.T) {
 	}
 	for config, want := range map[string]string{
 		`{"agent":"a"}`:                               "needs input or prompt",
-		`{"agent":"a","input":{},"model":"m"}`:        "model cannot be set together with agent",
+		`{"agent":"a","input":{},"model":" "}`:        "model must not be empty",
+		`{"agent":"a","input":{},"connection":3}`:     "connection must be a string",
 		`{"agent":"a","input":{},"max_iterations":3}`: "max_iterations cannot be set together with agent",
 		`{"agent":"a","input":{},"tools":["echo"]}`:   "tools cannot be set together with agent",
 		`{"agent":"  ","input":{}}`:                   "must name a stored agent",
@@ -170,5 +172,47 @@ func TestValidateDefinition(t *testing.T) {
 		if err := e.ValidateDefinition(d); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// Account and model override independently; reusable instructions and caps survive.
+func TestStepProviderOverridesPreserveAgentDefaults(t *testing.T) {
+	defs := fakeDefs{"helper": {Name: "helper", Revision: 2, Connection: "client-one", Model: "default-model", System: "Saved instructions", MaxIterations: 3, MaxTokens: 512, Tools: []string{"echo"}}}
+	for _, tt := range []struct{ name, config, connection, model string }{
+		{"inherit", `{"agent":"helper","prompt":"go"}`, "client-one", "default-model"},
+		{"model only", `{"agent":"helper","prompt":"go","model":"override-model"}`, "client-one", "override-model"},
+		{"account only", `{"agent":"helper","prompt":"go","connection":"client-two"}`, "client-two", "default-model"},
+		{"both", `{"agent":"helper","prompt":"go","connection":"client-two","model":"override-model"}`, "client-two", "override-model"},
+		{"platform", `{"agent":"helper","prompt":"go","connection":""}`, "", "default-model"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &scripted{replies: []any{text("done", 1, 1)}}
+			e, clients := namedExecutor(t, client, defs)
+			if _, err := run(t, e, tt.config); err != nil {
+				t.Fatal(err)
+			}
+			if len(clients.refs) != 1 || clients.refs[0] != (ProviderRef{Connection: tt.connection, Model: tt.model}) {
+				t.Fatalf("provider = %+v", clients.refs)
+			}
+			got := client.requests[0]
+			if got.Model != tt.model || got.System != "Saved instructions" || got.MaxTokens != 512 || len(got.Tools) != 1 {
+				t.Fatalf("request lost defaults: %+v", got)
+			}
+			if defs["helper"].Connection != "client-one" || defs["helper"].Model != "default-model" || defs["helper"].Revision != 2 {
+				t.Fatal("saved agent mutated")
+			}
+		})
+	}
+	client := &scripted{replies: []any{text("done", 1, 1)}}
+	e, clients := namedExecutor(t, client, defs)
+	if _, err := run(t, e, `{"connection":"client-two","model":"inline-model","prompt":"go","max_iterations":1}`); err != nil {
+		t.Fatal(err)
+	}
+	if clients.refs[0] != (ProviderRef{Connection: "client-two", Model: "inline-model"}) {
+		t.Fatalf("inline provider = %+v", clients.refs)
+	}
+	// A model expression resolving to empty must fail rather than silently inherit.
+	if _, err := run(t, e, `{"agent":"helper","prompt":"go","model":""}`); err == nil {
+		t.Fatal("empty resolved model was accepted")
 	}
 }

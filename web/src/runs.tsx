@@ -63,7 +63,9 @@ export function Runs({
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     if (isTerminal) {
       api(`/runs/${selected}/events?limit=1000`, "GET", undefined, abort.signal)
-        .then((r) => setEvents(r.items))
+        .then((r) => {
+          if (!abort.signal.aborted) setEvents(r.items);
+        })
         .catch((e) => {
           if (!abort.signal.aborted) setStreamError(e.message);
         });

@@ -18,8 +18,8 @@ export type CreatorEntry = {
   icon: ReactNode;
   section?: string;
   children?: CreatorEntry[];
-  // Why a leaf cannot be added yet, with a way to fix it.
-  blocked?: { reason: string; href: string; action: string };
+  // Account setup needed by a leaf, with an in-context action.
+  blocked?: { reason: string; action: string };
 };
 
 function leaves(
@@ -38,11 +38,13 @@ export function NodeCreator({
   entries,
   onPick,
   onClose,
+  onSetup,
   title = "Add a step",
 }: {
   entries: CreatorEntry[];
   onPick: (id: string) => void;
   onClose: () => void;
+  onSetup?: (id: string) => void;
   title?: string;
 }) {
   const [trail, setTrail] = useState<CreatorEntry[]>([]),
@@ -100,7 +102,9 @@ export function NodeCreator({
       setTrail([...trail, entry]);
       setQuery("");
       setActive(0);
-    } else if (!entry.blocked) {
+    } else if (entry.blocked) {
+      onSetup?.(entry.id);
+    } else {
       onPick(entry.id);
     }
   }
@@ -196,7 +200,6 @@ export function NodeCreator({
                   id={`${id}-${index}`}
                   role="option"
                   aria-selected={row === current}
-                  aria-disabled={!!e.blocked || undefined}
                   className="creator-row"
                   onPointerMove={() => setActive(index)}
                   onClick={() => open(e)}
@@ -207,14 +210,15 @@ export function NodeCreator({
                     {e.blocked ? (
                       <small>
                         {e.blocked.reason}{" "}
-                        <a
-                          href={e.blocked.href}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={(event) => event.stopPropagation()}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onSetup?.(e.id);
+                          }}
                         >
                           {e.blocked.action}
-                        </a>
+                        </button>
                       </small>
                     ) : (
                       e.hint && <small>{e.hint}</small>

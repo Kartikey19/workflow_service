@@ -431,6 +431,7 @@ function App() {
                 <p className="error">Your role does not allow this page.</p>
               ) : currentPage[0] === "workflows" ? (
                 <Workflows
+                  admin={admin}
                   key={agentName}
                   editable={editable}
                   agentName={agentName}
@@ -445,6 +446,7 @@ function App() {
               ) : currentPage[0] === "agents" ? (
                 <Agents
                   editable={editable}
+                  admin={admin}
                   useAgent={(name) => {
                     setAgentName(name);
                     navigate("workflows");

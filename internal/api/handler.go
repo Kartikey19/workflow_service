@@ -270,6 +270,7 @@ func (h *Handler) Register(r Router) {
 		r.Handle("POST /be/v1/providers/test", auth.RoleAdmin, h.testProvider)
 		r.Handle("POST /be/v1/providers", auth.RoleAdmin, h.createProvider)
 		r.Handle("GET /be/v1/providers", auth.RoleEditor, h.listProviders)
+		r.Handle("GET /be/v1/providers/{id}/models", auth.RoleEditor, h.testStoredProvider)
 		r.Handle("GET /be/v1/provider-kinds", auth.RoleEditor, h.listProviderKinds)
 		r.Handle("POST /be/v1/providers/{id}/test", auth.RoleAdmin, h.testStoredProvider)
 		r.Handle("DELETE /be/v1/providers/{id}", auth.RoleAdmin, h.deleteProvider)

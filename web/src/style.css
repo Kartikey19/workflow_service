@@ -2181,3 +2181,76 @@ button.table-row:hover {
 .provider-search {
   margin: 0 0 12px;
 }
+
+/* Setup stays over the workflow, with native focus trapping and Escape. */
+.setup-modal {
+  width: min(650px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--line, #dbe2df);
+  border-radius: 16px;
+  background: var(--paper, #fff);
+  color: inherit;
+  box-shadow: 0 24px 80px #102d2b38;
+}
+.setup-modal::backdrop {
+  background: #102d2b70;
+  backdrop-filter: blur(3px);
+}
+.setup-modal > header {
+  margin-bottom: 12px;
+}
+.setup-modal h2 {
+  font-size: 20px;
+  margin: 0;
+}
+.setup-modal .app-grid {
+  max-height: 210px;
+  overflow: auto;
+  margin: 12px 0 20px;
+}
+.setup-modal .app-tile {
+  min-width: 0;
+}
+.setup-modal form {
+  margin-top: 16px;
+}
+.model-fields {
+  display: grid;
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+.model-fields > button,
+.account-controls > button {
+  justify-self: start;
+  width: fit-content;
+}
+.model-fields .field {
+  margin: 0;
+}
+.agent-model-controls,
+.account-controls {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0 20px;
+}
+.agent-model-controls .row {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.agent-model-controls .row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.agent-model-controls .notice {
+  margin: 0;
+}
+@media (max-width: 600px) {
+  .setup-modal {
+    padding: 18px;
+    max-height: calc(100dvh - 24px);
+  }
+}

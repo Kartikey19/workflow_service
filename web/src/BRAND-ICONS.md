@@ -1,0 +1,1 @@
+Brand icon paths are from [Simple Icons 11.15.0](https://github.com/simple-icons/simple-icons/tree/11.15.0), under CC0-1.0. They are bundled locally; displaying connectors makes no requests to third-party image servers. Brand names and marks belong to their respective owners.
