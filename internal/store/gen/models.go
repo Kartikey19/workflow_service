@@ -30,6 +30,37 @@ type Agent struct {
 	DatabaseConnection string             `json:"database_connection"`
 }
 
+type AlertChannel struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	Name             string             `json:"name"`
+	Kind             string             `json:"kind"`
+	Config           []byte             `json:"config"`
+	Events           []string           `json:"events"`
+	Workflows        []string           `json:"workflows"`
+	Enabled          bool               `json:"enabled"`
+	SecretCiphertext []byte             `json:"secret_ciphertext"`
+	SecretNonce      []byte             `json:"secret_nonce"`
+	SecretKeyVersion pgtype.Int4        `json:"secret_key_version"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AlertDelivery struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ChannelID     pgtype.UUID        `json:"channel_id"`
+	Event         string             `json:"event"`
+	DedupeKey     string             `json:"dedupe_key"`
+	Payload       []byte             `json:"payload"`
+	Status        string             `json:"status"`
+	Attempts      int32              `json:"attempts"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError     pgtype.Text        `json:"last_error"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	SentAt        pgtype.Timestamptz `json:"sent_at"`
+}
+
 type ApiKey struct {
 	ID         pgtype.UUID        `json:"id"`
 	OrgID      pgtype.UUID        `json:"org_id"`
@@ -200,6 +231,27 @@ type RunWait struct {
 	Schema          []byte             `json:"schema"`
 }
 
+type Schedule struct {
+	ID          pgtype.UUID        `json:"id"`
+	OrgID       pgtype.UUID        `json:"org_id"`
+	Name        string             `json:"name"`
+	Workflow    string             `json:"workflow"`
+	Cron        string             `json:"cron"`
+	Timezone    string             `json:"timezone"`
+	Input       []byte             `json:"input"`
+	Overlap     string             `json:"overlap"`
+	CatchUp     string             `json:"catch_up"`
+	Enabled     bool               `json:"enabled"`
+	NextRunAt   pgtype.Timestamptz `json:"next_run_at"`
+	LastSlotAt  pgtype.Timestamptz `json:"last_slot_at"`
+	LastRunID   pgtype.UUID        `json:"last_run_id"`
+	LastOutcome pgtype.Text        `json:"last_outcome"`
+	LastError   pgtype.Text        `json:"last_error"`
+	CreatedBy   pgtype.Text        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Secret struct {
 	ID         pgtype.UUID        `json:"id"`
 	OrgID      pgtype.UUID        `json:"org_id"`
@@ -299,6 +351,16 @@ type Workflow struct {
 	ArchivedAt  pgtype.Timestamptz `json:"archived_at"`
 }
 
+type WorkflowHealth struct {
+	WorkflowID   pgtype.UUID        `json:"workflow_id"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	Failing      bool               `json:"failing"`
+	FailingSince pgtype.Timestamptz `json:"failing_since"`
+	Failures     int32              `json:"failures"`
+	LastRunID    pgtype.UUID        `json:"last_run_id"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkflowVersion struct {
 	ID         pgtype.UUID        `json:"id"`
 	WorkflowID pgtype.UUID        `json:"workflow_id"`
@@ -308,4 +370,5 @@ type WorkflowVersion struct {
 	SpecHash   string             `json:"spec_hash"`
 	CreatedBy  pgtype.Text        `json:"created_by"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	IsTest     bool               `json:"is_test"`
 }

@@ -21,7 +21,7 @@ func TestWebUIBrowser(t *testing.T) {
 	if os.Getenv("RUN_UI_TESTS") != "true" {
 		t.Skip("set RUN_UI_TESTS=true after npm ci and playwright install chromium")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 270*time.Second)
 	defer cancel()
 	workspaceAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -74,6 +74,19 @@ nodes:
 		c.Assistant = config.AssistantConfig{Provider: "openrouter", APIKey: "fake-creator-key", BaseURL: creatorAPI.URL}
 	})
 	owner := s.owner(t, "Browser Co")
+	sink := newAlertSink(t)
+	if status, body := owner.publish(`apiVersion: workflow/v1
+name: browser-operate
+inputs:
+  url: {type: string, required: true}
+nodes:
+  - id: request
+    type: http
+    retry: {max_attempts: 1}
+    config: {method: GET, url: '${input.url}'}
+`); status != 201 {
+		t.Fatalf("publish browser operate workflow: %d %v", status, body)
+	}
 	s.owner(t, "Fresh Setup") // no agents, connectors or provider accounts
 	owner.mustOK("POST", "/be/v1/connections", dbConnection("browser-database", postgresBackend(t)), 201)
 	for _, kind := range []string{"slack", "notion"} {
@@ -86,12 +99,16 @@ nodes:
 	invite := owner.mustOK("POST", "/be/v1/invites", map[string]any{"email": "browser@example.com", "role": "admin"}, 201)
 	cmd := exec.CommandContext(ctx, "npm", "run", "test:browser")
 	cmd.Dir = "../../web"
-	cmd.Env = append(os.Environ(), "UI_TEST_URL="+s.base, "UI_TEST_INVITE="+invite["token"].(string), "UI_TEST_PROVIDER_URL="+s.fakes.servers["openai_compatible"].URL, "UI_TEST_ADMIN_PASSWORD="+adminPassword)
+	cmd.Env = append(os.Environ(), "UI_TEST_URL="+s.base, "UI_TEST_INVITE="+invite["token"].(string), "UI_TEST_PROVIDER_URL="+s.fakes.servers["openai_compatible"].URL, "UI_TEST_ADMIN_PASSWORD="+adminPassword,
+		"UI_TEST_ALERT_URL="+sink.server.URL, "UI_TEST_OPERATE_URL="+workspaceAPI.URL)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("browser acceptance: %v\n%s", err, output)
 	}
 	t.Log(string(output))
+	if events := sink.events(); len(events) != 3 || events[0] != "test" || events[1] != "run.failed" || events[2] != "run.recovered" {
+		t.Fatalf("browser webhook deliveries = %v", events)
+	}
 }
 
 func TestEmbeddedUIRouting(t *testing.T) {

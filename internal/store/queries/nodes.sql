@@ -248,3 +248,23 @@ update node_executions
    set status = @status::text, output = @output, error = @error, ended_at = now()
  where run_id = @run_id and node_id = @node_id and branch_key = '' and status = 'waiting'
 returning attempt;
+
+-- name: LatestSharedAttempts :many
+-- Latest attempt of every node outside foreach branches, the rows a resumed
+-- run copies from the run it continues.
+select distinct on (node_id) *
+  from node_executions
+ where run_id = @run_id and branch_key = ''
+ order by node_id, attempt desc;
+
+-- name: CopyReusedNode :execrows
+-- Records a result reused from an earlier run as this run's first attempt. Its
+-- metrics name the source run instead of repeating its cost.
+insert into node_executions (
+  id, run_id, tenant_id, node_id, node_type, branch_key, attempt,
+  status, input, output, metrics, idempotency_key, started_at, ended_at
+) values (
+  @id, @run_id, @tenant_id, @node_id, @node_type, '', 1,
+  @status::text, @input, @output, @metrics, @idempotency_key, now(), now()
+)
+on conflict (run_id, node_id, branch_key, attempt) do nothing;

@@ -34,6 +34,7 @@ import {
   InputFields,
   readInput,
   ResourceState,
+  Status,
 } from "./components";
 import { connectorActions, kindIcon } from "./connectors";
 import { NodeCreator, type CreatorEntry } from "./creator";
@@ -41,6 +42,7 @@ import { ConnectorForm, ModelFields, ProviderForm, SetupModal } from "./setup";
 import { StepPicker, type PickerItem } from "./picker";
 import { isPlaceholder, type Problem } from "./problems";
 import { WorkflowInputs } from "./workflow-inputs";
+import { WorkflowTriggers } from "./schedules";
 import { stepIcons as typeIcons } from "./step-summary";
 import "@xyflow/react/dist/style.css";
 
@@ -154,6 +156,8 @@ type StepData = {
   Icon: Icon;
   problem: boolean;
   proposed?: boolean;
+  // The step's status in the test run shown beside the diagram.
+  status?: string;
   onAdd?: () => void;
 };
 // A step as n8n draws one: a square tile with its icon, the name underneath,
@@ -163,7 +167,7 @@ function StepNode({ data, selected }: NodeProps<Node<StepData>>) {
     <div className={`step-node ${selected ? "selected" : ""}`}>
       <Handle type="target" position={Position.Left} />
       <div
-        className={`step-tile ${data.problem ? "has-problem" : ""} ${data.proposed ? "proposed" : ""}`}
+        className={`step-tile ${data.problem ? "has-problem" : ""} ${data.proposed ? "proposed" : ""} ${data.status ? `run-${data.status}` : ""}`}
       >
         {icon(data.Icon, 26)}
         {data.problem && (
@@ -193,11 +197,18 @@ function StepNode({ data, selected }: NodeProps<Node<StepData>>) {
         {data.proposed && (
           <small className="proposal-badge">Pending review</small>
         )}
+        {data.status && (
+          <small className={`status ${data.status}`}>
+            {data.status.replaceAll("_", " ")}
+          </small>
+        )}
       </div>
     </div>
   );
 }
 const nodeTypes = { step: StepNode };
+// A stable default: a fresh {} each render would re-run the layout effect.
+const noStatus: Record<string, string> = {};
 
 export function Builder({
   source,
@@ -211,6 +222,8 @@ export function Builder({
   problems,
   starter,
   admin,
+  runStatus = noStatus,
+  onNavigate,
 }: {
   source: string;
   view: "steps" | "visualization";
@@ -225,6 +238,8 @@ export function Builder({
   // A step to add as soon as the catalog loads, e.g. the agent a person chose
   // on the Agents page.
   starter: string;
+  runStatus?: Record<string, string>;
+  onNavigate?: (page: string) => void;
 }) {
   const doc = useMemo(() => parsed(source), [source]);
   const connections = useResource(editable ? "/connections" : null),
@@ -340,6 +355,7 @@ export function Builder({
             Icon: d.Icon,
             problem: stepProblems(n.id).length > 0,
             proposed: n.id === previewID,
+            status: runStatus[n.id],
             onAdd:
               editable && sinks.some((s) => s.id === n.id)
                 ? () => setAdding({ after: n.id })
@@ -359,6 +375,7 @@ export function Builder({
     connections.data,
     kinds.data,
     previewID,
+    runStatus,
   ]);
   const graphIdentity = `${storageKey}:${rows.map((n) => n.id).join(",")}:${edges.map((e) => e.id).join(",")}:${view}`;
   useEffect(() => {
@@ -367,6 +384,29 @@ export function Builder({
     }, 220); // after a just-shown diagram has been measured
     return () => clearTimeout(timer);
   }, [flow, graphIdentity]);
+  // Keep the diagram in view when its pane is resized, e.g. by the test drawer.
+  const canvas = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!flow || !canvas.current || typeof ResizeObserver === "undefined")
+      return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let last = "";
+    const observer = new ResizeObserver(([entry]) => {
+      const size = `${Math.round(entry.contentRect.width)}x${Math.round(entry.contentRect.height)}`;
+      if (size === last || !entry.contentRect.width) return;
+      last = size;
+      clearTimeout(timer);
+      timer = setTimeout(
+        () => flow.fitView({ padding: 0.25, duration: 0, maxZoom: 1 }),
+        120,
+      );
+    });
+    observer.observe(canvas.current);
+    return () => {
+      observer.disconnect();
+      clearTimeout(timer);
+    };
+  }, [flow]);
   function savePositions(node: Node) {
     const positions = Object.fromEntries(
       nodes.map((n) => [n.id, n.id === node.id ? node.position : n.position]),
@@ -1209,6 +1249,10 @@ export function Builder({
                     );
                   }}
                 />
+                <WorkflowTriggers
+                  workflow={String(doc.name || "")}
+                  onNavigate={onNavigate}
+                />
               </div>
             )}
           </li>
@@ -1235,6 +1279,7 @@ export function Builder({
                       aria-label="Has problems"
                     />
                   )}
+                  {runStatus[n.id] && <Status value={runStatus[n.id]} />}
                 </button>
                 {open && detail}
               </li>
@@ -1265,6 +1310,7 @@ export function Builder({
       </section>
       <section
         className="canvas-pane"
+        ref={canvas}
         aria-label="Workflow diagram"
         hidden={view !== "visualization"}
       >

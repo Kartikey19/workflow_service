@@ -2123,8 +2123,11 @@ button.table-row:hover {
   margin-bottom: 14px;
 }
 .run-head > div:first-child {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
+}
+.run-head > .row {
+  flex-wrap: wrap;
 }
 .run-head h2 {
   margin: 0;
@@ -2533,4 +2536,201 @@ ol.step-values {
   .workflow-workspace.with-chat .editor-visualization {
     height: 460px;
   }
+}
+
+/* Test runs: a drawer beside the editor, statuses on the diagram. */
+.test-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 40;
+  width: min(420px, 100vw);
+  height: 100dvh;
+  overflow-y: auto;
+  padding: 18px 18px 28px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-md);
+}
+.workspace.testing {
+  padding-right: 420px;
+}
+.test-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.test-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.test-drawer form {
+  display: grid;
+  gap: 12px;
+}
+.effects {
+  border: 1px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  color: var(--ink);
+}
+.effects ul {
+  margin: 6px 0 8px;
+  padding-left: 18px;
+}
+.test-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.test-steps {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.test-steps li {
+  border-bottom: 1px solid var(--line);
+}
+.test-steps li.is-failure {
+  background: var(--bad-soft);
+}
+.test-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "name status" "facts status";
+  align-items: center;
+  gap: 2px 10px;
+  width: 100%;
+  padding: 10px 6px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.test-step .mono {
+  grid-area: name;
+}
+.test-step small {
+  grid-area: facts;
+}
+.test-step .status {
+  grid-area: status;
+}
+.test-steps .split {
+  padding: 0 6px 12px;
+}
+.small {
+  font-size: 12px;
+}
+.step-caption .status {
+  margin-top: 4px;
+  font-size: 10.5px;
+  padding: 1px 7px 1px 6px;
+}
+.step-tile.run-succeeded {
+  border-color: var(--ok);
+}
+.step-tile.run-failed {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 4px var(--bad-soft);
+}
+.step-tile.run-running {
+  border-color: var(--info);
+  box-shadow: 0 0 0 4px var(--info-soft);
+}
+.step-tile.run-waiting {
+  border-color: var(--warn);
+}
+.step-tile.run-skipped,
+.step-tile.run-cancelled {
+  opacity: 0.55;
+}
+.node-attempt.is-failure > summary .node-name {
+  color: var(--bad);
+}
+@media (max-width: 1100px) {
+  .workspace.testing {
+    padding-right: 0;
+  }
+}
+
+/* Schedules and alerts */
+.next-runs {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface-2, var(--bg));
+}
+.next-runs ol {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.schedule-input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 10px;
+}
+.facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 10px 0;
+  font-size: 12.5px;
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  margin: 0;
+}
+.workflow-triggers {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 10px;
+}
+.workflow-triggers h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.workflow-triggers ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+.delivery-log {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.delivery-log li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.status.sent {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.status.disabled,
+.status.not.started {
+  background: #eef1f1;
+}
+.choices {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+.choices legend,
+.schedule-input legend {
+  font-weight: 560;
+  padding: 0 4px;
 }

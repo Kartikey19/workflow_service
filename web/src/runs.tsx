@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, enc, terminal, type RecordData } from "./api";
 import {
   useResource,
@@ -9,102 +9,63 @@ import {
   Empty,
   ResourceState,
 } from "./components";
-const eventTypes = [
-  "run.created",
-  "run.started",
-  "run.succeeded",
-  "run.failed",
-  "run.cancelled",
-  "run.timed_out",
-  "node.scheduled",
-  "node.signalled",
-  "node.timed_out",
-  "admin.node_retried",
-  "admin.node_skipped",
-  "node.started",
-  "node.succeeded",
-  "node.failed",
-  "node.cancelled",
-  "node.skipped",
-  "node.waiting",
-  "node.retrying",
-  "node.fanout",
-];
+import { attemptFacts, failedStep, useRunWatch } from "./run-watch";
+
+// How a run is labelled: draft tests have no published version number.
+export const versionLabel = (r: RecordData) =>
+  r.test ? "draft test" : `v${r.version}`;
+
 export function Runs({
   initialID,
   editable,
+  onOpenStep,
 }: {
   initialID: string;
   editable: boolean;
+  onOpenStep?: (workflow: string, step: string) => void;
 }) {
   const [status, setStatus] = useState(""),
     [workflow, setWorkflow] = useState(""),
     [cursor, setCursor] = useState(""),
-    [selected, select] = useState(initialID),
-    [events, setEvents] = useState<RecordData[]>([]),
-    [streamError, setStreamError] = useState("");
+    [selected, setSelected] = useState(initialID),
+    [open, setOpen] = useState<Record<string, boolean>>({});
   const list = useResource(
-      `/runs?limit=30&status=${enc(status)}&workflow=${enc(workflow)}&after=${enc(cursor)}`,
-    ),
-    detail = useResource(selected ? `/runs/${selected}` : null),
-    nodes = useResource(
-      selected ? `/runs/${selected}/nodes?include=input` : null,
-    );
+    `/runs?limit=30&status=${enc(status)}&workflow=${enc(workflow)}&after=${enc(cursor)}`,
+  );
+  const { detail, nodes, steps, events, streamError } = useRunWatch(selected);
+  const stepList = useRef<HTMLDivElement>(null),
+    focused = useRef("");
   useEffect(() => {
-    if (initialID) select(initialID);
+    setSelected(initialID);
   }, [initialID]);
-  const isTerminal = !!detail.data && terminal(detail.data.status);
+  function select(id: string) {
+    setSelected(id);
+    history.pushState({}, "", `/ui/runs/${enc(id)}`);
+  }
+  // A failed run opens on the step that failed, so the cause is in view.
+  const failing = failedStep(detail.data, steps);
   useEffect(() => {
-    setEvents([]);
-    setStreamError("");
-    if (!selected) return;
-    const abort = new AbortController();
-    let stream: EventSource | undefined;
-    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    if (isTerminal) {
-      api(`/runs/${selected}/events?limit=1000`, "GET", undefined, abort.signal)
-        .then((r) => {
-          if (!abort.signal.aborted) setEvents(r.items);
-        })
-        .catch((e) => {
-          if (!abort.signal.aborted) setStreamError(e.message);
-        });
-    } else {
-      stream = new EventSource(`/be/v1/runs/${selected}/events`);
-      eventTypes.forEach((type) =>
-        stream!.addEventListener(type, (event) => {
-          const e = JSON.parse((event as MessageEvent).data);
-          setEvents((old) =>
-            [...old.filter((item) => item.seq !== e.seq), e]
-              .sort((a, b) => a.seq - b.seq)
-              .slice(-1000),
-          );
-          if (!refreshTimer)
-            refreshTimer = setTimeout(() => {
-              refreshTimer = undefined;
-              detail.reload();
-              nodes.reload();
-            }, 200);
-        }),
-      );
-      stream.onerror = () =>
-        setStreamError(
-          "Live updates interrupted. The stream will reconnect automatically.",
-        );
-      stream.onopen = () => setStreamError("");
-    }
-    return () => {
-      abort.abort();
-      stream?.close();
-      clearTimeout(refreshTimer);
-    };
-  }, [selected, isTerminal]);
+    setOpen({});
+    focused.current = "";
+  }, [selected]);
+  useEffect(() => {
+    if (!failing || focused.current === selected) return;
+    focused.current = selected;
+    setOpen((o) => ({ ...o, [failing.id]: true }));
+  }, [failing?.id, selected]);
+  function showStep(id: string) {
+    setOpen((o) => ({ ...o, [id]: true }));
+    requestAnimationFrame(() =>
+      stepList.current
+        ?.querySelector(`[data-attempt="${id}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" }),
+    );
+  }
   // When the open run changes status, its row in the list follows.
   useEffect(() => {
     if (detail.data?.status) list.reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.data?.status]);
-  const steps: RecordData[] = nodes.data?.items || [];
   const declared =
     detail.data?.output && Object.keys(detail.data.output).length > 0;
   // Without declared outputs, a run's result is what its last steps produced.
@@ -115,20 +76,6 @@ export function Runs({
         (m) => m.started_at > n.started_at && m.status === "succeeded",
       ),
   );
-  const facts = (m: RecordData | null) =>
-    m &&
-    [
-      m.duration_ms !== undefined && `${m.duration_ms} ms`,
-      m.iterations &&
-        `${m.iterations} model ${m.iterations === 1 ? "call" : "calls"}`,
-      m.tool_calls &&
-        `${m.tool_calls} tool ${m.tool_calls === 1 ? "call" : "calls"}`,
-      m.tokens_in !== undefined &&
-        `${m.tokens_in + (m.tokens_out || 0)} tokens`,
-      m.cost_known && `$${Number(m.cost_usd).toFixed(4)}`,
-    ]
-      .filter(Boolean)
-      .join(", ");
   return (
     <div className={`runs-layout ${selected ? "has-detail" : ""}`}>
       <section className="panel runs-list" aria-label="Runs">
@@ -180,7 +127,7 @@ export function Runs({
             >
               <span className="run-row-main">
                 <strong>
-                  {r.workflow} <small>v{r.version}</small>
+                  {r.workflow} <small>{versionLabel(r)}</small>
                 </strong>
                 <small>
                   {new Date(r.created_at).toLocaleString(undefined, {
@@ -215,9 +162,24 @@ export function Runs({
               <div className="run-head">
                 <div>
                   <h2>
-                    {detail.data.workflow} <small>v{detail.data.version}</small>
+                    {detail.data.workflow}{" "}
+                    <small>{versionLabel(detail.data)}</small>
                   </h2>
                   <p className="mono muted">{selected}</p>
+                  {detail.data.parent_run_id &&
+                    ["resume", "retry"].includes(detail.data.trigger) && (
+                      <p className="muted">
+                        {detail.data.trigger === "resume"
+                          ? "Resumed from "
+                          : "Retry of "}
+                        <button
+                          className="link mono"
+                          onClick={() => select(detail.data!.parent_run_id)}
+                        >
+                          {detail.data.parent_run_id.slice(0, 8)}
+                        </button>
+                      </p>
+                    )}
                 </div>
                 <Status value={detail.data.status} />
                 <div className="row">
@@ -235,6 +197,22 @@ export function Runs({
                       Cancel run
                     </AsyncButton>
                   )}
+                  {editable &&
+                    ["failed", "cancelled"].includes(detail.data.status) && (
+                      <AsyncButton
+                        primary
+                        run={async () => {
+                          const r = await api(
+                            `/runs/${selected}/resume`,
+                            "POST",
+                          );
+                          select(r.id);
+                          list.reload();
+                        }}
+                      >
+                        Resume from failed step
+                      </AsyncButton>
+                    )}
                   {editable && terminal(detail.data.status) && (
                     <AsyncButton
                       run={async () => {
@@ -258,6 +236,28 @@ export function Runs({
                     )}
                     {detail.data.error.message}
                   </p>
+                  {detail.data.error.node_code === "E_CONNECTION_REAUTH" && (
+                    <p className="notice">
+                      The account this step uses lost access. Reconnect it on
+                      the Connectors page, then resume the run.
+                    </p>
+                  )}
+                  {failing && (
+                    <div className="row">
+                      <button onClick={() => showStep(failing.id)}>
+                        Show failed step
+                      </button>
+                      {onOpenStep && editable && !detail.data.test && (
+                        <button
+                          onClick={() =>
+                            onOpenStep(detail.data!.workflow, failing.node_id)
+                          }
+                        >
+                          Open step in editor
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : declared ? (
                 <div className="run-result">
@@ -291,32 +291,47 @@ export function Runs({
           )}
           <h3>Steps</h3>
           <ResourceState error={nodes.error} loading={!nodes.data} />
-          {steps.map((n) => (
-            <details className="node-attempt" key={n.id}>
-              <summary>
-                <span className="node-name">
-                  {n.node_id}
-                  {n.branch_key ? ` [${n.branch_key}]` : ""}
-                </span>
-                <small>
-                  {n.node_type}
-                  {n.attempt > 1 ? `, attempt ${n.attempt}` : ""}
-                </small>
-                <small className="node-facts">{facts(n.metrics)}</small>
-                <Status value={n.status} />
-              </summary>
-              <div className="split">
-                <div>
-                  <h4>Input</h4>
-                  <JSONView value={n.input} />
+          <div ref={stepList}>
+            {steps.map((n) => (
+              <details
+                className={`node-attempt ${failing?.id === n.id ? "is-failure" : ""}`}
+                key={n.id}
+                data-attempt={n.id}
+                open={!!open[n.id]}
+                onToggle={(e) => {
+                  const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+                  setOpen((o) =>
+                    o[n.id] === isOpen ? o : { ...o, [n.id]: isOpen },
+                  );
+                }}
+              >
+                <summary>
+                  <span className="node-name">
+                    {n.node_id}
+                    {n.branch_key ? ` [${n.branch_key}]` : ""}
+                  </span>
+                  <small>
+                    {n.node_type}
+                    {n.attempt > 1 ? `, attempt ${n.attempt}` : ""}
+                  </small>
+                  <small className="node-facts">
+                    {attemptFacts(n.metrics)}
+                  </small>
+                  <Status value={n.status} />
+                </summary>
+                <div className="split">
+                  <div>
+                    <h4>Input</h4>
+                    <JSONView value={n.input} />
+                  </div>
+                  <div>
+                    <h4>{n.error ? "Error" : "Output"}</h4>
+                    <JSONView value={n.error || n.output} />
+                  </div>
                 </div>
-                <div>
-                  <h4>{n.error ? "Error" : "Output"}</h4>
-                  <JSONView value={n.error || n.output} />
-                </div>
-              </div>
-            </details>
-          ))}
+              </details>
+            ))}
+          </div>
           <details className="event-log">
             <summary>Event log ({events.length})</summary>
             {streamError && (

@@ -33,13 +33,16 @@ type InputError struct{ Fields []spec.FieldError }
 func (e *InputError) Error() string { return fmt.Sprintf("%d input field(s) invalid", len(e.Fields)) }
 
 type StartParams struct {
-	TenantID       pgtype.UUID
-	Workflow       string
-	Version        int32 // 0 pins the latest version at creation (04 §3.1)
+	TenantID pgtype.UUID
+	Workflow string
+	Version  int32 // 0 pins the latest version at creation (04 §3.1)
+	// VersionID pins an exact version row, published or draft test; it wins
+	// over Version. Retries and resumes use it to rerun what actually ran.
+	VersionID      pgtype.UUID
 	Input          map[string]any
 	CorrelationID  string
 	IdempotencyKey string
-	Trigger        string // api | ui | webhook | schedule | assistant
+	Trigger        string // api | ui | webhook | schedule | assistant | test | retry | resume
 	CreatedBy      string
 	ParentRunID    pgtype.UUID
 }
@@ -66,7 +69,12 @@ func (f *Service) start(ctx context.Context, p StartParams) (StartResult, error)
 		return StartResult{}, ErrArchived
 	}
 	var version gen.WorkflowVersion
-	if p.Version > 0 {
+	if p.VersionID.Valid {
+		version, err = f.Q.GetWorkflowVersion(ctx, gen.GetWorkflowVersionParams{ID: p.VersionID, TenantID: p.TenantID})
+		if err == nil && version.WorkflowID != workflow.ID {
+			err = pgx.ErrNoRows
+		}
+	} else if p.Version > 0 {
 		version, err = f.Q.GetWorkflowVersionByNumber(ctx, gen.GetWorkflowVersionByNumberParams{WorkflowID: workflow.ID, Version: p.Version})
 	} else {
 		version, err = f.Q.LatestWorkflowVersion(ctx, workflow.ID)

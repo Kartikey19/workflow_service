@@ -47,6 +47,7 @@ type WorkflowService interface {
 	Get(ctx context.Context, tenantID pgtype.UUID, name string) (workflows.Detail, error)
 	GetVersion(ctx context.Context, tenantID pgtype.UUID, name string, number int32) (workflows.VersionDetail, error)
 	SetArchived(ctx context.Context, tenantID pgtype.UUID, name string, archived bool) error
+	PrepareTest(ctx context.Context, tenantID pgtype.UUID, source []byte, createdBy string) (workflows.TestVersion, error)
 }
 
 // RunService is the run use-cases the handlers need.
@@ -60,6 +61,7 @@ type RunService interface {
 	Status(ctx context.Context, tenantID, id pgtype.UUID) (string, error)
 	Cancel(ctx context.Context, tenantID, id pgtype.UUID, reason string) error
 	Retry(ctx context.Context, tenantID, id pgtype.UUID, actor, idempotencyKey string) (runs.StartResult, error)
+	Resume(ctx context.Context, tenantID, id pgtype.UUID, actor, idempotencyKey string) (runs.StartResult, error)
 	Signal(ctx context.Context, tenantID pgtype.UUID, key string, payload json.RawMessage) (runs.SignalResult, error)
 }
 
@@ -178,6 +180,9 @@ type Services struct {
 	// Assistant and Triggers enable draft generation and webhook routes.
 	Assistant AssistantService
 	Triggers  TriggerService
+	// Schedules and Alerts enable /be/v1/schedules and /be/v1/alert-channels.
+	Schedules ScheduleService
+	Alerts    AlertService
 	// Tasks enables the /be/v1/tasks routes; nil leaves them unregistered.
 	Tasks TaskService
 	// Admin enables the /be/v1/admin routes; nil leaves them unregistered.
@@ -228,6 +233,7 @@ func (h *Handler) Register(r Router) {
 	r.Handle("GET /be/v1/runs/{id}/events", auth.RoleViewer, h.runEvents)
 	r.Handle("POST /be/v1/runs/{id}/cancel", auth.RoleEditor, h.cancelRun)
 	r.Handle("POST /be/v1/runs/{id}/retry", auth.RoleEditor, h.retryRun)
+	h.registerOperate(r)
 
 	r.Handle("POST /be/v1/signals", auth.RoleEditor, h.signal)
 	r.Handle("GET /be/v1/executors", auth.RoleViewer, h.listExecutors)
