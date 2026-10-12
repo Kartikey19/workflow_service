@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Bot } from "lucide-react";
+import { ModelFields, ProviderForm, SetupModal } from "./setup";
 import { api, enc, pretty, type RecordData } from "./api";
 import {
   useResource,
@@ -25,9 +26,11 @@ const fresh = {
 };
 export function Agents({
   editable,
+  admin,
   useAgent,
 }: {
   editable: boolean;
+  admin: boolean;
   useAgent: (name: string) => void;
 }) {
   const list = useResource("/agents"),
@@ -38,21 +41,8 @@ export function Agents({
     [test, setTest] = useState<RecordData | null>(null),
     [result, setResult] = useState<RecordData | null>(null),
     [chosenTools, setTools] = useState<string[]>([]),
-    [models, setModels] = useState<string[]>([]);
-  // The chosen provider's models, offered as suggestions for the model field.
-  // Listing them needs an admin; others simply type the model.
-  async function loadModels(name: string) {
-    setModels([]);
-    const provider = providers.data?.items?.find(
-      (p: RecordData) => p.name === name,
-    );
-    if (!provider) return;
-    try {
-      setModels((await api(`/providers/${provider.id}/test`, "POST")).models);
-    } catch {
-      /* No permission or the provider is down: the field stays free text. */
-    }
-  }
+    [addingProvider, setAddingProvider] = useState(false);
+  const [providerKind, setProviderKind] = useState<string | undefined>();
   function editing(agent: RecordData) {
     setEdit(agent);
     setTools(agent.tools || []);
@@ -181,33 +171,22 @@ export function Agents({
               <Field label="Description">
                 <input name="description" defaultValue={edit.description} />
               </Field>
-              <Field label="Provider connection">
-                <select
-                  name="connection"
-                  defaultValue={edit.connection || ""}
-                  onChange={(e) => loadModels(e.target.value)}
-                >
-                  <option value="">Platform provider</option>
-                  {providers.data?.items?.map((p: RecordData) => (
-                    <option key={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Model">
-                <input
-                  name="model"
-                  required
-                  defaultValue={edit.model}
-                  placeholder="Provider model ID"
-                  list="provider-models"
-                  autoComplete="off"
-                />
-              </Field>
-              <datalist id="provider-models">
-                {models.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
+              <ModelFields
+                providers={providers.data?.items || []}
+                connection={edit.connection || ""}
+                model={edit.model || ""}
+                onChange={(connection, model) =>
+                  setEdit({ ...edit, connection, model })
+                }
+                onAdd={
+                  admin
+                    ? (kind) => {
+                        setProviderKind(kind);
+                        setAddingProvider(true);
+                      }
+                    : undefined
+                }
+              />
             </div>
             <Field label="Instructions">
               <textarea
@@ -376,6 +355,24 @@ export function Agents({
             </div>
           )}
         </section>
+      )}
+      {addingProvider && (
+        <SetupModal
+          title="Add provider account"
+          onClose={() => setAddingProvider(false)}
+        >
+          <ProviderForm
+            initialKind={providerKind}
+            onSaved={(provider) => {
+              providers.reload();
+              setEdit(
+                (current) =>
+                  current && { ...current, connection: provider.name },
+              );
+              setAddingProvider(false);
+            }}
+          />
+        </SetupModal>
       )}
     </>
   );

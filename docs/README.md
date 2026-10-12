@@ -19,6 +19,8 @@ or compliance processes all run on the same seven tables.
 | 06 | [Operations runbook](06-runbook.md) | Local UI, deployment baseline, releases, backups, restore, observability and key rotation |
 | 07 | [Deployment guide](07-deployment.md) | App Platform, DO Container Registry, Neon, CI/CD and rollback |
 | 08 | [Custom code nodes](08-code-nodes.md) | Scope, contract, sandbox options, threat model and milestones for running Python, TypeScript and Go in a workflow |
+| 09 | [Product usability](09-product-usability.md) | Railway research, contextual setup decisions and acceptance criteria |
+| 10 | [Railway feature opportunities](10-railway-feature-opportunities.md) | Expanded research, proposed Weft features, priorities and implementation boundaries |
 
 If you only read two: **01** for the schema and **03 §5** for the resolver. Those
 two are where correctness lives; everything else is plumbing around them.
@@ -77,7 +79,7 @@ Organizations add their own provider keys under `/be/v1/providers` (`04 §4d`); 
 sealed with the vault key, so they need `VAULT_MASTER_KEY`. `OPENAI_BASE_URL` and
 `GEMINI_BASE_URL` let an operator route those providers through a proxy.
 
-OAuth integrations appear only for providers you register an app with, and need
+OAuth integrations are visible in the catalog; sign-in is available after you register an app, and needs
 `PUBLIC_URL` (redirect URI `{PUBLIC_URL}/be/v1/oauth/callback`): `GOOGLE_CLIENT_ID` and
 `GOOGLE_CLIENT_SECRET` (Gmail and Drive), `DROPBOX_APP_KEY` and `DROPBOX_APP_SECRET`,
 `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` and `MICROSOFT_TENANT` (default `common`).
@@ -172,8 +174,10 @@ The API embeds a React/Vite workspace. Run `make ui-install ui-build` after
 frontend changes; Go-only builds use the committed bundle. Sign in at the API
 root to manage workflows, agents, connections, run events, tasks, secrets,
 webhooks, members, API keys, and usage. Workflows can be created from agents
-without editing YAML, or drafted by the assistant using ASSISTANT_PROVIDER,
-ASSISTANT_API_KEY, and ASSISTANT_MODEL (or a tenant provider connection).
+without editing YAML, or built one reviewed step at a time with the OpenRouter
+creator using GLM 5.3 Flash. Configure `ASSISTANT_PROVIDER=openrouter` and
+`ASSISTANT_API_KEY`; the creator model is fixed. Running agents keep their own
+provider/model settings, with optional workflow-step overrides.
 
 See [the operations runbook](06-runbook.md) for the provisional Docker/Compose
 setup and local backup/rolling-release acceptance. Production hosting remains

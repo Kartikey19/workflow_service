@@ -180,6 +180,36 @@ func (q *Queries) GetConnection(ctx context.Context, arg GetConnectionParams) (C
 	return i, err
 }
 
+const listAssistantConnections = `-- name: ListAssistantConnections :many
+select name, kind from connections where org_id = $1 order by name
+`
+
+type ListAssistantConnectionsRow struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// No configuration, credential hints, account identities or encrypted values.
+func (q *Queries) ListAssistantConnections(ctx context.Context, orgID pgtype.UUID) ([]ListAssistantConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, listAssistantConnections, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssistantConnectionsRow
+	for rows.Next() {
+		var i ListAssistantConnectionsRow
+		if err := rows.Scan(&i.Name, &i.Kind); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listConnections = `-- name: ListConnections :many
 select id, org_id, name, kind, config, secret_hint, account, token_expires_at, created_at, updated_at, created_by
   from connections where org_id = $1 order by name

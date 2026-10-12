@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState, lazy, Suspense } from "react";
-import { ChevronDown, ChevronLeft, Check, CircleAlert } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  Check,
+  CircleAlert,
+  Undo2,
+  Redo2,
+} from "lucide-react";
 const Builder = lazy(() =>
   import("./builder").then((m) => ({ default: m.Builder })),
 );
 import { parse, stringify } from "yaml";
+import { WorkflowCreator } from "./workflow-creator";
+import { useWorkflowDraft } from "./use-workflow-draft";
 import { isBlankWorkflow, problemsFor } from "./problems";
 import { api, APIError, enc, type RecordData } from "./api";
 import {
@@ -20,43 +29,59 @@ const initial =
   "apiVersion: workflow/v1\nname: my-workflow\nnodes:\n  - id: done\n    type: noop\n    config: {}\n";
 export function Workflows({
   editable,
+  admin,
   agentName,
   onRun,
   organizationID,
+  userID,
 }: {
   editable: boolean;
+  admin: boolean;
   agentName: string;
   onRun: (id: string) => void;
   organizationID: string;
+  userID: string;
 }) {
-  const list = useResource("/workflows?include_archived=true"),
-    providers = useResource(editable ? "/providers" : null);
+  const list = useResource("/workflows?include_archived=true");
   const [step, setStep] = useState(""),
     [justPublished, setJustPublished] = useState(false),
     [showProblems, setShowProblems] = useState(false);
   const runPanel = useRef<HTMLElement>(null),
     checkWrap = useRef<HTMLDivElement>(null);
-  const [selected, select] = useState(""),
-    [source, setSource] = useState(initial),
-    [mode, setMode] = useState(agentName ? "editor" : "list"),
-    [workflow, setWorkflow] = useState<RecordData | null>(null);
+  const { editor, state: editing } = useWorkflowDraft(
+    organizationID,
+    userID,
+    initial,
+    editable,
+    !!agentName,
+  );
+  const selected = editing.open ? editing.slot : "";
+  const source = editing.source;
+  const [mode, setMode] = useState(editing.open ? "editor" : "list"),
+    [workflow, setWorkflow] = useState<RecordData | null>(null),
+    [editorMode, setEditorMode] = useState("canvas"),
+    [starterAgent, setStarterAgent] = useState(agentName);
   const [spec, setSpec] = useState<RecordData | null>(null),
     [diagnostics, setDiagnostics] = useState<RecordData[]>([]),
     [validating, setValidating] = useState(false);
-  const [requirements, setRequirements] = useState(""),
-    [draft, setDraft] = useState<RecordData | null>(null),
-    [published, setPublished] = useState("");
+  const [creator, setCreator] = useState<{ source: string } | null>(null);
   const [version, setVersion] = useState<RecordData | null>(null);
   const detail = useResource(selected ? `/workflows/${enc(selected)}` : null);
   useEffect(() => {
-    if (detail.data) {
+    if (
+      detail.data?.name === selected &&
+      (detail.data.latest?.version || 0) >= editor.getSnapshot().baseVersion
+    ) {
       setWorkflow(detail.data);
       setVersion(detail.data.latest);
-      setSource(detail.data.latest?.yaml_source || initial);
+      editor.load(
+        selected,
+        detail.data.latest?.yaml_source || initial,
+        detail.data.latest?.version || 0,
+      );
       setSpec(detail.data.latest?.spec || null);
-      setPublished(detail.data.name);
     }
-  }, [detail.data]);
+  }, [detail.data, selected, editor]);
   useEffect(() => {
     if (mode !== "editor" || !editable) return;
     // Keep the last result while checking an edit: blurring a pending field
@@ -68,8 +93,10 @@ export function Workflows({
     const timer = setTimeout(() => {
       api("/workflows?dry_run=true", "POST", { yaml: source }, abort.signal)
         .then((r) => {
-          setSpec(r.spec);
-          setDiagnostics(r.warnings || []);
+          if (!abort.signal.aborted) {
+            setSpec(r.spec);
+            setDiagnostics(r.warnings || []);
+          }
         })
         .catch((e) => {
           if (!abort.signal.aborted) {
@@ -91,27 +118,43 @@ export function Workflows({
     };
   }, [source, mode, editable]);
   function startNew() {
-    select("");
+    editor.begin("");
     setStep("");
-    setPublished("");
+
     setWorkflow(null);
-    setSource(initial);
+    setVersion(null);
+    setStarterAgent("");
     setMode("editor");
   }
   function view(name: string) {
-    select(name);
+    editor.begin(name);
     setStep("");
     setWorkflow(null);
+    setVersion(null);
     setMode("editor");
-    setPublished("");
   }
   async function publish(yaml: string) {
+    const { session, slot } = editor.getSnapshot();
     const r = await api("/workflows", "POST", { yaml });
-    select(r.workflow.name);
-    setPublished(r.workflow.name);
-    setJustPublished(true);
+    const canonical = r.unchanged
+      ? (await api(`/workflows/${enc(r.workflow.name)}/versions/${r.version}`))
+          .yaml_source
+      : yaml;
+    const stillEditing =
+      editor.getSnapshot().session === session && editor.getSnapshot().open;
+    editor.published(
+      session,
+      slot,
+      r.workflow.name,
+      yaml,
+      r.version,
+      canonical,
+    );
+    if (stillEditing) {
+      setJustPublished(true);
+      detail.reload();
+    }
     list.reload();
-    detail.reload();
     return r;
   }
   const docName = (() => {
@@ -139,13 +182,12 @@ export function Workflows({
       runPanel.current.scrollIntoView({ block: "center", behavior: "smooth" });
       setJustPublished(false);
     }
-  }, [justPublished, version, published]);
+  }, [justPublished, version]);
   function rename(name: string) {
     try {
       const doc = parse(source);
-      if (doc && typeof doc === "object" && name && name !== doc.name) {
-        setSource(stringify({ ...doc, name }));
-        setPublished("");
+      if (doc && typeof doc === "object" && name !== doc.name) {
+        editor.change(stringify({ ...doc, name }), "name");
       }
     } catch {
       /* The builder reports an unreadable definition. */
@@ -160,6 +202,23 @@ export function Workflows({
       : "—";
   return (
     <>
+      {creator && (
+        <WorkflowCreator
+          source={creator.source}
+          onClose={() => setCreator(null)}
+          onAccept={(yaml, id) => {
+            if (mode === "list") {
+              editor.begin("");
+              setWorkflow(null);
+              setVersion(null);
+              setStarterAgent("");
+            }
+            editor.change(yaml);
+            setStep(id);
+            setMode("editor");
+          }}
+        />
+      )}
       {mode === "list" && (
         <section className="overview">
           <div className="toolbar">
@@ -168,11 +227,13 @@ export function Workflows({
             </p>
             {editable && (
               <div className="row">
-                <button onClick={() => setMode("assistant")}>
-                  Ask assistant
+                <button onClick={() => setCreator({ source: "" })}>
+                  Create with AI
                 </button>
                 <button className="primary" onClick={startNew}>
-                  New workflow
+                  {Object.hasOwn(editing.drafts, "")
+                    ? "Resume draft"
+                    : "New workflow"}
                 </button>
               </div>
             )}
@@ -194,6 +255,9 @@ export function Workflows({
                 >
                   <span className="table-name">
                     <strong>{w.name}</strong>
+                    {editable && Object.hasOwn(editing.drafts, w.name) && (
+                      <small>Unpublished draft</small>
+                    )}
                     <small>
                       {w.archived_at
                         ? "Archived"
@@ -214,66 +278,6 @@ export function Workflows({
           )}
         </section>
       )}
-      {mode === "assistant" && (
-        <section className="panel workspace">
-          <button className="link back" onClick={() => setMode("list")}>
-            <ChevronLeft size={16} aria-hidden="true" />
-            All workflows
-          </button>
-          <h2>Describe what you want to automate</h2>
-          <p className="muted">
-            The assistant drafts and checks a workflow using the connectors and
-            agents in this organization. You review it before publishing.
-          </p>
-          <ActionForm
-            label="Generate draft"
-            submit={async (data) => {
-              let r: RecordData;
-              try {
-                r = await api("/assistant/workflows", "POST", {
-                  requirements,
-                  connection: data.get("connection"),
-                  model: data.get("model"),
-                });
-              } catch (e) {
-                if (e instanceof APIError && e.status === 422 && e.body.yaml)
-                  r = e.body;
-                else throw e;
-              }
-              setDraft(r);
-              setSource(r.yaml);
-              setPublished("");
-              select("");
-              setWorkflow(null);
-              setMode("editor");
-            }}
-          >
-            <Field label="Requirements">
-              <textarea
-                required
-                rows={7}
-                value={requirements}
-                onChange={(e) => setRequirements(e.target.value)}
-                placeholder="Classify incoming tickets with my triage agent, then email urgent issues to the support team."
-              />
-            </Field>
-            <Field label="Provider">
-              <select name="connection">
-                <option value="">Platform assistant</option>
-                {providers.data?.items.map((p: RecordData) => (
-                  <option key={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field
-              label="Model"
-              hint="Leave blank to use the platform assistant model."
-            >
-              <input name="model" />
-            </Field>
-          </ActionForm>
-        </section>
-      )}
       {mode === "editor" && (
         <section className="workspace editing">
           <div className="editor-bar">
@@ -284,10 +288,9 @@ export function Workflows({
                 title="All workflows"
                 onClick={() => {
                   setMode("list");
-                  select("");
+                  editor.close();
                   setStep("");
                   setWorkflow(null);
-                  setPublished("");
                 }}
               >
                 <ChevronLeft size={18} aria-hidden="true" />
@@ -295,8 +298,8 @@ export function Workflows({
               <input
                 className="title-input"
                 aria-label="Workflow name"
-                key={docName}
-                defaultValue={docName}
+                value={docName}
+                onChange={(e) => rename(e.target.value)}
                 readOnly={!editable}
                 placeholder="Name this workflow"
                 onBlur={(e) => rename(e.target.value.trim())}
@@ -306,21 +309,72 @@ export function Workflows({
               />
             </div>
             <div className="editor-actions">
+              {editable && (
+                <button
+                  onClick={() => setCreator({ source: blank ? "" : source })}
+                >
+                  Create with AI
+                </button>
+              )}
+              {editable && (
+                <div className="edit-history" aria-label="Edit history">
+                  <button
+                    className="icon-button"
+                    aria-label="Undo"
+                    title="Undo (Ctrl/Cmd+Z outside text fields)"
+                    disabled={!editing.canUndo}
+                    onClick={() => editor.move(-1)}
+                  >
+                    <Undo2 size={16} aria-hidden="true" />
+                  </button>
+                  <button
+                    className="icon-button"
+                    aria-label="Redo"
+                    title="Redo (Ctrl/Cmd+Shift+Z outside text fields)"
+                    disabled={!editing.canRedo}
+                    onClick={() => editor.move(1)}
+                  >
+                    <Redo2 size={16} aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              <div className="editor-view" aria-label="Editor view">
+                <button
+                  aria-pressed={editorMode === "canvas"}
+                  onClick={() => setEditorMode("canvas")}
+                >
+                  Canvas
+                </button>
+                <button
+                  aria-pressed={editorMode === "yaml"}
+                  onClick={() => setEditorMode("yaml")}
+                >
+                  YAML
+                </button>
+              </div>
               {workflow?.versions && (
                 <select
                   aria-label="Version"
                   value={version?.version || workflow.latest?.version}
                   onChange={async (e) => {
+                    const session = editing.session;
+                    const source = editor.getSnapshot().source;
                     try {
                       const r = await api(
                         `/workflows/${enc(selected)}/versions/${e.target.value}`,
                       );
-                      setSource(r.yaml_source);
+                      if (
+                        editor.getSnapshot().session !== session ||
+                        editor.getSnapshot().source !== source ||
+                        !editor.getSnapshot().open
+                      )
+                        return;
+                      editor.replace(r.yaml_source);
                       setSpec(r.spec);
                       setVersion(r);
-                      setPublished(workflow.name);
                     } catch (e) {
-                      setDiagnostics([{ message: (e as Error).message }]);
+                      if (editor.getSnapshot().session === session)
+                        setDiagnostics([{ message: (e as Error).message }]);
                     }
                   }}
                 >
@@ -408,43 +462,93 @@ export function Workflows({
             error={detail.error}
             loading={!!selected && !detail.data}
           />
-          {draft && (
-            <p className="muted">
-              Assistant draft · {draft.attempts} attempts ·{" "}
-              {draft.tokens_in + draft.tokens_out} tokens ·{" "}
-              {draft.cost_known
-                ? `$${draft.cost_usd.toFixed(4)}`
-                : "Price unavailable"}
+
+          {editable && (
+            <div className="draft-state">
+              <span role="status">
+                {editing.dirty
+                  ? editing.saveError
+                    ? "Draft could not be saved on this browser"
+                    : "Draft saved on this browser"
+                  : "No unpublished changes"}
+              </span>
+              {editing.dirty && (
+                <button className="link" onClick={() => editor.revert()}>
+                  Revert changes
+                </button>
+              )}
+            </div>
+          )}
+          {editing.restored && (
+            <p className="draft-notice" role="status">
+              Recovered your unpublished draft. Review it before publishing.
             </p>
           )}
-          <Suspense fallback={<p>Opening editor…</p>}>
-            <Builder
-              key={`${selected}:${version?.version}`}
-              organizationID={organizationID}
-              source={source}
-              editable={editable}
-              selected={step}
-              onSelect={setStep}
-              problems={problems}
-              starter={agentName && !selected ? `agent:${agentName}` : ""}
-              onChange={(value) => {
-                setSource(value);
-                setPublished("");
-              }}
-            />
-          </Suspense>
-          {published &&
-            workflow &&
+          {editing.dirty && editing.conflict && (
+            <p className="draft-notice" role="alert">
+              A newer version was published since this draft started. Your
+              changes are preserved; review the latest version before
+              publishing.
+            </p>
+          )}
+          {editing.dirty && editing.saveError && (
+            <p className="error" role="alert">
+              {editing.saveError === "changed"
+                ? "Drafts changed in another tab. Copy your YAML, then reload to review the saved drafts."
+                : "Browser storage is unavailable or full. Copy your YAML before leaving this page."}{" "}
+              <button className="link" onClick={() => setEditorMode("yaml")}>
+                Show YAML
+              </button>
+            </p>
+          )}
+          {editorMode === "yaml" ? (
+            <Field
+              label="Workflow YAML"
+              hint="Unpublished drafts are stored on this browser and may include prompts or sample data. Account credentials are stored separately."
+            >
+              <textarea
+                className="code workflow-yaml"
+                spellCheck={false}
+                readOnly={!editable}
+                value={source}
+                onChange={(e) => {
+                  editor.change(e.target.value, "yaml");
+                }}
+              />
+            </Field>
+          ) : (
+            <Suspense fallback={<p>Opening editor…</p>}>
+              <Builder
+                key={`${editing.session}:${editing.revision}`}
+                organizationID={organizationID}
+                source={source}
+                editable={editable}
+                admin={admin}
+                selected={step}
+                onSelect={setStep}
+                problems={problems}
+                starter={
+                  starterAgent && !selected ? `agent:${starterAgent}` : ""
+                }
+                onChange={(value, group) => {
+                  editor.change(value, group);
+                  setStarterAgent("");
+                }}
+              />
+            </Suspense>
+          )}
+          {workflow &&
+            workflow.name === selected &&
             version &&
             source === version.yaml_source && (
               <section className="subsection" ref={runPanel}>
-                <h3>Run {published}</h3>
+                <h3>Run {workflow.name}</h3>
                 <ActionForm
                   label="Start run"
                   disabled={!editable || !!workflow.archived_at}
                   submit={async (data) => {
                     const r = await api("/runs", "POST", {
-                      workflow: published,
+                      workflow: workflow.name,
                       version: version.version,
                       input: Object.keys(version.spec.inputs || {}).length
                         ? readInput(data, version.spec.inputs)

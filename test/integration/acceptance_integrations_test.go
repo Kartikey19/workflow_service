@@ -294,13 +294,13 @@ func TestOAuthConnectFlow(t *testing.T) {
 	s := newStack(t, ctx, withCloud(cloud))
 	owner := s.owner(t, "OAuth Co")
 
-	// A provider the operator has not configured is not offered.
+	// Unconfigured OAuth apps remain discoverable, with sign-in explicitly unavailable.
 	plain := newStack(t, ctx)
 	plainOwner := plain.owner(t, "No OAuth Co")
 	_, kinds := plainOwner.call("GET", "/be/v1/integrations", nil)
 	for _, k := range kinds["items"].([]any) {
-		if k.(map[string]any)["oauth"] == true {
-			t.Fatalf("an unconfigured OAuth kind is offered: %v", k)
+		if k.(map[string]any)["oauth"] == true && k.(map[string]any)["oauth_configured"] != false {
+			t.Fatalf("unconfigured OAuth kind claims sign-in is available: %v", k)
 		}
 	}
 	if status, _ := plainOwner.call("POST", "/be/v1/connections/oauth/start", map[string]any{"kind": "gmail", "name": "g"}); status != 400 {
@@ -311,6 +311,9 @@ func TestOAuthConnectFlow(t *testing.T) {
 	offered := []string{}
 	for _, k := range kinds["items"].([]any) {
 		offered = append(offered, k.(map[string]any)["kind"].(string))
+		if k.(map[string]any)["oauth"] == true && k.(map[string]any)["oauth_configured"] != true {
+			t.Fatalf("configured OAuth kind unavailable: %v", k)
+		}
 	}
 	if strings.Join(offered, ",") != "smtp,resend,gmail,gdrive,gdocs,gsheets,gcalendar,dropbox,onedrive,postgres,mysql,mongo,slack,notion,mcp" {
 		t.Fatalf("offered kinds = %v", offered)

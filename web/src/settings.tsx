@@ -1,4 +1,5 @@
 import { connectorActions, kindIcon } from "./connectors";
+import { ConnectorForm } from "./setup";
 import { useState } from "react";
 import { api, enc, secretParts, type RecordData } from "./api";
 import {
@@ -173,98 +174,17 @@ export function Connections({ admin }: { admin: boolean }) {
               })}
             </div>
           )}
-          <ActionForm
-            key={`${kind}-${editing?.name || ""}`}
-            label={descriptor?.oauth ? "Connect account" : "Test and save"}
-            submit={async (data) => {
-              const name = String(data.get("name"));
-              if (descriptor?.oauth) {
-                const r = await api("/connections/oauth/start", "POST", {
-                  kind,
-                  name,
-                });
-                window.location.assign(r.authorize_url);
-                return;
-              }
-              const config: RecordData = {},
-                secret: Record<string, string> = {};
-              descriptor?.fields.forEach((f: RecordData) => {
-                const v = data.get(f.name);
-                if (v === null || v === "") return;
-                if (f.secret) secret[f.name] = String(v);
-                else
-                  config[f.name] =
-                    f.type === "int"
-                      ? Number(v)
-                      : f.type === "bool"
-                        ? v === "true"
-                        : v;
-              });
-              await api(
-                editing ? `/connections/${enc(editing.name)}` : "/connections",
-                editing ? "PUT" : "POST",
-                { name, kind, config, secret },
-              );
-              setForm(false);
-              edit(null);
-              list.reload();
-            }}
-          >
-            <Field label="Connection name">
-              <input
-                name="name"
-                required
-                defaultValue={editing?.name}
-                readOnly={!!editing}
-                placeholder="my-connection"
-              />
-            </Field>
-            {descriptor?.fields?.map((f: RecordData) => (
-              <Field
-                key={f.name}
-                label={f.title}
-                hint={
-                  f.secret && editing
-                    ? "Leave blank to retain the saved credential."
-                    : f.help
-                }
-              >
-                {f.type === "bool" || f.type === "enum" ? (
-                  <select
-                    name={f.name}
-                    defaultValue={String(
-                      editing?.config?.[f.name] ?? f.default ?? "",
-                    )}
-                  >
-                    <option value="">Default</option>
-                    {(f.type === "bool" ? ["true", "false"] : f.enum).map(
-                      (v: string) => (
-                        <option key={v}>{v}</option>
-                      ),
-                    )}
-                  </select>
-                ) : (
-                  <input
-                    name={f.name}
-                    type={
-                      f.secret
-                        ? "password"
-                        : f.type === "int"
-                          ? "number"
-                          : "text"
-                    }
-                    required={f.required && !(f.secret && editing)}
-                    defaultValue={
-                      f.secret
-                        ? ""
-                        : (editing?.config?.[f.name] ?? f.default ?? "")
-                    }
-                    autoComplete={f.secret ? "off" : undefined}
-                  />
-                )}
-              </Field>
-            ))}
-          </ActionForm>
+          {descriptor && (
+            <ConnectorForm
+              descriptor={descriptor}
+              editing={editing}
+              onSaved={() => {
+                setForm(false);
+                edit(null);
+                list.reload();
+              }}
+            />
+          )}
         </section>
       )}
     </>

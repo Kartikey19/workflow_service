@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:unit": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.0",

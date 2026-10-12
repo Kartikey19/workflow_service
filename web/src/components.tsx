@@ -86,7 +86,9 @@ export function useResource(path: string | null) {
     if (!path) return;
     const abort = new AbortController();
     api(path, "GET", undefined, abort.signal)
-      .then(setData)
+      .then((result) => {
+        if (!abort.signal.aborted) setData(result);
+      })
       .catch((e) => {
         if (!abort.signal.aborted) setError(e.message);
       });

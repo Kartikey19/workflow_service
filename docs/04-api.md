@@ -396,6 +396,7 @@ connectors.
 | `POST /be/v1/providers` | admin | `{name, provider, base_url?, api_key, skip_test?}`; **tests first and saves only if the test passes**; returns the connection and the models found |
 | `GET /be/v1/providers` | editor | connections, with how many agents use each |
 | `GET /be/v1/provider-kinds` | editor | every kind: `{id, title, base_url, key_optional, native}` |
+| `GET /be/v1/providers/{id}/models` | editor | list available models using this organization’s saved account; returns `{ok, models}`, never the key |
 | `POST /be/v1/providers/{id}/test` | admin | re-test a saved connection |
 | `DELETE /be/v1/providers/{id}` | admin | `409 connection_in_use` while an agent uses it |
 
@@ -447,7 +448,7 @@ characters) and, for OAuth connections, the connected account.
 
 | Endpoint | Role | Purpose |
 |---|---|---|
-| `GET /be/v1/integrations` | editor | the kinds this installation offers, configuration fields, and `actions: [{name, title, kinds, read_only, input_schema}]` |
+| `GET /be/v1/integrations` | editor | all supported kinds, `oauth`, `oauth_configured`, configuration fields, and `actions: [{name, title, kinds, read_only, input_schema}]` |
 | `POST /be/v1/connections/test` | admin | `{kind, config, secret}`: prove settings and credentials work, save nothing |
 | `POST /be/v1/connections` | admin | `{name, kind, config, secret, skip_test?}`; **tests first and saves only if the test passes** (`422 connection_test_failed`; the message never echoes a credential) |
 | `GET /be/v1/connections`, `GET /be/v1/connections/{name}` | editor | settings and hint, never credentials |
@@ -471,7 +472,7 @@ Notion requests pin API version `2025-09-03`.
 
 **OAuth connections** (Gmail, Google Drive, Google Docs, Sheets, Calendar, Dropbox, OneDrive) are created by signing
 in with the provider, not by pasting credentials, and appear in `GET /be/v1/integrations`
-(with `oauth: true`) only when the operator registered an OAuth app for the provider:
+(with `oauth: true`). Sign-in is available only when `oauth_configured: true`, after the operator registers an OAuth app for the provider:
 
 1. `POST /be/v1/connections/oauth/start` (admin) with `{kind, name}` returns an
    `authorize_url`. It carries a one-time `state` bound to your organization and a PKCE
@@ -630,19 +631,37 @@ current at the time the first request starts the run.
 
 ## 4g. Workflow assistant
 
-Editors call `POST /be/v1/assistant/workflows` with
-`{requirements, connection?, model?}`. Requirements are capped at 16,000
-UTF-8 bytes. connection is a tenant provider connection name; when omitted,
-the dedicated platform assistant provider/key is used. model defaults to
-ASSISTANT_MODEL, if configured, and otherwise must be supplied.
+The UI calls `POST /be/v1/assistant/workflows` with
+`{requirements, stepwise: true, approved_yaml?, step_instructions?}`.
+The creator uses the platform OpenRouter key (`ASSISTANT_PROVIDER=openrouter`,
+`ASSISTANT_API_KEY`) and the fixed model `z-ai/glm-5.3-flash`. It ignores tenant
+account and model overrides. No dropdown is shown for the creator. Requirements
+are capped at 16,000 UTF-8 bytes, step guidance at 4,000, and workflow YAML at 64 KiB.
+`ASSISTANT_BASE_URL` optionally routes through an operator-managed proxy.
 
-The assistant receives the workflow specification, executor descriptions, and
-organization agent/connection/secret names and schemas. It never receives
-connection credentials or vault values. It returns a draft rather than
-publishing or starting a run. The compiler validates every draft, feeding
-errors back for at most three repair rounds (four model calls total).
+Each proposal contains exactly one new node. The server appends it to the
+accepted YAML without changing existing nodes, inputs, defaults or outputs.
+The UI requires explicit acceptance before requesting another step, and saves
+accepted steps as an unpublished browser draft. Generating never publishes or
+starts a run. The compiler checks each candidate, with at most three repair
+rounds (four model calls total).
 
-A valid draft returns 200 with `{yaml, valid: true, attempts, diagnostics, spec,
+The model receives Weft's language reference, executor and connector action
+schemas, organization resource names, and agent input/output structure. It
+receives no stored credentials, key hints, agent instructions/descriptions,
+schema examples/defaults/enums, or accepted step configuration values. Compiler
+repair feedback omits messages that might quote existing values. Accepted YAML
+stays on the Weft server. Free-form context and feedback are sent to OpenRouter:
+users should supply secret/account references rather than paste credentials.
+The creator has no tools, connector access, or execution capabilities.
+
+The legacy full-draft API also accepts `{requirements, connection?, model?}`
+without `stepwise`; this retains tenant provider selection and defaults to
+`ASSISTANT_MODEL`. Account setup and running agents share the embedded provider
+catalog in `internal/services/providers/catalog.json`, exposed at
+`GET /be/v1/provider-kinds`. Model lists are not truncated to 200 entries.
+
+A valid draft returns 200 with `{yaml, valid: true, step?, attempts, diagnostics, spec,
 tokens_in, tokens_out, cost_usd, cost_known}`. An invalid final draft returns
 422 with the same draft/diagnostics and valid:false, allowing manual repair.
 Absent configuration returns 501, provider failure 502, and timeout 504. The

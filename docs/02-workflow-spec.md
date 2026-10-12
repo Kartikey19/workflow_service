@@ -284,9 +284,13 @@ inline. Stored form:
     # prompt: optional extra instruction placed before the input
 ```
 
-The agent supplies the provider, model, system prompt, schemas, tools and limits, so
-those fields cannot be set on the node. The rest of this section describes the inline
-form.
+The agent supplies default provider account and model, plus system prompt, schemas,
+tools and limits. A node may override `connection` and `model` independently;
+omitting either inherits that agent default. `connection: ""` explicitly uses the
+platform provider. Overrides never modify the saved agent. Model overrides must
+be nonempty. System prompt, schemas, tools and limits still come from the agent.
+The rest of this section describes the inline form. Inline `connection` selects a
+saved provider account; omitting it uses the platform provider.
 
 ```yaml
 - id: classify

@@ -46,7 +46,6 @@ const (
 const (
 	callTimeout = 5 * time.Minute  // one model call, bounded further by the node timeout
 	testTimeout = 20 * time.Second // a connection test
-	maxModels   = 200
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -116,7 +115,7 @@ func aad(orgID pgtype.UUID, name string) []byte {
 // validate checks a connection and returns the endpoint it uses: the kind's
 // default unless base_url overrides it (a proxy, or Ollama on another host).
 func (s *Service) validate(provider, baseURL, key string) (string, error) {
-	kind, ok := lookup(provider)
+	kind, ok := Lookup(provider)
 	switch {
 	case !ok:
 		return "", exception.BadRequest(fmt.Sprintf("unknown provider %q; GET /be/v1/provider-kinds lists them", provider))
@@ -152,7 +151,7 @@ func (s *Service) newClient(provider, baseURL, key string) (llm.Client, error) {
 	case Gemini:
 		return gemini.New(key, s.baseURL[Gemini], httpClient), nil
 	}
-	if _, ok := lookup(provider); !ok {
+	if _, ok := Lookup(provider); !ok {
 		return nil, fmt.Errorf("unknown provider %q", provider)
 	}
 	return openai.NewCompatible(key, baseURL, httpClient), nil
@@ -178,9 +177,6 @@ func (s *Service) Test(ctx context.Context, in TestInput) (TestResult, error) {
 	models, err := lister.ListModels(ctx)
 	if err != nil {
 		return TestResult{}, testFailure(err, in.APIKey)
-	}
-	if len(models) > maxModels {
-		models = models[:maxModels]
 	}
 	return TestResult{Models: models}, nil
 }

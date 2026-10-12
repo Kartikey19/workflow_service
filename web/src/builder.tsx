@@ -46,8 +46,10 @@ import {
 } from "./components";
 import { connectorActions, kindIcon } from "./connectors";
 import { NodeCreator, type CreatorEntry } from "./creator";
+import { ConnectorForm, ModelFields, ProviderForm, SetupModal } from "./setup";
 import { StepPicker, type PickerItem } from "./picker";
 import { isPlaceholder, type Problem } from "./problems";
+import { WorkflowInputs } from "./workflow-inputs";
 import "@xyflow/react/dist/style.css";
 
 function parsed(source: string): RecordData | null {
@@ -146,39 +148,6 @@ export function quoteExpressions(text: string) {
     (_, head: string, value: string) => `${head}'${value.replace(/'/g, "''")}'`,
   );
 }
-// A workflow's inputs as people write them: one "name: type" per line, with
-// "name?: type" for an optional one.
-const inputTypes = [
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "object",
-  "array",
-];
-function inputsText(inputs: RecordData = {}) {
-  return Object.entries(inputs)
-    .map(([name, raw]) => {
-      const s = (raw || {}) as RecordData;
-      return `${name}${s.required ? "" : "?"}: ${s.type || "string"}`;
-    })
-    .join("\n");
-}
-function parseInputs(text: string, old: RecordData = {}) {
-  const out: RecordData = {};
-  for (const line of text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    const m = /^([a-z][a-z0-9_]*)(\?)?\s*:\s*([a-z]+)$/.exec(line);
-    if (!m || !inputTypes.includes(m[3]))
-      throw new Error(
-        `Write each input as name: type (${inputTypes.join(", ")}). “${line}” is not.`,
-      );
-    out[m[1]] = { ...(old[m[1]] || {}), type: m[3], required: !m[2] };
-  }
-  return out;
-}
 // Steps in the order they can run: a step comes after everything it needs.
 function runOrder(rows: RecordData[]) {
   const done = new Set<string>(),
@@ -254,10 +223,12 @@ export function Builder({
   onSelect,
   problems,
   starter,
+  admin,
 }: {
   source: string;
-  onChange: (source: string) => void;
+  onChange: (source: string, group?: string) => void;
   editable: boolean;
+  admin: boolean;
   organizationID: string;
   selected: string;
   onSelect: (id: string) => void;
@@ -270,6 +241,7 @@ export function Builder({
   const connections = useResource(editable ? "/connections" : null),
     kinds = useResource("/integrations"),
     agents = useResource("/agents"),
+    providers = useResource(editable ? "/providers" : null),
     executors = useResource("/executors"),
     secrets = useResource(editable ? "/secrets" : null);
   const storageKey = `workflow-layout:${organizationID}:${doc?.name || "draft"}`;
@@ -279,6 +251,8 @@ export function Builder({
   );
   const placed = useRef<Record<string, { x: number; y: number }>>({}),
     pending = useRef<ReturnType<typeof setTimeout>>(undefined),
+    pendingForm = useRef<HTMLFormElement | null>(null),
+    pendingGroup = useRef(""),
     panel = useRef<HTMLElement>(null),
     focusSettings = useRef(false),
     lastField = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null),
@@ -288,9 +262,14 @@ export function Builder({
     [error, setError] = useState("");
   // Where a new step joins: null keeps the creator closed.
   const [adding, setAdding] = useState<{ after: string } | null>(null),
-    [diagram, setDiagram] = useState(false),
-    [startOpen, setStartOpen] = useState(false),
-    [inputsError, setInputsError] = useState("");
+    [diagram, setDiagram] = useState(false);
+  const startOpen = selected === "__start__";
+  const [setup, setSetup] = useState<{
+    kind: "provider" | "connector";
+    nodeID: string;
+    descriptor?: RecordData;
+    providerKind?: string;
+  } | null>(null);
   const rows: RecordData[] = doc?.nodes || [];
   const empty = isPlaceholder(rows);
   const ordered = empty ? [] : runOrder(rows);
@@ -319,16 +298,18 @@ export function Builder({
     const action = (kinds.data?.items || [])
       .flatMap((k: RecordData) => k.actions || [])
       .find((a: RecordData) => a.name === (n.config?.action || n.type));
-    const Icon: Icon = n.config?.agent
-      ? Bot
-      : n.config?.connection
-        ? kindIcon(conn?.kind)
-        : typeIcons[n.type] || Shuffle;
-    const subtitle = n.config?.agent
-      ? `Agent ${n.config.agent}`
-      : n.config?.connection
-        ? `${action?.title || n.config.action || n.type} · ${n.config.connection}`
-        : cardDetail(n.config) || info?.title || n.type;
+    const Icon: Icon =
+      n.type === "agent"
+        ? Bot
+        : n.config?.connection
+          ? kindIcon(conn?.kind)
+          : typeIcons[n.type] || Shuffle;
+    const subtitle =
+      n.type === "agent"
+        ? `${n.config?.agent || n.config?.model || "Choose a model"}${n.config?.connection ? ` · ${n.config.connection}` : ""}`
+        : n.config?.connection
+          ? `${action?.title || n.config.action || n.type} · ${n.config.connection}`
+          : cardDetail(n.config) || info?.title || n.type;
     return { Icon, subtitle, title: info?.title || n.type, action };
   };
   const sinks = rows.filter((n) => !rows.some((m) => m.needs?.includes(n.id)));
@@ -414,13 +395,16 @@ export function Builder({
   const selectedAgent = agents.data?.items.find(
     (a: RecordData) => a.name === node?.config?.agent,
   );
-  function write(next: RecordData) {
-    onChange(stringify(next));
+  function write(next: RecordData, group?: string) {
+    onChange(stringify(next), group);
     setError("");
   }
-  function updateNode(next: RecordData) {
+  function updateNode(next: RecordData, group?: string) {
     if (doc)
-      write({ ...doc, nodes: rows.map((n) => (n.id === next.id ? next : n)) });
+      write(
+        { ...doc, nodes: rows.map((n) => (n.id === next.id ? next : n)) },
+        group,
+      );
   }
   // Renaming keeps the flow intact: steps that run after it, and expressions
   // that read nodes.<old>, follow the new name.
@@ -511,15 +495,14 @@ export function Builder({
           connected: mine.length > 0,
           children: connectorActions(kinds.data?.items, k.kind).map((a) => {
             const id = `action:${k.kind}:${a.name}`;
-            if (mine.length)
-              build.set(id, () => ({
-                type: "connector.call",
-                config: {
-                  connection: mine[0].name,
-                  action: a.name,
-                  arguments: newArguments(a.input_schema),
-                },
-              }));
+            build.set(id, () => ({
+              type: "connector.call",
+              config: {
+                connection: mine[0]?.name || "",
+                action: a.name,
+                arguments: newArguments(a.input_schema),
+              },
+            }));
             return {
               id,
               title: a.title,
@@ -529,8 +512,7 @@ export function Builder({
                 ? undefined
                 : {
                     reason: `Connect ${k.title || k.kind} first.`,
-                    href: "/ui/connectors",
-                    action: "Open connectors",
+                    action: admin ? "Connect account here" : "Configure step",
                   },
             };
           }),
@@ -560,17 +542,16 @@ export function Builder({
         };
       },
     );
-    if (!ai.length)
-      ai.push({
-        id: "agent:none",
-        title: "Agent",
-        icon: icon(Bot),
-        blocked: {
-          reason: "Create an agent first.",
-          href: "/ui/agents",
-          action: "Open agents",
-        },
-      });
+    build.set("agent:inline", () => ({
+      type: "agent",
+      config: { model: "", prompt: "", max_iterations: 8 },
+    }));
+    ai.unshift({
+      id: "agent:inline",
+      title: "AI step",
+      hint: "Choose a model and account here",
+      icon: icon(Bot),
+    });
     const viaConnector = new Set(
       (kinds.data?.items || []).flatMap((k: RecordData) =>
         connectorActions(kinds.data?.items, k.kind).map((a) => a.name),
@@ -605,7 +586,7 @@ export function Builder({
       {
         id: "ai",
         title: "AI",
-        hint: "Run one of your agents",
+        hint: "Choose a model or use a saved agent",
         icon: icon(Bot),
         children: ai,
       },
@@ -632,7 +613,7 @@ export function Builder({
       },
     ];
     return { entries, build };
-  }, [connections.data, kinds.data, agents.data, executors.data]);
+  }, [connections.data, kinds.data, agents.data, executors.data, admin]);
   function add(id: string, after = adding?.after) {
     const entry = catalog.build.get(id);
     if (!doc || !entry) return;
@@ -677,6 +658,7 @@ export function Builder({
     setAdding(null);
     focusSettings.current = true;
     onSelect(nodeID);
+    return nodeID;
   }
   useEffect(() => {
     if (starter && editable && !started.current && catalog.build.has(starter)) {
@@ -696,7 +678,7 @@ export function Builder({
   }, [node?.id]);
   // Settings apply as you type; the canvas and checks follow. Leaving the form
   // applies anything still waiting.
-  function applySettings(form: HTMLFormElement) {
+  function applySettings(form: HTMLFormElement, group: string) {
     // A form left over from another step must not write into this one.
     if (!node || form.dataset.node !== node.id) return;
     const data = new FormData(form);
@@ -715,6 +697,17 @@ export function Builder({
               input: readInput(data, selectedAgent.input_schema, true),
             }
           : { ...config, prompt: data.get("prompt") };
+      } else if (node.type === "agent" && !node.config?.agent) {
+        config = {
+          ...config,
+          prompt:
+            typeof config.prompt !== "string" &&
+            data.get("prompt") === JSON.stringify(config.prompt || "")
+              ? config.prompt
+              : data.get("prompt"),
+          system: data.get("system") || "",
+          max_iterations: Number(data.get("max_iterations")),
+        };
       } else {
         const next =
           parse(quoteExpressions(String(data.get("config") || ""))) ?? {};
@@ -723,7 +716,7 @@ export function Builder({
         config = next;
       }
       setSettingsError("");
-      updateNode({ ...node, config });
+      updateNode({ ...node, config }, group);
     } catch (e) {
       setSettingsError((e as Error).message);
     }
@@ -736,8 +729,25 @@ export function Builder({
     if (!pending.current) return;
     clearTimeout(pending.current);
     pending.current = undefined;
-    latestApply.current(form);
+    latestApply.current(form, pendingGroup.current);
   }
+  useEffect(() => {
+    const flush = () => {
+      if (pendingForm.current) flushSettings(pendingForm.current);
+    };
+    const hidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("beforeunload", flush, true);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      clearTimeout(pending.current);
+      window.removeEventListener("beforeunload", flush, true);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, []);
   // Vault secrets, a group's keys together, ready to drop into a setting.
   const secretItems: PickerItem[] = (secrets.data?.items || []).map(
     (s: RecordData) => {
@@ -774,10 +784,12 @@ export function Builder({
       ? "action"
       : selectedAgent
         ? "agent"
-        : (node.type === "agent" && !agents.data) ||
-            (node.type === "connector.call" && !kinds.data)
-          ? "loading"
-          : "settings";
+        : node.type === "agent" && !node.config?.agent
+          ? "inline-agent"
+          : (node.type === "agent" && !agents.data) ||
+              (node.type === "connector.call" && !kinds.data)
+            ? "loading"
+            : "settings";
   // Saved connectors that can run the selected connector step's action.
   const accounts = (connections.data?.items || []).filter((c: RecordData) =>
     selectedAction?.kinds?.includes(c.kind),
@@ -812,22 +824,141 @@ export function Builder({
           ))}
         </ul>
       )}
-      {editable && node.type === "connector.call" && accounts.length > 1 && (
-        <Field label="Connector">
-          <select
-            value={node.config.connection}
-            onChange={(e) =>
-              updateNode({
-                ...node,
-                config: { ...node.config, connection: e.target.value },
-              })
-            }
+      {node.type === "connector.call" && (
+        <div className="account-controls">
+          <Field
+            label="Connector account"
+            hint="Choose the saved account this step should use."
           >
-            {accounts.map((c: RecordData) => (
-              <option key={c.name}>{c.name}</option>
-            ))}
-          </select>
-        </Field>
+            <select
+              value={node.config?.connection || ""}
+              disabled={!editable}
+              onChange={(e) =>
+                updateNode({
+                  ...node,
+                  config: { ...node.config, connection: e.target.value },
+                })
+              }
+            >
+              <option value="">Choose an account</option>
+              {node.config?.connection &&
+                !accounts.some(
+                  (c: RecordData) => c.name === node.config.connection,
+                ) && (
+                  <option value={node.config.connection}>
+                    {node.config.connection} (unavailable)
+                  </option>
+                )}
+              {accounts.map((c: RecordData) => (
+                <option key={c.name} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {editable && admin && (
+            <button
+              type="button"
+              onClick={() =>
+                setSetup({
+                  kind: "connector",
+                  nodeID: node.id,
+                  descriptor: kinds.data?.items.find((k: RecordData) =>
+                    selectedAction?.kinds?.includes(k.kind),
+                  ),
+                })
+              }
+            >
+              Add connector account
+            </button>
+          )}
+          {!accounts.length && !admin && (
+            <p className="notice">
+              An administrator needs to connect an account. You can keep
+              configuring this step here.
+            </p>
+          )}
+        </div>
+      )}
+      {node.type === "agent" && (
+        <div className="agent-model-controls">
+          {selectedAgent && (
+            <>
+              <p className="notice">
+                Agent defaults:{" "}
+                {selectedAgent.connection || "Platform provider"} ·{" "}
+                {selectedAgent.model}. Overrides apply only to this step.
+              </p>
+              <div className="row wrap">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Object.hasOwn(node.config || {}, "connection")}
+                    disabled={!editable}
+                    onChange={(e) => {
+                      const config = { ...node.config };
+                      if (e.target.checked)
+                        config.connection = selectedAgent.connection || "";
+                      else delete config.connection;
+                      updateNode({ ...node, config });
+                    }}
+                  />
+                  Override provider account
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={Object.hasOwn(node.config || {}, "model")}
+                    disabled={!editable}
+                    onChange={(e) => {
+                      const config = { ...node.config };
+                      if (e.target.checked) config.model = selectedAgent.model;
+                      else delete config.model;
+                      updateNode({ ...node, config });
+                    }}
+                  />
+                  Override model
+                </label>
+              </div>
+            </>
+          )}
+          <ModelFields
+            providers={providers.data?.items || []}
+            connection={
+              node.config?.connection ?? selectedAgent?.connection ?? ""
+            }
+            model={node.config?.model ?? selectedAgent?.model ?? ""}
+            disabled={!editable}
+            connectionDisabled={
+              !!selectedAgent && !Object.hasOwn(node.config || {}, "connection")
+            }
+            modelDisabled={
+              !!selectedAgent && !Object.hasOwn(node.config || {}, "model")
+            }
+            onChange={(connection, model, changed) => {
+              const config = { ...node.config };
+              if (changed === "connection") {
+                config.connection = connection;
+                if (!selectedAgent || Object.hasOwn(config, "model"))
+                  config.model = model;
+              } else config.model = model;
+              updateNode(
+                { ...node, config },
+                changed === "model" ? `model:${node.id}` : undefined,
+              );
+            }}
+            onAdd={
+              admin && editable
+                ? (providerKind) =>
+                    setSetup({
+                      kind: "provider",
+                      nodeID: node.id,
+                      providerKind,
+                    })
+                : undefined
+            }
+          />
+        </div>
       )}
       {editable && secretItems.length > 0 && (
         <div className="insert-secret">
@@ -848,9 +979,11 @@ export function Builder({
         onInput={(e) => {
           const form = e.currentTarget;
           clearTimeout(pending.current);
+          pendingForm.current = form;
+          pendingGroup.current = `settings:${node.id}:${(e.target as HTMLInputElement).name}`;
           pending.current = setTimeout(() => {
             pending.current = undefined;
-            latestApply.current(form);
+            latestApply.current(form, pendingGroup.current);
           }, 300);
         }}
         onFocus={(e) => {
@@ -894,6 +1027,45 @@ export function Builder({
                 />
               </Field>
             )
+          ) : mode === "inline-agent" ? (
+            <>
+              <Field
+                label="Instructions"
+                hint="Optional guidance for this AI step."
+              >
+                <textarea
+                  name="system"
+                  defaultValue={node.config?.system || ""}
+                />
+              </Field>
+              <Field
+                label="Agent prompt"
+                hint="Describe the task. You can reference workflow inputs and previous steps."
+              >
+                <textarea
+                  name="prompt"
+                  defaultValue={
+                    typeof node.config?.prompt === "string"
+                      ? node.config.prompt
+                      : JSON.stringify(node.config?.prompt || "")
+                  }
+                  required
+                />
+              </Field>
+              <Field
+                label="Maximum iterations"
+                hint="A hard limit on model calls for this step."
+              >
+                <input
+                  name="max_iterations"
+                  type="number"
+                  min={1}
+                  max={50}
+                  defaultValue={node.config?.max_iterations || 8}
+                  required
+                />
+              </Field>
+            </>
           ) : (
             <Field
               label="Settings"
@@ -1024,7 +1196,7 @@ export function Builder({
             <button
               className="step-row"
               aria-expanded={startOpen}
-              onClick={() => setStartOpen(!startOpen)}
+              onClick={() => onSelect(startOpen ? "" : "__start__")}
             >
               <span className="step-number" />
               <span className="step-icon">{icon(Play)}</span>
@@ -1039,38 +1211,17 @@ export function Builder({
             </button>
             {startOpen && (
               <div className="step-detail">
-                <Field
-                  label="Inputs"
-                  hint="What each run is given, one per line as name: type. Add ? for an optional one, as in note?: string. Steps read them as input.name."
-                >
-                  <textarea
-                    className="code"
-                    rows={4}
-                    spellCheck={false}
-                    readOnly={!editable}
-                    defaultValue={inputsText(doc.inputs)}
-                    placeholder={"amount: number\nreason: string"}
-                    onBlur={(e) => {
-                      try {
-                        const inputs = parseInputs(e.target.value, doc.inputs);
-                        setInputsError("");
-                        const { inputs: _old, ...rest } = doc;
-                        write(
-                          Object.keys(inputs).length
-                            ? { ...rest, inputs }
-                            : rest,
-                        );
-                      } catch (err) {
-                        setInputsError((err as Error).message);
-                      }
-                    }}
-                  />
-                </Field>
-                {inputsError && (
-                  <p className="error" role="alert">
-                    {inputsError}
-                  </p>
-                )}
+                <WorkflowInputs
+                  inputs={doc.inputs}
+                  editable={editable}
+                  onChange={(inputs, group) => {
+                    const { inputs: _old, ...rest } = doc;
+                    write(
+                      Object.keys(inputs).length ? { ...rest, inputs } : rest,
+                      group,
+                    );
+                  }}
+                />
               </div>
             )}
           </li>
@@ -1112,7 +1263,13 @@ export function Builder({
           <button
             className="add-step"
             aria-expanded={!!adding}
-            onClick={() => setAdding(adding ? null : { after: selected })}
+            onClick={() =>
+              setAdding(
+                adding
+                  ? null
+                  : { after: selected === "__start__" ? "" : selected },
+              )
+            }
           >
             {icon(Plus)}
             Add step
@@ -1134,7 +1291,9 @@ export function Builder({
             className="canvas-add icon-button"
             aria-label="Add step from the diagram"
             title="Add step"
-            onClick={() => setAdding({ after: selected })}
+            onClick={() =>
+              setAdding({ after: selected === "__start__" ? "" : selected })
+            }
           >
             {icon(Plus, 18)}
           </button>
@@ -1190,10 +1349,67 @@ export function Builder({
           <Controls showInteractive={false} position="bottom-left" />
         </ReactFlow>
       </section>
+      {setup && (
+        <SetupModal
+          title={
+            setup.kind === "provider"
+              ? "Add provider account"
+              : `Connect ${setup.descriptor?.title || "account"}`
+          }
+          onClose={() => setSetup(null)}
+        >
+          {setup.kind === "provider" ? (
+            <ProviderForm
+              initialKind={setup.providerKind}
+              onSaved={(provider) => {
+                providers.reload();
+                const target = rows.find((n) => n.id === setup.nodeID);
+                if (target)
+                  updateNode({
+                    ...target,
+                    config: { ...target.config, connection: provider.name },
+                  });
+                setSetup(null);
+              }}
+            />
+          ) : setup.descriptor ? (
+            <ConnectorForm
+              descriptor={setup.descriptor}
+              popup
+              onSaved={(connection) => {
+                connections.reload();
+                const target = rows.find((n) => n.id === setup.nodeID);
+                if (target)
+                  updateNode({
+                    ...target,
+                    config: { ...target.config, connection: connection.name },
+                  });
+                setSetup(null);
+              }}
+            />
+          ) : (
+            <p role="alert">
+              This connector’s setup is unavailable. Close this dialog and retry
+              when the catalog has loaded.
+            </p>
+          )}
+        </SetupModal>
+      )}
       {adding && (
         <NodeCreator
           entries={catalog.entries}
           onPick={(id) => add(id)}
+          onSetup={(id) => {
+            const nodeID = add(id);
+            if (admin && nodeID)
+              setSetup({
+                kind: "connector",
+                nodeID,
+                descriptor: kinds.data?.items.find(
+                  (k: RecordData) => k.kind === id.split(":")[1],
+                ),
+              });
+          }}
           onClose={() => setAdding(null)}
           title={
             adding.after ? `Add a step after ${adding.after}` : "Add a step"

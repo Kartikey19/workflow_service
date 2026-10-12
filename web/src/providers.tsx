@@ -1,14 +1,8 @@
 import { useState } from "react";
-import { Bot, Cpu, Plug, Search } from "lucide-react";
+import { Bot, Cpu, Plug } from "lucide-react";
 import { api, type RecordData } from "./api";
-import {
-  useResource,
-  Field,
-  ActionForm,
-  AsyncButton,
-  Empty,
-  ResourceState,
-} from "./components";
+import { ProviderForm } from "./setup";
+import { useResource, AsyncButton, Empty, ResourceState } from "./components";
 
 const kindIcon = (id: string) =>
   id === "ollama" ? Cpu : id === "openai_compatible" ? Plug : Bot;
@@ -20,23 +14,17 @@ export function Providers({ admin }: { admin: boolean }) {
   const list = useResource("/providers"),
     kinds = useResource("/provider-kinds");
   const [adding, setAdding] = useState(false),
-    [kind, setKind] = useState("anthropic"),
-    [filter, setFilter] = useState(""),
     [models, setModels] = useState<{ name: string; models: string[] } | null>(
       null,
     );
   const catalog: RecordData[] = kinds.data?.items || [];
   const title = (id: string) => catalog.find((k) => k.id === id)?.title || id;
-  const chosen = catalog.find((k) => k.id === kind);
-  const shown = catalog.filter((k) =>
-    k.title.toLowerCase().includes(filter.trim().toLowerCase()),
-  );
   return (
     <>
       <div className="toolbar">
         <p className="muted">
-          The language models your agents run on. Add a provider once, then pick
-          it on any agent.
+          Save a named provider account for each client or API key. Choose its
+          model on an agent or in a workflow step.
         </p>
         {admin && (
           <button className="primary" onClick={() => setAdding(!adding)}>
@@ -117,95 +105,13 @@ export function Providers({ admin }: { admin: boolean }) {
             <h2>Add provider</h2>
             <button onClick={() => setAdding(false)}>Close</button>
           </div>
-          <label className="creator-search provider-search">
-            <Search size={15} aria-hidden="true" />
-            <input
-              aria-label="Search providers"
-              placeholder="Search providers"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-          </label>
-          <div className="app-grid" role="radiogroup" aria-label="Provider">
-            {shown.map((k) => {
-              const Icon = kindIcon(k.id);
-              return (
-                <button
-                  key={k.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={kind === k.id}
-                  className="app-tile"
-                  onClick={() => setKind(k.id)}
-                >
-                  <Icon size={18} aria-hidden="true" />
-                  {k.title}
-                </button>
-              );
-            })}
-          </div>
-          {chosen && (
-            <ActionForm
-              key={kind}
-              label="Test and save"
-              done=""
-              submit={async (data) => {
-                const r = await api("/providers", "POST", {
-                  name: data.get("name"),
-                  provider: kind,
-                  api_key: data.get("api_key") || "",
-                  base_url: chosen.native ? "" : data.get("base_url"),
-                });
-                setModels({ name: r.name, models: r.models || [] });
-                setAdding(false);
-                list.reload();
-              }}
-            >
-              <Field label="Connection name">
-                <input
-                  name="name"
-                  required
-                  defaultValue={kind.replaceAll("_", "-")}
-                  pattern="[a-z0-9][a-z0-9_\-]*"
-                />
-              </Field>
-              {!chosen.native && (
-                <Field
-                  label="Base URL"
-                  hint={
-                    kind === "openai_compatible"
-                      ? "Any server that speaks the OpenAI chat API, such as vLLM or LM Studio."
-                      : kind === "ollama"
-                        ? "Where Ollama runs, as the server sees it."
-                        : "Change only to go through a proxy."
-                  }
-                >
-                  <input
-                    name="base_url"
-                    type="url"
-                    required={!chosen.base_url}
-                    defaultValue={chosen.base_url}
-                    placeholder="https://api.example.com/v1"
-                  />
-                </Field>
-              )}
-              <Field
-                label="API key"
-                hint={
-                  chosen.key_optional
-                    ? "Leave blank for a server that needs no key."
-                    : "Stored encrypted; it is never shown again."
-                }
-              >
-                <input
-                  name="api_key"
-                  type="password"
-                  required={!chosen.key_optional}
-                  autoComplete="off"
-                />
-              </Field>
-            </ActionForm>
-          )}
+          <ProviderForm
+            onSaved={(r) => {
+              setModels({ name: r.name, models: r.models || [] });
+              setAdding(false);
+              list.reload();
+            }}
+          />
         </section>
       )}
     </>

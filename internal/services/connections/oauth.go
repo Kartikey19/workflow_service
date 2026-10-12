@@ -76,14 +76,16 @@ func (s *Service) oauthProviders() map[string]oauthProvider {
 	return out
 }
 
-// oauthKinds registers the OAuth kinds whose provider the operator configured.
+// oauthKinds lists every supported OAuth kind and whether sign-in is configured.
 func (s *Service) oauthKinds() map[string]kind {
 	titles := map[string]string{KindGmail: "Gmail", KindGDrive: "Google Drive", KindGDocs: "Google Docs", KindGSheets: "Google Sheets", KindGCalendar: "Google Calendar", KindDropbox: "Dropbox", KindOneDrive: "OneDrive"}
 	out := map[string]kind{}
-	for name := range s.oauthProviders() {
+	configured := s.oauthProviders()
+	for name := range titles {
 		name := name
+		_, available := configured[name]
 		out[name] = kind{
-			info:  KindInfo{Kind: name, Title: titles[name], OAuth: true},
+			info:  KindInfo{Kind: name, Title: titles[name], OAuth: true, OAuthConfigured: available},
 			check: func(map[string]any, map[string]string) error { return nil },
 			test: func(ctx context.Context, s *Service, _ map[string]any, secret map[string]string) error {
 				_, err := s.accountOf(ctx, name, secret["access_token"])

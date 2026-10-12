@@ -321,6 +321,66 @@ func (q *Queries) ListAgents(ctx context.Context, orgID pgtype.UUID) ([]ListAgen
 	return items, nil
 }
 
+const listAssistantAgents = `-- name: ListAssistantAgents :many
+select name, input_schema, output_schema from agents where org_id = $1 order by name
+`
+
+type ListAssistantAgentsRow struct {
+	Name         string `json:"name"`
+	InputSchema  []byte `json:"input_schema"`
+	OutputSchema []byte `json:"output_schema"`
+}
+
+// Authoring context excludes instructions, descriptions and provider credentials.
+func (q *Queries) ListAssistantAgents(ctx context.Context, orgID pgtype.UUID) ([]ListAssistantAgentsRow, error) {
+	rows, err := q.db.Query(ctx, listAssistantAgents, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssistantAgentsRow
+	for rows.Next() {
+		var i ListAssistantAgentsRow
+		if err := rows.Scan(&i.Name, &i.InputSchema, &i.OutputSchema); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAssistantProviders = `-- name: ListAssistantProviders :many
+select name, provider from provider_connections where org_id = $1 order by name
+`
+
+type ListAssistantProvidersRow struct {
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+}
+
+func (q *Queries) ListAssistantProviders(ctx context.Context, orgID pgtype.UUID) ([]ListAssistantProvidersRow, error) {
+	rows, err := q.db.Query(ctx, listAssistantProviders, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssistantProvidersRow
+	for rows.Next() {
+		var i ListAssistantProvidersRow
+		if err := rows.Scan(&i.Name, &i.Provider); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProviderConnections = `-- name: ListProviderConnections :many
 select id, org_id, name, provider, base_url, key_hint, created_at, updated_at, created_by,
        (select count(*) from agents a where a.connection_id = provider_connections.id) as agent_count

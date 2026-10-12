@@ -34,9 +34,14 @@ export async function api(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (response.status === 204) return {};
-  const result = await response
-    .json()
-    .catch(() => ({ detail: "The server returned an unreadable response." }));
+  const result = await response.json().catch((error) => {
+    // Cancellation can happen after headers arrive, while JSON is reading.
+    // Never turn an aborted successful response into an object with no items.
+    if (signal?.aborted) throw error;
+    const detail = "The server returned an unreadable response.";
+    if (response.ok) throw new Error(detail);
+    return { detail };
+  });
   if (!response.ok) throw new APIError(response.status, result);
   return result;
 }

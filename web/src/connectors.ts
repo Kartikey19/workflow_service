@@ -1,15 +1,6 @@
-import {
-  CalendarDays,
-  Database,
-  FileSpreadsheet,
-  FileText,
-  HardDrive,
-  Mail,
-  MessageSquare,
-  Plug,
-  Server,
-} from "lucide-react";
+import { HardDrive, Mail, Plug, Server } from "lucide-react";
 import type { RecordData } from "./api";
+import { brandIcons } from "./brand-icons";
 
 // The backend owns action schemas and read/write metadata for every connector.
 export function connectorActions(
@@ -21,20 +12,10 @@ export function connectorActions(
 
 // One icon per kind of app, shared by the step catalog and the connectors page.
 export const kindIcons: Record<string, typeof Plug> = {
-  gmail: Mail,
   smtp: Mail,
   resend: Mail,
-  postgres: Database,
-  mysql: Database,
-  mongo: Database,
-  slack: MessageSquare,
-  notion: FileText,
-  gdocs: FileText,
-  gsheets: FileSpreadsheet,
-  gcalendar: CalendarDays,
-  gdrive: HardDrive,
-  dropbox: HardDrive,
   onedrive: HardDrive,
   mcp: Server,
+  ...brandIcons,
 };
 export const kindIcon = (kind: string) => kindIcons[kind] || Plug;

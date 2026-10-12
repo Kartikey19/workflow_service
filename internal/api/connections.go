@@ -64,7 +64,7 @@ func (h *Handler) listIntegrations(w http.ResponseWriter, r *http.Request, _ aut
 				"enum": f.Enum, "default": f.Default, "help": f.Help,
 			})
 		}
-		items = append(items, map[string]any{"kind": kind.Kind, "title": kind.Title, "oauth": kind.OAuth, "fields": fields, "actions": connectors.ActionsFor(kind.Kind)})
+		items = append(items, map[string]any{"kind": kind.Kind, "title": kind.Title, "oauth": kind.OAuth, "oauth_configured": kind.OAuthConfigured, "fields": fields, "actions": connectors.ActionsFor(kind.Kind)})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
