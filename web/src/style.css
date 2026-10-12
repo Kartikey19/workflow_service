@@ -1484,8 +1484,7 @@ button.table-row:hover {
 .editor-split {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
-  height: clamp(520px, calc(100vh - 230px), 900px);
+  grid-template-columns: minmax(0, 1fr);
   border: 1px solid var(--line);
   border-radius: 0 0 var(--radius) var(--radius);
   overflow: hidden;
@@ -1498,7 +1497,6 @@ button.table-row:hover {
   min-height: 0;
   overflow-y: auto;
   padding: 14px 14px 18px;
-  border-right: 1px solid var(--line);
 }
 .steps-head {
   display: flex;
@@ -1509,13 +1507,6 @@ button.table-row:hover {
 .steps-head h3 {
   margin: 0;
   font-size: 14px;
-}
-.diagram-toggle {
-  display: none;
-  margin-left: auto;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
 }
 .step-list {
   list-style: none;
@@ -1959,26 +1950,10 @@ button.table-row:hover {
   color: var(--muted);
 }
 
-/* Phones: steps first, the diagram only when asked for. */
+/* Workflow editor on smaller screens. */
 @media (max-width: 900px) {
-  .editor-split {
-    grid-template-columns: minmax(0, 1fr);
-    height: auto;
-  }
   .steps-pane {
-    border-right: 0;
     overflow: visible;
-  }
-  .diagram-toggle {
-    display: inline-flex;
-  }
-  .canvas-pane {
-    display: none;
-    height: 380px;
-    border-top: 1px solid var(--line);
-  }
-  .show-diagram .canvas-pane {
-    display: block;
   }
   .creator {
     position: fixed;
@@ -2325,16 +2300,237 @@ button.table-row:hover {
   }
 }
 
-.creator-proposal {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
+.editor-split > section[hidden] {
+  display: none;
 }
-.creator-proposal pre {
-  max-height: 240px;
-  overflow: auto;
+.editor-steps {
+  height: auto;
+  min-height: 380px;
+}
+.editor-visualization {
+  height: clamp(420px, calc(100dvh - 250px), 850px);
+}
+.editor-visualization .canvas-pane {
+  display: block;
+  height: 100%;
+}
+.workflow-chat {
+  display: flex;
+  flex-direction: column;
+  height: clamp(520px, calc(100dvh - 260px), 880px);
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--surface);
+  margin-bottom: 18px;
+}
+.chat-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.chat-messages {
+  position: relative;
+  flex: 1;
+  min-height: 160px;
+  overflow-y: auto;
+  padding: 24px max(20px, calc((100% - 780px) / 2));
+}
+.chat-welcome {
+  padding: 20px 0;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.chat-welcome h2 {
+  font-size: 23px;
+}
+.chat-welcome p {
+  color: var(--muted);
+}
+.chat-message {
+  max-width: 740px;
+  margin: 0 0 20px;
+  overflow-wrap: anywhere;
+}
+.chat-message > p {
+  white-space: pre-wrap;
+  margin: 5px 0;
+}
+.chat-user {
+  margin-left: auto;
+  padding: 12px 16px;
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+}
+.chat-assistant {
+  padding: 0 4px;
+}
+.chat-step {
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.chat-step h3 {
+  font-size: 15px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.chat-step-state {
+  color: var(--muted);
+  font-size: 12px;
+}
+.chat-composer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.chat-composer > button {
+  margin-bottom: 10px;
+}
+.chat-composer form {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+}
+.chat-composer .field {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.chat-composer textarea {
+  min-height: 66px;
+  max-height: 160px;
+  resize: vertical;
+}
+.chat-composer button[type="submit"] {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.chat-composer > p {
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+@media (max-width: 600px) {
+  .chat-header,
+  .chat-composer {
+    padding: 12px;
+  }
+  .chat-messages {
+    padding: 16px 12px;
+  }
+  .workflow-chat {
+    height: 620px;
+    max-height: none;
+  }
+  .editor-view {
+    flex-wrap: wrap;
+  }
+  .editor-visualization {
+    height: 460px;
+  }
+}
+
+.workflow-workspace[hidden] {
+  display: none;
+}
+.workflow-workspace.with-chat {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.workflow-workspace.with-chat > * {
+  min-width: 0;
+}
+.workflow-workspace.with-chat .editor-visualization {
+  height: clamp(520px, calc(100dvh - 260px), 880px);
+}
+.step-summary-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  margin-top: 10px;
+}
+.step-values {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 14px 0;
+}
+dl.step-values > div {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.step-values dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.step-values dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.step-values .step-values {
+  padding-left: 12px;
+  margin: 4px 0;
+}
+ol.step-values {
+  padding-left: 18px;
+}
+.step-value-text {
   white-space: pre-wrap;
 }
-.creator-finish {
-  margin-top: 20px;
+.value-reference {
+  display: inline-block;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+.step-summary-inputs {
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
+  padding-top: 10px;
+}
+.step-summary-inputs h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.step-summary-inputs .workflow-input-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.step-summary-inputs .input-required {
+  grid-column: 1 / -1;
+}
+.step-condition {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+.step-condition strong {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.step-tile.proposed {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+.proposal-badge {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+@media (max-width: 1050px) {
+  .workflow-workspace.with-chat {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workflow-workspace.with-chat .editor-visualization {
+    height: 460px;
+  }
 }

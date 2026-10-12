@@ -18,22 +18,13 @@ import dagre from "@dagrejs/dagre";
 import {
   Bot,
   CircleAlert,
-  Clock,
-  Eye,
-  EyeOff,
   GitBranch,
   Globe,
-  Hourglass,
   KeyRound,
-  Mail,
-  Minus,
   Plug,
   Play,
   Plus,
-  Server,
   Shuffle,
-  UserCheck,
-  Workflow as WorkflowIcon,
 } from "lucide-react";
 import { parse, stringify } from "yaml";
 import { secretParts, type RecordData } from "./api";
@@ -50,6 +41,7 @@ import { ConnectorForm, ModelFields, ProviderForm, SetupModal } from "./setup";
 import { StepPicker, type PickerItem } from "./picker";
 import { isPlaceholder, type Problem } from "./problems";
 import { WorkflowInputs } from "./workflow-inputs";
+import { stepIcons as typeIcons } from "./step-summary";
 import "@xyflow/react/dist/style.css";
 
 function parsed(source: string): RecordData | null {
@@ -114,19 +106,6 @@ function newArguments(schema: RecordData) {
   );
 }
 type Icon = typeof Plug;
-const typeIcons: Record<string, Icon> = {
-  http: Globe,
-  transform: Shuffle,
-  sleep: Clock,
-  branch: GitBranch,
-  human_task: UserCheck,
-  wait_event: Hourglass,
-  workflow: WorkflowIcon,
-  noop: Minus,
-  agent: Bot,
-  "email.send": Mail,
-  "mcp.call": Server,
-};
 const icon = (I: Icon, size = 16) => <I size={size} aria-hidden="true" />;
 // The one setting worth showing under a step, so typing details is visible as
 // it happens.
@@ -174,6 +153,7 @@ type StepData = {
   subtitle: string;
   Icon: Icon;
   problem: boolean;
+  proposed?: boolean;
   onAdd?: () => void;
 };
 // A step as n8n draws one: a square tile with its icon, the name underneath,
@@ -182,7 +162,9 @@ function StepNode({ data, selected }: NodeProps<Node<StepData>>) {
   return (
     <div className={`step-node ${selected ? "selected" : ""}`}>
       <Handle type="target" position={Position.Left} />
-      <div className={`step-tile ${data.problem ? "has-problem" : ""}`}>
+      <div
+        className={`step-tile ${data.problem ? "has-problem" : ""} ${data.proposed ? "proposed" : ""}`}
+      >
         {icon(data.Icon, 26)}
         {data.problem && (
           <CircleAlert
@@ -208,6 +190,9 @@ function StepNode({ data, selected }: NodeProps<Node<StepData>>) {
       <div className="step-caption">
         <strong>{data.title}</strong>
         <small>{data.subtitle}</small>
+        {data.proposed && (
+          <small className="proposal-badge">Pending review</small>
+        )}
       </div>
     </div>
   );
@@ -216,6 +201,8 @@ const nodeTypes = { step: StepNode };
 
 export function Builder({
   source,
+  view,
+  previewID,
   onChange,
   editable,
   organizationID,
@@ -226,6 +213,8 @@ export function Builder({
   admin,
 }: {
   source: string;
+  view: "steps" | "visualization";
+  previewID?: string;
   onChange: (source: string, group?: string) => void;
   editable: boolean;
   admin: boolean;
@@ -261,8 +250,7 @@ export function Builder({
   const [nodes, setNodes] = useState<Node<StepData>[]>([]),
     [error, setError] = useState("");
   // Where a new step joins: null keeps the creator closed.
-  const [adding, setAdding] = useState<{ after: string } | null>(null),
-    [diagram, setDiagram] = useState(false);
+  const [adding, setAdding] = useState<{ after: string } | null>(null);
   const startOpen = selected === "__start__";
   const [setup, setSetup] = useState<{
     kind: "provider" | "connector";
@@ -271,7 +259,7 @@ export function Builder({
     providerKind?: string;
   } | null>(null);
   const rows: RecordData[] = doc?.nodes || [];
-  const empty = isPlaceholder(rows);
+  const empty = isPlaceholder(rows) && !previewID;
   const ordered = empty ? [] : runOrder(rows);
   const edges = rows.flatMap((n) =>
     (n.needs || []).map((dep: string) => ({
@@ -351,6 +339,7 @@ export function Builder({
             subtitle: d.subtitle,
             Icon: d.Icon,
             problem: stepProblems(n.id).length > 0,
+            proposed: n.id === previewID,
             onAdd:
               editable && sinks.some((s) => s.id === n.id)
                 ? () => setAdding({ after: n.id })
@@ -369,8 +358,9 @@ export function Builder({
     executors.data,
     connections.data,
     kinds.data,
+    previewID,
   ]);
-  const graphIdentity = `${storageKey}:${rows.map((n) => n.id).join(",")}:${edges.map((e) => e.id).join(",")}:${diagram}`;
+  const graphIdentity = `${storageKey}:${rows.map((n) => n.id).join(",")}:${edges.map((e) => e.id).join(",")}:${view}`;
   useEffect(() => {
     const timer = setTimeout(() => {
       flow?.fitView({ padding: 0.25, duration: 0, maxZoom: 1 });
@@ -1166,19 +1156,16 @@ export function Builder({
     </div>
   );
   return (
-    <div className={`editor-split ${diagram ? "show-diagram" : ""}`}>
-      <section className="steps-pane" aria-label="Steps" ref={panel}>
+    <div className={`editor-split editor-${view}`}>
+      <section
+        className="steps-pane"
+        aria-label="Steps"
+        ref={panel}
+        hidden={view !== "steps"}
+      >
         <div className="steps-head">
           <h3>Steps</h3>
           <span className="muted">{ordered.length || ""}</span>
-          <button
-            className="diagram-toggle"
-            aria-pressed={diagram}
-            onClick={() => setDiagram(!diagram)}
-          >
-            {diagram ? icon(EyeOff, 15) : icon(Eye, 15)}
-            {diagram ? "Hide diagram" : "Show diagram"}
-          </button>
         </div>
         <ResourceState
           error={
@@ -1276,7 +1263,11 @@ export function Builder({
           </button>
         )}
       </section>
-      <section className="canvas-pane" aria-label="Workflow diagram">
+      <section
+        className="canvas-pane"
+        aria-label="Workflow diagram"
+        hidden={view !== "visualization"}
+      >
         {empty && editable && (
           <button
             className="canvas-first"
@@ -1346,7 +1337,11 @@ export function Builder({
             size={1.4}
             color="#c9d0ce"
           />
-          <Controls showInteractive={false} position="bottom-left" />
+          <Controls
+            showInteractive={false}
+            position="bottom-left"
+            fitViewOptions={{ maxZoom: 1, padding: 0.25 }}
+          />
         </ReactFlow>
       </section>
       {setup && (

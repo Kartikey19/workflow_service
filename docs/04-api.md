@@ -641,8 +641,13 @@ are capped at 16,000 UTF-8 bytes, step guidance at 4,000, and workflow YAML at 6
 
 Each proposal contains exactly one new node. The server appends it to the
 accepted YAML without changing existing nodes, inputs, defaults or outputs.
-The UI requires explicit acceptance before requesting another step, and saves
-accepted steps as an unpublished browser draft. Generating never publishes or
+The default editor shows chat beside the workflow visualization and keeps messages
+and step reviews together. It requires
+explicit acceptance before requesting another step, and saves accepted steps as
+an unpublished browser draft. Steps replaces the diagram while keeping chat visible.
+Switching to Steps, Visualization or YAML preserves
+the open conversation. Manual edits invalidate approval of a pending proposal
+based on the older definition. Generating never publishes or
 starts a run. The compiler checks each candidate, with at most three repair
 rounds (four model calls total).
 

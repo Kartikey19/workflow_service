@@ -36,7 +36,9 @@ func TestWebUIBrowser(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		first := true
+		paymentReview := false
 		for _, m := range request.Messages {
+			paymentReview = paymentReview || strings.Contains(m.Content, "payment review")
 			if strings.Contains(m.Content, `"id":"first"`) {
 				first = false
 			}
@@ -45,7 +47,25 @@ func TestWebUIBrowser(t *testing.T) {
 		if !first {
 			node = "  - {id: second, type: transform, needs: [first], config: {value: '${nodes.first.output}'}}\n"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "apiVersion: workflow/v1\nname: reviewed-creator\nnodes:\n" + node}}}})
+		definition := "apiVersion: workflow/v1\nname: reviewed-creator\nnodes:\n" + node
+		if paymentReview {
+			definition = `apiVersion: workflow/v1
+name: reviewed-approval
+inputs:
+  amount: {type: number, required: true}
+  vendor: {type: string, required: true}
+nodes:
+  - id: finance_review
+    type: human_task
+    config:
+      queue: finance
+      form: vendor-payment
+      payload:
+        amount: '${input.amount}'
+        vendor: '${input.vendor}'
+`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": definition}}}})
 	}))
 	defer creatorAPI.Close()
 	s := newStack(t, ctx, func(c *config.Config) {
