@@ -134,6 +134,13 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 	if cfg.Assistant.APIKey != "" {
 		var client llm.Client
 		switch cfg.Assistant.Provider {
+		case "openrouter":
+			kind, _ := providers.Lookup("openrouter")
+			baseURL := cfg.Assistant.BaseURL
+			if baseURL == "" {
+				baseURL = kind.BaseURL
+			}
+			client = openai.NewCompatible(cfg.Assistant.APIKey, baseURL, policy.Client(2*time.Minute))
 		case "openai":
 			client = openai.New(cfg.Assistant.APIKey, cfg.LLM.OpenAIBaseURL, policy.Client(2*time.Minute))
 		case "gemini":
@@ -146,6 +153,9 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 		assistantPlatform = agent.NewStatic(cfg.Assistant.Provider, client, pricing)
 	}
 	deps.Assistant = assistant.New(pool, agent.Router{Named: providerSvc, Default: assistantPlatform}, deps.Workflows, registry, cfg.Assistant.Model)
+	if cfg.Assistant.Provider == "openrouter" {
+		deps.Assistant.WithCreator(assistantPlatform)
+	}
 	deps.Workflows.Plans = ident.Plans()
 	deps.Runs.Allowance = ident.Plans()
 	if keyring != nil {

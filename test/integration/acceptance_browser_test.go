@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,16 +21,37 @@ func TestWebUIBrowser(t *testing.T) {
 	if os.Getenv("RUN_UI_TESTS") != "true" {
 		t.Skip("set RUN_UI_TESTS=true after npm ci and playwright install chromium")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	workspaceAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "browser-notion", "team_id": "browser-slack"})
 	}))
 	defer workspaceAPI.Close()
+	creatorAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		first := true
+		for _, m := range request.Messages {
+			if strings.Contains(m.Content, `"id":"first"`) {
+				first = false
+			}
+		}
+		node := "  - {id: first, type: transform, config: {value: hello}}\n"
+		if !first {
+			node = "  - {id: second, type: transform, needs: [first], config: {value: '${nodes.first.output}'}}\n"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "apiVersion: workflow/v1\nname: reviewed-creator\nnodes:\n" + node}}}})
+	}))
+	defer creatorAPI.Close()
 	s := newStack(t, ctx, func(c *config.Config) {
 		ep, _ := json.Marshal(map[string]string{"slack_api": workspaceAPI.URL, "notion_api": workspaceAPI.URL})
 		c.Services.IntegrationEndpoints = string(ep)
+		c.Assistant = config.AssistantConfig{Provider: "openrouter", APIKey: "fake-creator-key", BaseURL: creatorAPI.URL}
 	})
 	owner := s.owner(t, "Browser Co")
 	s.owner(t, "Fresh Setup") // no agents, connectors or provider accounts

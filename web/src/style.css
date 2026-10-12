@@ -2324,3 +2324,17 @@ button.table-row:hover {
     max-height: calc(100dvh - 24px);
   }
 }
+
+.creator-proposal {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.creator-proposal pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.creator-finish {
+  margin-top: 20px;
+}

@@ -27,13 +27,17 @@ const signInOwner = async (page: Page, email = "browserco@example.com") => {
     page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
 };
+const openStart = async (page: Page) => {
+  const row = page.getByRole("button", { name: /^Start/ });
+  if ((await row.getAttribute("aria-expanded")) !== "true") await row.click();
+};
 test("edit typed start variables without losing schema rules, drafts or history", async ({
   page,
 }) => {
   await signInOwner(page);
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("typed-inputs");
-  await page.getByRole("button", { name: /^Start/ }).click();
+  await openStart(page);
   await page.getByRole("button", { name: "Add variable", exact: true }).click();
   const first = page.getByRole("group", { name: "Variable 1", exact: true });
   const second = page.getByRole("group", { name: "Variable 2", exact: true });
@@ -64,14 +68,14 @@ test("edit typed start variables without losing schema rules, drafts or history"
     .getByRole("button", { name: "Remove variable amount", exact: true })
     .click();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await page.getByRole("button", { name: /^Start/ }).click();
+  await openStart(page);
   await expect(first.getByLabel("Name", { exact: true })).toHaveValue("amount");
   await page.getByRole("button", { name: "Redo", exact: true }).click();
-  await page.getByRole("button", { name: /^Start/ }).click();
+  await openStart(page);
   await expect(first.getByLabel("Name", { exact: true })).toHaveValue("notes");
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await page.reload();
-  await page.getByRole("button", { name: /^Start/ }).click();
+  await openStart(page);
   await expect(first.getByLabel("Name", { exact: true })).toHaveValue("amount");
   await expect(first.getByLabel("Type", { exact: true })).toHaveValue("number");
   await expect(second.getByLabel("Name", { exact: true })).toHaveValue("notes");
@@ -96,7 +100,7 @@ test("edit typed start variables without losing schema rules, drafts or history"
   };
   await yaml.fill(stringify(definition));
   await page.getByRole("button", { name: "Canvas", exact: true }).click();
-  await page.getByRole("button", { name: /^Start/ }).click();
+  await openStart(page);
   await first.getByLabel("Name", { exact: true }).fill("total");
   await first.getByLabel("Type", { exact: true }).selectOption("integer");
   await first.getByLabel("Required", { exact: true }).uncheck();
@@ -113,7 +117,7 @@ test("edit typed start variables without losing schema rules, drafts or history"
     notes: definition.inputs.notes,
   });
   await page.getByRole("button", { name: "Canvas", exact: true }).click();
-  await page.getByRole("button", { name: /^Start/ }).click();
+  await openStart(page);
   await shot(page, "12-typed-start-inputs");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(first.getByLabel("Type", { exact: true })).toBeVisible();
@@ -910,7 +914,7 @@ test("workflow inputs become run fields and a person approves a task", async ({
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("approval-flow");
   // The Start row declares what each run is given.
-  await page.getByRole("button", { name: /^Start/ }).click();
+  await openStart(page);
   await page.getByRole("button", { name: "Add variable", exact: true }).click();
   const amount = page.getByRole("group", { name: "Variable 1", exact: true });
   await amount.getByLabel("Name", { exact: true }).fill("amount");
@@ -1285,4 +1289,128 @@ test("OAuth popup returns to the workflow without discarding its prompt", async 
   await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
     "Keep my original task after OAuth.",
   );
+});
+
+test("review creator steps before accepting and open only one detail at a time", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  await page
+    .getByRole("button", { name: "Create with AI", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("GLM 5.3 Flash · OpenRouter");
+  await expect(dialog.getByRole("combobox")).toHaveCount(0);
+  await dialog
+    .getByLabel("Workflow context", { exact: true })
+    .fill("Make a greeting and pass it to a second transform.");
+  await dialog
+    .getByRole("button", { name: "Propose first step", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("heading", { name: "first · transform", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveCount(
+    0,
+  );
+  await dialog
+    .getByRole("button", { name: "Accept step", exact: true })
+    .click();
+  await expect(dialog.getByRole("status")).toHaveText("1 accepted step");
+  await expect(
+    dialog.getByRole("button", { name: "Accept step", exact: true }),
+  ).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "Propose next step", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("heading", { name: "second · transform", exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByLabel("Workflow context", { exact: true }),
+  ).toHaveValue("Make a greeting and pass it to a second transform.");
+  await shot(page, "13-step-review");
+  await dialog
+    .getByRole("button", { name: "Accept step", exact: true })
+    .click();
+  await expect(dialog.getByRole("status")).toHaveText("2 accepted steps");
+  await dialog
+    .getByRole("button", { name: "Finish editing", exact: true })
+    .click();
+  const rows = page.locator(".step-row");
+  const openRows = page.locator('.step-row[aria-expanded="true"]');
+  await expect(openRows).toHaveCount(1);
+  await page.getByRole("button", { name: /^1 first / }).click();
+  await expect(openRows).toHaveCount(1);
+  await expect(page.getByLabel("Settings", { exact: true })).toHaveValue(
+    "value: hello",
+  );
+  await openStart(page);
+  await expect(openRows).toHaveCount(1);
+  await expect(page.getByLabel("Settings", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: /^2 second / }).click();
+  await expect(openRows).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /^Start/ })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await page.getByRole("button", { name: /^2 second / }).click();
+  await expect(openRows).toHaveCount(0);
+  await page.getByRole("button", { name: /^1 first / }).click();
+  await expect(openRows).toHaveCount(1);
+  await expect(rows).toHaveCount(3);
+  await shot(page, "14-step-accordion");
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  const definition = parse(
+    await page.getByLabel("Workflow YAML", { exact: true }).inputValue(),
+  );
+  expect(definition.nodes).toEqual([
+    { id: "first", type: "transform", config: { value: "hello" } },
+    {
+      id: "second",
+      type: "transform",
+      needs: ["first"],
+      config: { value: "${nodes.first.output}" },
+    },
+  ]);
+  await page.reload();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  expect(
+    parse(await page.getByLabel("Workflow YAML", { exact: true }).inputValue())
+      .nodes,
+  ).toEqual(definition.nodes);
+});
+
+test("all providers appear in agent and workflow account selection", async ({
+  page,
+}) => {
+  await signInOwner(page, "freshsetup@example.com");
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("button", { name: "New agent", exact: true }).click();
+  const account = page.getByLabel("Provider account", { exact: true });
+  await expect(account.locator("optgroup")).toHaveCount(22);
+  await account.selectOption("add:openrouter");
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("radio", { name: "OpenRouter", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  await dialog
+    .getByRole("button", { name: "Close setup", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Create an agent", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await addStep(page, "AI step");
+  await expect(account.locator("optgroup")).toHaveCount(22);
+  await account.selectOption("add:deepseek");
+  await expect(
+    dialog.getByRole("radio", { name: "DeepSeek", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  await dialog
+    .getByRole("button", { name: "Close setup", exact: true })
+    .click();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toBeVisible();
+  await expect(account).toHaveValue("");
 });

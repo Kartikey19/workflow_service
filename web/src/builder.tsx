@@ -262,12 +262,13 @@ export function Builder({
     [error, setError] = useState("");
   // Where a new step joins: null keeps the creator closed.
   const [adding, setAdding] = useState<{ after: string } | null>(null),
-    [diagram, setDiagram] = useState(false),
-    [startOpen, setStartOpen] = useState(false);
+    [diagram, setDiagram] = useState(false);
+  const startOpen = selected === "__start__";
   const [setup, setSetup] = useState<{
     kind: "provider" | "connector";
     nodeID: string;
     descriptor?: RecordData;
+    providerKind?: string;
   } | null>(null);
   const rows: RecordData[] = doc?.nodes || [];
   const empty = isPlaceholder(rows);
@@ -948,7 +949,12 @@ export function Builder({
             }}
             onAdd={
               admin && editable
-                ? () => setSetup({ kind: "provider", nodeID: node.id })
+                ? (providerKind) =>
+                    setSetup({
+                      kind: "provider",
+                      nodeID: node.id,
+                      providerKind,
+                    })
                 : undefined
             }
           />
@@ -1190,7 +1196,7 @@ export function Builder({
             <button
               className="step-row"
               aria-expanded={startOpen}
-              onClick={() => setStartOpen(!startOpen)}
+              onClick={() => onSelect(startOpen ? "" : "__start__")}
             >
               <span className="step-number" />
               <span className="step-icon">{icon(Play)}</span>
@@ -1257,7 +1263,13 @@ export function Builder({
           <button
             className="add-step"
             aria-expanded={!!adding}
-            onClick={() => setAdding(adding ? null : { after: selected })}
+            onClick={() =>
+              setAdding(
+                adding
+                  ? null
+                  : { after: selected === "__start__" ? "" : selected },
+              )
+            }
           >
             {icon(Plus)}
             Add step
@@ -1279,7 +1291,9 @@ export function Builder({
             className="canvas-add icon-button"
             aria-label="Add step from the diagram"
             title="Add step"
-            onClick={() => setAdding({ after: selected })}
+            onClick={() =>
+              setAdding({ after: selected === "__start__" ? "" : selected })
+            }
           >
             {icon(Plus, 18)}
           </button>
@@ -1346,6 +1360,7 @@ export function Builder({
         >
           {setup.kind === "provider" ? (
             <ProviderForm
+              initialKind={setup.providerKind}
               onSaved={(provider) => {
                 providers.reload();
                 const target = rows.find((n) => n.id === setup.nodeID);

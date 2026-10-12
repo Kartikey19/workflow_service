@@ -49,5 +49,12 @@ select sqlc.embed(a), coalesce(c.name, '')::text as connection_name
   from agents a left join provider_connections c on c.id = a.connection_id
  where a.org_id = @org_id order by a.name;
 
+-- name: ListAssistantAgents :many
+-- Authoring context excludes instructions, descriptions and provider credentials.
+select name, input_schema, output_schema from agents where org_id = @org_id order by name;
+
+-- name: ListAssistantProviders :many
+select name, provider from provider_connections where org_id = @org_id order by name;
+
 -- name: DeleteAgent :execrows
 delete from agents where org_id = @org_id and name = @name;

@@ -48,3 +48,17 @@ The compact rows and separate advanced editor follow Railway's documented [varia
 Investigate a publish review showing changed steps and account references, a searchable command palette, starter workflows, and richer failed-step diagnostics. Prioritize these using observed user completion rates and support reports; a competitor’s interface alone is not evidence that every pattern belongs in Weft.
 
 See [Railway feature opportunities](10-railway-feature-opportunities.md) for the expanded comparison, current Weft foundations, recommended sequence and implementation boundaries.
+
+## Reviewed AI authoring
+
+The workflow creator uses OpenRouter's GLM 5.3 Flash without a model dropdown.
+Users provide full workflow context, review one proposed step, accept or discard
+it, then ask for the next. Accepted steps use the existing draft history and
+remain unpublished. The server preserves their values while sending only step
+IDs, types, dependencies and input structure to the authoring model. Stored
+credentials, agent instructions and schema samples are excluded.
+
+Start and step details share a single expanded selection. Agent and workflow
+account selection use the same JSON provider catalog as account setup, including
+an inline add-account action for each supported provider. Multiple named accounts
+for one provider remain separate, and complete provider model lists are retained.

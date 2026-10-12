@@ -42,6 +42,7 @@ export function Agents({
     [result, setResult] = useState<RecordData | null>(null),
     [chosenTools, setTools] = useState<string[]>([]),
     [addingProvider, setAddingProvider] = useState(false);
+  const [providerKind, setProviderKind] = useState<string | undefined>();
   function editing(agent: RecordData) {
     setEdit(agent);
     setTools(agent.tools || []);
@@ -177,7 +178,14 @@ export function Agents({
                 onChange={(connection, model) =>
                   setEdit({ ...edit, connection, model })
                 }
-                onAdd={admin ? () => setAddingProvider(true) : undefined}
+                onAdd={
+                  admin
+                    ? (kind) => {
+                        setProviderKind(kind);
+                        setAddingProvider(true);
+                      }
+                    : undefined
+                }
               />
             </div>
             <Field label="Instructions">
@@ -354,6 +362,7 @@ export function Agents({
           onClose={() => setAddingProvider(false)}
         >
           <ProviderForm
+            initialKind={providerKind}
             onSaved={(provider) => {
               providers.reload();
               setEdit(

@@ -65,7 +65,7 @@ A health view should show success/failure counts, duration, waiting runs and rec
 
 Webhook setup exists in settings today and can move into a workflow trigger panel. Recurring schedule storage and dispatch are new work: define timezone, daylight-saving behavior, next-run preview, missed-run policy and skip/queue/allow overlap. Reuse durable PostgreSQL execution; do not add a separate always-on scheduler container merely for the UI. The current production worker's ten-minute polling interval must be reflected in timing expectations until dispatch is improved.
 
-A contextual assistant can build on Weft's existing validated draft generator. Supply the selected workflow and redacted diagnostics, ask it to explain a failure or propose an edit, and show a diff before applying. Report evidence versus hypotheses. Publishing, rerunning and external actions remain separate explicit operations. Read-only explanations should come before autonomous repairs or a public workflow-management MCP API.
+Stepwise authoring now uses the existing validated draft generator, with a fixed GLM 5.3 Flash model, one proposed node per review, and explicit acceptance. Its context excludes stored credentials, agent instructions and accepted configuration values. A contextual debugging assistant can build on that boundary. Supply the selected workflow and redacted diagnostics, ask it to explain a failure or propose an edit, and show a diff before applying. Report evidence versus hypotheses. Publishing, rerunning and external actions remain separate explicit operations. Read-only explanations should come before autonomous repairs or a public workflow-management MCP API.
 
 ## How to validate the priorities
 

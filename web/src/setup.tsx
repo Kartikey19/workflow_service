@@ -213,12 +213,19 @@ export function ModelFields({
     model: string,
     changed: "connection" | "model",
   ) => void;
-  onAdd?: () => void;
+  onAdd?: (kind?: string) => void;
   disabled?: boolean;
   connectionDisabled?: boolean;
   modelDisabled?: boolean;
   modelRequired?: boolean;
 }) {
+  const kinds = useResource(!disabled && onAdd ? "/provider-kinds" : null);
+  const catalog: RecordData[] =
+    kinds.data?.items ||
+    [...new Set(providers.map((p) => p.provider))].map((id) => ({
+      id,
+      title: id.replaceAll("_", " "),
+    }));
   const provider = providers.find((p) => p.name === connection);
   const models = useResource(
     provider ? `/providers/${provider.id}/models` : null,
@@ -235,6 +242,10 @@ export function ModelFields({
           value={connection}
           disabled={disabled || connectionDisabled}
           onChange={(e) => {
+            if (e.target.value.startsWith("add:")) {
+              onAdd?.(e.target.value.slice(4));
+              return;
+            }
             const next = providers.find((p) => p.name === e.target.value);
             onChange(
               e.target.value,
@@ -252,22 +263,27 @@ export function ModelFields({
               {disabled ? "" : " (unavailable)"}
             </option>
           )}
-          {[...new Set(providers.map((p) => p.provider))].map((kind) => (
-            <optgroup key={kind} label={kind.replaceAll("_", " ")}>
+          {catalog.map((kind) => (
+            <optgroup key={kind.id} label={kind.title}>
               {providers
-                .filter((p) => p.provider === kind)
+                .filter((p) => p.provider === kind.id)
                 .map((p) => (
                   <option key={p.id} value={p.name}>
                     {p.name}
                     {p.key_hint ? ` · ${p.key_hint}` : ""}
                   </option>
                 ))}
+              {onAdd && (
+                <option value={`add:${kind.id}`}>
+                  Add {kind.title} account…
+                </option>
+              )}
             </optgroup>
           ))}
         </select>
       </Field>
       {onAdd && !disabled && (
-        <button type="button" onClick={onAdd}>
+        <button type="button" onClick={() => onAdd()}>
           Add provider account
         </button>
       )}

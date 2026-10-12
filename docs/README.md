@@ -174,8 +174,10 @@ The API embeds a React/Vite workspace. Run `make ui-install ui-build` after
 frontend changes; Go-only builds use the committed bundle. Sign in at the API
 root to manage workflows, agents, connections, run events, tasks, secrets,
 webhooks, members, API keys, and usage. Workflows can be created from agents
-without editing YAML, or drafted by the assistant using ASSISTANT_PROVIDER,
-ASSISTANT_API_KEY, and ASSISTANT_MODEL (or a tenant provider connection).
+without editing YAML, or built one reviewed step at a time with the OpenRouter
+creator using GLM 5.3 Flash. Configure `ASSISTANT_PROVIDER=openrouter` and
+`ASSISTANT_API_KEY`; the creator model is fixed. Running agents keep their own
+provider/model settings, with optional workflow-step overrides.
 
 See [the operations runbook](06-runbook.md) for the provisional Docker/Compose
 setup and local backup/rolling-release acceptance. Production hosting remains

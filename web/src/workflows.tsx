@@ -11,7 +11,7 @@ const Builder = lazy(() =>
   import("./builder").then((m) => ({ default: m.Builder })),
 );
 import { parse, stringify } from "yaml";
-import { ModelFields, ProviderForm, SetupModal } from "./setup";
+import { WorkflowCreator } from "./workflow-creator";
 import { useWorkflowDraft } from "./use-workflow-draft";
 import { isBlankWorkflow, problemsFor } from "./problems";
 import { api, APIError, enc, type RecordData } from "./api";
@@ -42,8 +42,7 @@ export function Workflows({
   organizationID: string;
   userID: string;
 }) {
-  const list = useResource("/workflows?include_archived=true"),
-    providers = useResource(editable ? "/providers" : null);
+  const list = useResource("/workflows?include_archived=true");
   const [step, setStep] = useState(""),
     [justPublished, setJustPublished] = useState(false),
     [showProblems, setShowProblems] = useState(false);
@@ -65,11 +64,7 @@ export function Workflows({
   const [spec, setSpec] = useState<RecordData | null>(null),
     [diagnostics, setDiagnostics] = useState<RecordData[]>([]),
     [validating, setValidating] = useState(false);
-  const [requirements, setRequirements] = useState(""),
-    [draft, setDraft] = useState<RecordData | null>(null);
-  const [assistantConnection, setAssistantConnection] = useState(""),
-    [assistantModel, setAssistantModel] = useState(""),
-    [addingProvider, setAddingProvider] = useState(false);
+  const [creator, setCreator] = useState<{ source: string } | null>(null);
   const [version, setVersion] = useState<RecordData | null>(null);
   const detail = useResource(selected ? `/workflows/${enc(selected)}` : null);
   useEffect(() => {
@@ -128,7 +123,6 @@ export function Workflows({
 
     setWorkflow(null);
     setVersion(null);
-    setDraft(null);
     setStarterAgent("");
     setMode("editor");
   }
@@ -137,7 +131,6 @@ export function Workflows({
     setStep("");
     setWorkflow(null);
     setVersion(null);
-    setDraft(null);
     setMode("editor");
   }
   async function publish(yaml: string) {
@@ -209,19 +202,22 @@ export function Workflows({
       : "—";
   return (
     <>
-      {addingProvider && (
-        <SetupModal
-          title="Add provider account"
-          onClose={() => setAddingProvider(false)}
-        >
-          <ProviderForm
-            onSaved={(provider) => {
-              providers.reload();
-              setAssistantConnection(provider.name);
-              setAddingProvider(false);
-            }}
-          />
-        </SetupModal>
+      {creator && (
+        <WorkflowCreator
+          source={creator.source}
+          onClose={() => setCreator(null)}
+          onAccept={(yaml, id) => {
+            if (mode === "list") {
+              editor.begin("");
+              setWorkflow(null);
+              setVersion(null);
+              setStarterAgent("");
+            }
+            editor.change(yaml);
+            setStep(id);
+            setMode("editor");
+          }}
+        />
       )}
       {mode === "list" && (
         <section className="overview">
@@ -231,8 +227,8 @@ export function Workflows({
             </p>
             {editable && (
               <div className="row">
-                <button onClick={() => setMode("assistant")}>
-                  Ask assistant
+                <button onClick={() => setCreator({ source: "" })}>
+                  Create with AI
                 </button>
                 <button className="primary" onClick={startNew}>
                   {Object.hasOwn(editing.drafts, "")
@@ -282,64 +278,6 @@ export function Workflows({
           )}
         </section>
       )}
-      {mode === "assistant" && (
-        <section className="panel workspace">
-          <button className="link back" onClick={() => setMode("list")}>
-            <ChevronLeft size={16} aria-hidden="true" />
-            All workflows
-          </button>
-          <h2>Describe what you want to automate</h2>
-          <p className="muted">
-            The assistant drafts and checks a workflow using the connectors and
-            agents in this organization. You review it before publishing.
-          </p>
-          <ActionForm
-            label="Generate draft"
-            submit={async (data) => {
-              let r: RecordData;
-              try {
-                r = await api("/assistant/workflows", "POST", {
-                  requirements,
-                  connection: data.get("connection"),
-                  model: data.get("model"),
-                });
-              } catch (e) {
-                if (e instanceof APIError && e.status === 422 && e.body.yaml)
-                  r = e.body;
-                else throw e;
-              }
-              setDraft(r);
-              editor.begin("");
-              editor.change(r.yaml);
-              setStarterAgent("");
-              setVersion(null);
-              setWorkflow(null);
-              setMode("editor");
-            }}
-          >
-            <Field label="Requirements">
-              <textarea
-                required
-                rows={7}
-                value={requirements}
-                onChange={(e) => setRequirements(e.target.value)}
-                placeholder="Classify incoming tickets with my triage agent, then email urgent issues to the support team."
-              />
-            </Field>
-            <ModelFields
-              providers={providers.data?.items || []}
-              connection={assistantConnection}
-              model={assistantModel}
-              modelRequired={false}
-              onChange={(connection, model) => {
-                setAssistantConnection(connection);
-                setAssistantModel(model);
-              }}
-              onAdd={admin ? () => setAddingProvider(true) : undefined}
-            />
-          </ActionForm>
-        </section>
-      )}
       {mode === "editor" && (
         <section className="workspace editing">
           <div className="editor-bar">
@@ -371,6 +309,13 @@ export function Workflows({
               />
             </div>
             <div className="editor-actions">
+              {editable && (
+                <button
+                  onClick={() => setCreator({ source: blank ? "" : source })}
+                >
+                  Create with AI
+                </button>
+              )}
               {editable && (
                 <div className="edit-history" aria-label="Edit history">
                   <button
@@ -517,15 +462,7 @@ export function Workflows({
             error={detail.error}
             loading={!!selected && !detail.data}
           />
-          {draft && (
-            <p className="muted">
-              Assistant draft · {draft.attempts} attempts ·{" "}
-              {draft.tokens_in + draft.tokens_out} tokens ·{" "}
-              {draft.cost_known
-                ? `$${draft.cost_usd.toFixed(4)}`
-                : "Price unavailable"}
-            </p>
-          )}
+
           {editable && (
             <div className="draft-state">
               <span role="status">

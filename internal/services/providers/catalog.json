@@ -1,0 +1,110 @@
+[
+  {
+    "id": "anthropic",
+    "title": "Anthropic"
+  },
+  {
+    "id": "openai",
+    "title": "OpenAI"
+  },
+  {
+    "id": "gemini",
+    "title": "Google Gemini"
+  },
+  {
+    "id": "ollama",
+    "title": "Ollama",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "key_optional": true
+  },
+  {
+    "id": "ollama_cloud",
+    "title": "Ollama Cloud",
+    "base_url": "https://ollama.com/v1"
+  },
+  {
+    "id": "openrouter",
+    "title": "OpenRouter",
+    "base_url": "https://openrouter.ai/api/v1"
+  },
+  {
+    "id": "groq",
+    "title": "Groq",
+    "base_url": "https://api.groq.com/openai/v1"
+  },
+  {
+    "id": "deepseek",
+    "title": "DeepSeek",
+    "base_url": "https://api.deepseek.com"
+  },
+  {
+    "id": "mistral",
+    "title": "Mistral",
+    "base_url": "https://api.mistral.ai/v1"
+  },
+  {
+    "id": "xai",
+    "title": "xAI",
+    "base_url": "https://api.x.ai/v1"
+  },
+  {
+    "id": "together",
+    "title": "Together AI",
+    "base_url": "https://api.together.xyz/v1"
+  },
+  {
+    "id": "cerebras",
+    "title": "Cerebras",
+    "base_url": "https://api.cerebras.ai/v1"
+  },
+  {
+    "id": "moonshot",
+    "title": "Moonshot (Kimi)",
+    "base_url": "https://api.moonshot.ai/v1"
+  },
+  {
+    "id": "minimax",
+    "title": "MiniMax",
+    "base_url": "https://api.minimax.io/v1"
+  },
+  {
+    "id": "zai",
+    "title": "Z.ai (GLM)",
+    "base_url": "https://api.z.ai/api/paas/v4"
+  },
+  {
+    "id": "qwen",
+    "title": "Qwen (Alibaba Cloud)",
+    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+  },
+  {
+    "id": "huggingface",
+    "title": "Hugging Face",
+    "base_url": "https://router.huggingface.co/v1"
+  },
+  {
+    "id": "nvidia",
+    "title": "NVIDIA",
+    "base_url": "https://integrate.api.nvidia.com/v1"
+  },
+  {
+    "id": "venice",
+    "title": "Venice",
+    "base_url": "https://api.venice.ai/api/v1"
+  },
+  {
+    "id": "nanogpt",
+    "title": "NanoGPT",
+    "base_url": "https://nano-gpt.com/api/v1"
+  },
+  {
+    "id": "zenmux",
+    "title": "ZenMux",
+    "base_url": "https://zenmux.ai/api/v1"
+  },
+  {
+    "id": "openai_compatible",
+    "title": "Custom (OpenAI-compatible)",
+    "key_optional": true
+  }
+]

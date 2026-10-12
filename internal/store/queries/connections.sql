@@ -14,6 +14,10 @@ select * from connections where org_id = @org_id and name = @name;
 select id, org_id, name, kind, config, secret_hint, account, token_expires_at, created_at, updated_at, created_by
   from connections where org_id = @org_id order by name;
 
+-- name: ListAssistantConnections :many
+-- No configuration, credential hints, account identities or encrypted values.
+select name, kind from connections where org_id = @org_id order by name;
+
 -- name: UpdateConnection :one
 -- Credentials are replaced only when new ones are given (the narg values are not null).
 update connections

@@ -31,9 +31,10 @@ type Config struct {
 }
 
 type AssistantConfig struct {
-	Provider string `env:"ASSISTANT_PROVIDER" envDefault:"anthropic"`
+	Provider string `env:"ASSISTANT_PROVIDER" envDefault:"openrouter"`
 	APIKey   string `env:"ASSISTANT_API_KEY"`
-	Model    string `env:"ASSISTANT_MODEL"`
+	Model    string `env:"ASSISTANT_MODEL" envDefault:"z-ai/glm-5.3-flash"`
+	BaseURL  string `env:"ASSISTANT_BASE_URL"` // optional operator proxy for OpenRouter
 }
 
 type AppConfig struct {
@@ -213,9 +214,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Assistant.APIKey != "" {
 		switch c.Assistant.Provider {
-		case "anthropic", "openai", "gemini":
+		case "anthropic", "openai", "gemini", "openrouter":
 		default:
-			add("ASSISTANT_PROVIDER must be anthropic, openai or gemini")
+			add("ASSISTANT_PROVIDER must be anthropic, openai, gemini or openrouter")
 		}
 		if strings.TrimSpace(c.Assistant.Model) == "" {
 			add("ASSISTANT_MODEL is required with ASSISTANT_API_KEY")
