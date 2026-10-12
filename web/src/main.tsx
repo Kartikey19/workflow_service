@@ -22,6 +22,8 @@ import {
   Menu,
   Building2,
   Sparkles,
+  CalendarClock,
+  BellRing,
 } from "lucide-react";
 import { api, APIError, type RecordData } from "./api";
 import {
@@ -37,6 +39,8 @@ const Workflows = lazy(() =>
   import("./workflows").then((m) => ({ default: m.Workflows })),
 );
 import { Runs } from "./runs";
+import { Schedules } from "./schedules";
+import { Alerts } from "./alerts";
 import { Platform } from "./platform";
 const Providers = lazy(() =>
   import("./providers").then((m) => ({ default: m.Providers })),
@@ -60,6 +64,8 @@ const pages = [
   ["providers", "AI providers", Sparkles, "Build"],
   ["runs", "Runs", Activity, "Operate"],
   ["tasks", "Human tasks", ListTodo, "Operate"],
+  ["schedules", "Schedules", CalendarClock, "Operate"],
+  ["alerts", "Alerts", BellRing, "Operate"],
   ["connectors", "Connectors", Plug, "Connect"],
   ["vault", "Vault", LockKeyhole, "Connect"],
   ["webhooks", "Webhooks", Webhook, "Connect"],
@@ -223,18 +229,28 @@ class PageBoundary extends Component<
     );
   }
 }
+// The page and, for /ui/runs/<id>, the run a link opens.
+function route() {
+  const [page, id = ""] = (
+    location.pathname.slice("/ui/".length) || "workflows"
+  ).split("/");
+  return {
+    page: page === "connections" ? "connectors" : page || "workflows",
+    runID: page === "runs" ? id : "",
+  };
+}
 function App() {
   const [session, setSession] = useState<RecordData | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
-    [page, setPage] = useState(
-      (location.pathname.slice("/ui/".length) || "workflows").replace(
-        /^connections$/,
-        "connectors",
-      ),
-    ),
+    [page, setPage] = useState(route().page),
     [agentName, setAgentName] = useState(""),
-    [runID, setRunID] = useState(""),
+    [runID, setRunID] = useState(route().runID),
+    [openStep, setOpenStep] = useState<{
+      workflow: string;
+      step: string;
+      at: number;
+    } | null>(null),
     [menu, setMenu] = useState(false);
   useEffect(() => {
     const abort = new AbortController();
@@ -250,13 +266,11 @@ function App() {
       .finally(() => {
         if (!abort.signal.aborted) setLoading(false);
       });
-    const pop = () =>
-      setPage(
-        (location.pathname.slice("/ui/".length) || "workflows").replace(
-          /^connections$/,
-          "connectors",
-        ),
-      );
+    const pop = () => {
+      const next = route();
+      setPage(next.page);
+      setRunID(next.runID);
+    };
     addEventListener("popstate", pop);
     return () => {
       abort.abort();
@@ -264,9 +278,20 @@ function App() {
     };
   }, []);
   function navigate(page: string) {
-    if (page !== "workflows") setAgentName("");
+    if (page !== "workflows") {
+      setAgentName("");
+      setOpenStep(null);
+    }
     setPage(page);
     history.pushState({}, "", `/ui/${page}`);
+    setMenu(false);
+  }
+  function showRun(id: string) {
+    setRunID(id);
+    setAgentName("");
+    setOpenStep(null);
+    setPage("runs");
+    history.pushState({}, "", `/ui/runs/${encodeURIComponent(id)}`);
     setMenu(false);
   }
   if (loading)
@@ -286,7 +311,8 @@ function App() {
         <SignIn
           onSession={(s) => {
             setSession(s);
-            setPage("workflows");
+            if (page === "runs" && runID) showRun(runID);
+            else setPage("workflows");
           }}
         />
       </>
@@ -301,7 +327,9 @@ function App() {
     .filter(
       (p) =>
         editable ||
-        !["connectors", "providers", "vault", "webhooks"].includes(p[0]),
+        !["connectors", "providers", "vault", "webhooks", "alerts"].includes(
+          p[0],
+        ),
     );
   const allowed = visible.some((p) => p[0] === currentPage[0]);
   return (
@@ -436,18 +464,28 @@ function App() {
               ) : currentPage[0] === "workflows" ? (
                 <Workflows
                   admin={admin}
-                  key={agentName}
+                  key={`${agentName}:${openStep?.at || ""}`}
                   editable={editable}
                   agentName={agentName}
                   organizationID={session.organization.id}
                   userID={session.user.id}
-                  onRun={(id) => {
-                    setRunID(id);
-                    navigate("runs");
-                  }}
+                  openStep={openStep}
+                  onRun={showRun}
+                  onNavigate={navigate}
                 />
               ) : currentPage[0] === "runs" ? (
-                <Runs initialID={runID} editable={editable} />
+                <Runs
+                  initialID={runID}
+                  editable={editable}
+                  onOpenStep={(workflow, step) => {
+                    navigate("workflows");
+                    setOpenStep({ workflow, step, at: Date.now() });
+                  }}
+                />
+              ) : currentPage[0] === "schedules" ? (
+                <Schedules editable={editable} onRun={showRun} />
+              ) : currentPage[0] === "alerts" ? (
+                <Alerts admin={admin} onRun={showRun} />
               ) : currentPage[0] === "agents" ? (
                 <Agents
                   editable={editable}

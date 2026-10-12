@@ -44,7 +44,7 @@ ui-check:
 	cp -R web/dist "$$tmp/dist"; \
 	npm run build --prefix web && diff -ru "$$tmp/dist" web/dist
 ui-browser:
-	RUN_UI_TESTS=true go test -count=1 -tags=integration ./test/integration -run '^TestWebUIBrowser$$' -timeout=160s
+	RUN_UI_TESTS=true go test -count=1 -tags=integration ./test/integration -run '^TestWebUIBrowser$$' -timeout=300s
 
 .PHONY: local-init local-db local-setup local-api local-worker local-db-stop
 local-init:

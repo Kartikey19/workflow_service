@@ -14,6 +14,8 @@ func runSummary(run gen.Run, workflow string, version int32) map[string]any {
 		"parent_run_id": nullableID(run.ParentRunID), "created_by": httpx.Text(run.CreatedBy),
 		"created_at": httpx.Time(run.CreatedAt), "started_at": httpx.Time(run.StartedAt),
 		"ended_at": httpx.Time(run.EndedAt), "deadline_at": httpx.Time(run.DeadlineAt),
+		// Draft test runs pin a test version, numbered below zero.
+		"test": version < 0,
 	}
 }
 

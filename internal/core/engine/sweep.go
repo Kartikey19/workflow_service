@@ -11,12 +11,21 @@ import (
 	"go.uber.org/zap"
 )
 
+// Chore is periodic work a worker runs after each sweep, such as starting
+// due schedules or delivering alerts. It must be safe to run on every worker
+// at once and returns how many items it handled.
+type Chore struct {
+	Name string
+	Run  func(context.Context) (int, error)
+}
+
 // sweeper runs on every worker; each pass is safe to run concurrently (03 §8).
 type sweeper struct {
 	store    *gen.Queries
 	runs     *runs.Service
 	log      *zap.Logger
 	interval time.Duration
+	chores   []Chore
 }
 
 func (s *sweeper) Run(ctx context.Context) {
@@ -63,5 +72,13 @@ func (s *sweeper) pass(ctx context.Context) {
 		s.log.Error("complete finished sub-workflows", zap.Error(err))
 	} else if done > 0 {
 		s.log.Info("completed sub-workflow nodes", zap.Int("count", done))
+	}
+	// 5. Application chores: due schedules, then alert deliveries.
+	for _, chore := range s.chores {
+		if n, err := chore.Run(ctx); err != nil && ctx.Err() == nil {
+			s.log.Error("periodic chore failed", zap.String("chore", chore.Name), zap.Error(err))
+		} else if n > 0 {
+			obs.SweeperActions.WithLabelValues(chore.Name).Add(float64(n))
+		}
 	}
 }

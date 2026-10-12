@@ -88,7 +88,7 @@ func init() {
 	Registry.MustRegister(RunDuration)
 	// Known label values start at zero, so dashboards and alerts see the
 	// series before the first event rather than "no data".
-	for _, action := range []string{"wake_waiting", "run_deadline", "lease_released"} {
+	for _, action := range []string{"wake_waiting", "run_deadline", "lease_released", "schedule_slots", "alerts_sent"} {
 		SweeperActions.WithLabelValues(action)
 	}
 	for _, result := range []string{"delivered", "no_waiter", "duplicate", "invalid_payload"} {

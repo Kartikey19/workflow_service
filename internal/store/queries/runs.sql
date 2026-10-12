@@ -148,3 +148,9 @@ select r.id
    and r.parent_run_id = w.run_id
    and r.status in ('succeeded', 'failed', 'cancelled')
  limit 100;
+
+-- name: GetRunVersion :one
+select wv.*
+  from runs r
+  join workflow_versions wv on wv.id = r.workflow_version_id
+ where r.id = @id and r.tenant_id = @tenant_id;

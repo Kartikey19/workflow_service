@@ -6,12 +6,14 @@ import {
   CircleAlert,
   Undo2,
   Redo2,
+  FlaskConical,
 } from "lucide-react";
 const Builder = lazy(() =>
   import("./builder").then((m) => ({ default: m.Builder })),
 );
 import { parse, stringify } from "yaml";
 import { WorkflowChat, type WorkflowPreview } from "./workflow-chat";
+import { TestRun, type StepStatus } from "./test-run";
 import { useWorkflowDraft } from "./use-workflow-draft";
 import { isBlankWorkflow, problemsFor } from "./problems";
 import { api, APIError, enc, type RecordData } from "./api";
@@ -34,6 +36,8 @@ export function Workflows({
   onRun,
   organizationID,
   userID,
+  openStep,
+  onNavigate,
 }: {
   editable: boolean;
   admin: boolean;
@@ -41,6 +45,9 @@ export function Workflows({
   onRun: (id: string) => void;
   organizationID: string;
   userID: string;
+  // A step to show, e.g. the one that failed in a run.
+  openStep?: { workflow: string; step: string } | null;
+  onNavigate?: (page: string) => void;
 }) {
   const list = useResource("/workflows?include_archived=true");
   const [step, setStep] = useState(""),
@@ -67,6 +74,8 @@ export function Workflows({
     [diagnostics, setDiagnostics] = useState<RecordData[]>([]),
     [validating, setValidating] = useState(false);
   const [preview, setPreview] = useState<WorkflowPreview | null>(null);
+  const [testing, setTesting] = useState(false),
+    [runStatus, setRunStatus] = useState<StepStatus>({});
   const [version, setVersion] = useState<RecordData | null>(null);
   const detail = useResource(selected ? `/workflows/${enc(selected)}` : null);
   useEffect(() => {
@@ -137,6 +146,14 @@ export function Workflows({
     setEditorMode(editable ? "visualization" : "steps");
     setMode("editor");
   }
+  // Opened from a run: show its workflow with the step selected.
+  useEffect(() => {
+    if (!openStep?.workflow) return;
+    view(openStep.workflow);
+    setStep(openStep.step);
+    setEditorMode("steps");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   async function publish(yaml: string) {
     const { session, slot } = editor.getSnapshot();
     const r = await api("/workflows", "POST", { yaml });
@@ -264,7 +281,7 @@ export function Workflows({
         </section>
       )}
       {mode === "editor" && (
-        <section className="workspace editing">
+        <section className={`workspace editing ${testing ? "testing" : ""}`}>
           <div className="editor-bar">
             <div className="editor-title">
               <button
@@ -276,6 +293,7 @@ export function Workflows({
                   editor.close();
                   setStep("");
                   setWorkflow(null);
+                  setTesting(false);
                 }}
               >
                 <ChevronLeft size={18} aria-hidden="true" />
@@ -425,6 +443,16 @@ export function Workflows({
                 </AsyncButton>
               )}
               {editable && (
+                <button
+                  aria-pressed={testing}
+                  disabled={blank}
+                  onClick={() => setTesting(!testing)}
+                >
+                  <FlaskConical size={15} aria-hidden="true" />
+                  Test
+                </button>
+              )}
+              {editable && (
                 <AsyncButton
                   primary
                   disabled={!spec || blank}
@@ -478,8 +506,29 @@ export function Workflows({
               </button>
             </p>
           )}
+          {testing && editable && (
+            <TestRun
+              source={source}
+              spec={spec}
+              published={
+                workflow && version && source === version.yaml_source
+                  ? { name: workflow.name, version: version.version }
+                  : null
+              }
+              editable={editable}
+              onStatus={setRunStatus}
+              onSelectStep={(id) => {
+                setStep(id);
+              }}
+              onOpenRun={onRun}
+              onClose={() => {
+                setTesting(false);
+                setRunStatus({});
+              }}
+            />
+          )}
           <div
-            className={`workflow-workspace ${editable ? "with-chat" : ""}`}
+            className={`workflow-workspace ${editable ? "with-chat" : ""} ${testing ? "with-test" : ""}`}
             hidden={editorMode === "yaml"}
           >
             {editable && (
@@ -535,6 +584,8 @@ export function Workflows({
                   if (id && editorMode !== "steps") setEditorMode("steps");
                 }}
                 problems={problems}
+                runStatus={testing ? runStatus : undefined}
+                onNavigate={onNavigate}
                 starter={
                   starterAgent && !selected ? `agent:${starterAgent}` : ""
                 }

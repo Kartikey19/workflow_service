@@ -26,7 +26,7 @@ type Worker struct {
 	listener *readyListener
 }
 
-func NewWorker(cfg Config, log *zap.Logger, pool *pgxpool.Pool, f *runs.Service, dispatch func(context.Context, gen.NodeExecution)) *Worker {
+func NewWorker(cfg Config, log *zap.Logger, pool *pgxpool.Pool, f *runs.Service, dispatch func(context.Context, gen.NodeExecution), chores ...Chore) *Worker {
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -42,7 +42,7 @@ func NewWorker(cfg Config, log *zap.Logger, pool *pgxpool.Pool, f *runs.Service,
 			store: store, cfg: cfg, log: log, dispatch: dispatch,
 			slots: make(chan struct{}, cfg.Concurrency), wake: wake,
 		},
-		sweeper:  &sweeper{store: store, runs: f, log: log, interval: sweepInterval},
+		sweeper:  &sweeper{store: store, runs: f, log: log, interval: sweepInterval, chores: chores},
 		listener: &readyListener{pool: pool, log: log, wake: wake},
 	}
 }

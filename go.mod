@@ -11,6 +11,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/prometheus/client_golang v1.23.2
+	github.com/robfig/cron/v3 v3.0.1
 	go.mongodb.org/mongo-driver/v2 v2.9.2
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.5

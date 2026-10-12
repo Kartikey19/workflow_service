@@ -247,12 +247,14 @@ func (f *Service) finishRun(ctx context.Context, q *gen.Queries, run gen.Run, st
 		return err
 	}
 	obs.RunsFinished.WithLabelValues(status).Inc()
-	if run.StartedAt.Valid {
-		if workflow, err := q.GetWorkflowName(ctx, run.WorkflowID); err == nil {
-			obs.RunDuration.WithLabelValues(workflow, status).Observe(time.Since(run.StartedAt.Time).Seconds())
-		}
+	workflow, err := q.GetWorkflowName(ctx, run.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("load workflow name: %w", err)
 	}
-	return nil
+	if run.StartedAt.Valid {
+		obs.RunDuration.WithLabelValues(workflow, status).Observe(time.Since(run.StartedAt.Time).Seconds())
+	}
+	return recordHealth(ctx, q, run, workflow, status, runError)
 }
 
 // LockRun takes the run row lock that serialises every transition of one run.

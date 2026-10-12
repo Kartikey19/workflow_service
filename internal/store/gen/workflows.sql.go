@@ -12,7 +12,9 @@ import (
 )
 
 const countActiveWorkflows = `-- name: CountActiveWorkflows :one
-select count(*) from workflows where tenant_id = $1 and archived_at is null
+select count(*) from workflows w
+ where w.tenant_id = $1 and w.archived_at is null
+   and exists (select 1 from workflow_versions v where v.workflow_id = w.id and not v.is_test)
 `
 
 func (q *Queries) CountActiveWorkflows(ctx context.Context, tenantID pgtype.UUID) (int64, error) {
@@ -43,6 +45,36 @@ func (q *Queries) EnsureWorkflow(ctx context.Context, arg EnsureWorkflowParams) 
 		arg.Description,
 	)
 	return err
+}
+
+const findTestVersion = `-- name: FindTestVersion :one
+select id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at, is_test from workflow_versions
+ where workflow_id = $1 and is_test and spec_hash = $2
+ order by version desc
+ limit 1
+`
+
+type FindTestVersionParams struct {
+	WorkflowID pgtype.UUID `json:"workflow_id"`
+	SpecHash   string      `json:"spec_hash"`
+}
+
+// Reuses the test version of an identical draft instead of adding another.
+func (q *Queries) FindTestVersion(ctx context.Context, arg FindTestVersionParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, findTestVersion, arg.WorkflowID, arg.SpecHash)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.YamlSource,
+		&i.Spec,
+		&i.SpecHash,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.IsTest,
+	)
+	return i, err
 }
 
 const getWorkflowByName = `-- name: GetWorkflowByName :one
@@ -81,7 +113,7 @@ func (q *Queries) GetWorkflowName(ctx context.Context, id pgtype.UUID) (string, 
 }
 
 const getWorkflowVersion = `-- name: GetWorkflowVersion :one
-select wv.id, wv.workflow_id, wv.version, wv.yaml_source, wv.spec, wv.spec_hash, wv.created_by, wv.created_at
+select wv.id, wv.workflow_id, wv.version, wv.yaml_source, wv.spec, wv.spec_hash, wv.created_by, wv.created_at, wv.is_test
 from workflow_versions wv
 join workflows w on w.id = wv.workflow_id
 where wv.id = $1
@@ -105,12 +137,13 @@ func (q *Queries) GetWorkflowVersion(ctx context.Context, arg GetWorkflowVersion
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.IsTest,
 	)
 	return i, err
 }
 
 const getWorkflowVersionByNumber = `-- name: GetWorkflowVersionByNumber :one
-select id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at from workflow_versions where workflow_id = $1 and version = $2
+select id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at, is_test from workflow_versions where workflow_id = $1 and version = $2
 `
 
 type GetWorkflowVersionByNumberParams struct {
@@ -130,6 +163,50 @@ func (q *Queries) GetWorkflowVersionByNumber(ctx context.Context, arg GetWorkflo
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.IsTest,
+	)
+	return i, err
+}
+
+const insertTestVersion = `-- name: InsertTestVersion :one
+insert into workflow_versions (id, workflow_id, version, yaml_source, spec, spec_hash, created_by, is_test)
+select $1, $2, coalesce(min(version), 0) - 1, $3, $4, $5, $6, true
+  from workflow_versions
+ where workflow_id = $2
+   and is_test
+returning id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at, is_test
+`
+
+type InsertTestVersionParams struct {
+	ID         pgtype.UUID `json:"id"`
+	WorkflowID pgtype.UUID `json:"workflow_id"`
+	YamlSource string      `json:"yaml_source"`
+	Spec       []byte      `json:"spec"`
+	SpecHash   string      `json:"spec_hash"`
+	CreatedBy  pgtype.Text `json:"created_by"`
+}
+
+// Test versions count down from -1; the caller holds the workflow row lock.
+func (q *Queries) InsertTestVersion(ctx context.Context, arg InsertTestVersionParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, insertTestVersion,
+		arg.ID,
+		arg.WorkflowID,
+		arg.YamlSource,
+		arg.Spec,
+		arg.SpecHash,
+		arg.CreatedBy,
+	)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.YamlSource,
+		&i.Spec,
+		&i.SpecHash,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.IsTest,
 	)
 	return i, err
 }
@@ -139,7 +216,8 @@ insert into workflow_versions (id, workflow_id, version, yaml_source, spec, spec
 select $1, $2, coalesce(max(version), 0) + 1, $3, $4, $5, $6
   from workflow_versions
  where workflow_id = $2
-returning id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at
+   and not is_test
+returning id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at, is_test
 `
 
 type InsertWorkflowVersionParams struct {
@@ -170,17 +248,20 @@ func (q *Queries) InsertWorkflowVersion(ctx context.Context, arg InsertWorkflowV
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.IsTest,
 	)
 	return i, err
 }
 
 const latestWorkflowVersion = `-- name: LatestWorkflowVersion :one
-select id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at from workflow_versions
+select id, workflow_id, version, yaml_source, spec, spec_hash, created_by, created_at, is_test from workflow_versions
  where workflow_id = $1
+   and not is_test
  order by version desc
  limit 1
 `
 
+// The latest published version; draft test versions are never "latest".
 func (q *Queries) LatestWorkflowVersion(ctx context.Context, workflowID pgtype.UUID) (WorkflowVersion, error) {
 	row := q.db.QueryRow(ctx, latestWorkflowVersion, workflowID)
 	var i WorkflowVersion
@@ -193,6 +274,7 @@ func (q *Queries) LatestWorkflowVersion(ctx context.Context, workflowID pgtype.U
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.IsTest,
 	)
 	return i, err
 }
@@ -201,6 +283,7 @@ const listWorkflowVersions = `-- name: ListWorkflowVersions :many
 select id, workflow_id, version, spec_hash, created_by, created_at
   from workflow_versions
  where workflow_id = $1
+   and not is_test
  order by version desc
 `
 
@@ -247,9 +330,10 @@ select w.id, w.tenant_id, w.name, w.description, w.created_at, w.updated_at, w.a
        (select count(*) from runs r where r.workflow_id = w.id)::bigint as run_count,
        (select max(r.created_at) from runs r where r.workflow_id = w.id)::timestamptz as last_run_at
   from workflows w
-  left join lateral (
+  -- A workflow that has only been test-run has no published version yet.
+  join lateral (
        select version, created_at from workflow_versions
-        where workflow_id = w.id order by version desc limit 1
+        where workflow_id = w.id and not is_test order by version desc limit 1
   ) v on true
  where w.tenant_id = $1
    and ($2::bool or w.archived_at is null)

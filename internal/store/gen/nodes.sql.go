@@ -291,6 +291,51 @@ func (q *Queries) CompleteWaitingNode(ctx context.Context, arg CompleteWaitingNo
 	return result.RowsAffected(), nil
 }
 
+const copyReusedNode = `-- name: CopyReusedNode :execrows
+insert into node_executions (
+  id, run_id, tenant_id, node_id, node_type, branch_key, attempt,
+  status, input, output, metrics, idempotency_key, started_at, ended_at
+) values (
+  $1, $2, $3, $4, $5, '', 1,
+  $6::text, $7, $8, $9, $10, now(), now()
+)
+on conflict (run_id, node_id, branch_key, attempt) do nothing
+`
+
+type CopyReusedNodeParams struct {
+	ID             pgtype.UUID `json:"id"`
+	RunID          pgtype.UUID `json:"run_id"`
+	TenantID       pgtype.UUID `json:"tenant_id"`
+	NodeID         string      `json:"node_id"`
+	NodeType       string      `json:"node_type"`
+	Status         string      `json:"status"`
+	Input          []byte      `json:"input"`
+	Output         []byte      `json:"output"`
+	Metrics        []byte      `json:"metrics"`
+	IdempotencyKey string      `json:"idempotency_key"`
+}
+
+// Records a result reused from an earlier run as this run's first attempt. Its
+// metrics name the source run instead of repeating its cost.
+func (q *Queries) CopyReusedNode(ctx context.Context, arg CopyReusedNodeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, copyReusedNode,
+		arg.ID,
+		arg.RunID,
+		arg.TenantID,
+		arg.NodeID,
+		arg.NodeType,
+		arg.Status,
+		arg.Input,
+		arg.Output,
+		arg.Metrics,
+		arg.IdempotencyKey,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countOpenBranches = `-- name: CountOpenBranches :one
 select count(*) from (
        select distinct on (branch_key) status
@@ -722,6 +767,57 @@ func (q *Queries) LatestNodeStates(ctx context.Context, runID pgtype.UUID) ([]La
 			&i.Status,
 			&i.Attempt,
 			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const latestSharedAttempts = `-- name: LatestSharedAttempts :many
+select distinct on (node_id) id, run_id, tenant_id, node_id, node_type, branch_key, attempt, status, input, output, error, metrics, idempotency_key, run_after, lease_owner, lease_expires_at, created_at, started_at, ended_at, lease_token, item
+  from node_executions
+ where run_id = $1 and branch_key = ''
+ order by node_id, attempt desc
+`
+
+// Latest attempt of every node outside foreach branches, the rows a resumed
+// run copies from the run it continues.
+func (q *Queries) LatestSharedAttempts(ctx context.Context, runID pgtype.UUID) ([]NodeExecution, error) {
+	rows, err := q.db.Query(ctx, latestSharedAttempts, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NodeExecution
+	for rows.Next() {
+		var i NodeExecution
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.TenantID,
+			&i.NodeID,
+			&i.NodeType,
+			&i.BranchKey,
+			&i.Attempt,
+			&i.Status,
+			&i.Input,
+			&i.Output,
+			&i.Error,
+			&i.Metrics,
+			&i.IdempotencyKey,
+			&i.RunAfter,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.LeaseToken,
+			&i.Item,
 		); err != nil {
 			return nil, err
 		}

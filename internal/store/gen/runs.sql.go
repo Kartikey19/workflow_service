@@ -368,6 +368,35 @@ func (q *Queries) GetRunDetail(ctx context.Context, arg GetRunDetailParams) (Get
 	return i, err
 }
 
+const getRunVersion = `-- name: GetRunVersion :one
+select wv.id, wv.workflow_id, wv.version, wv.yaml_source, wv.spec, wv.spec_hash, wv.created_by, wv.created_at, wv.is_test
+  from runs r
+  join workflow_versions wv on wv.id = r.workflow_version_id
+ where r.id = $1 and r.tenant_id = $2
+`
+
+type GetRunVersionParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+func (q *Queries) GetRunVersion(ctx context.Context, arg GetRunVersionParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, getRunVersion, arg.ID, arg.TenantID)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.YamlSource,
+		&i.Spec,
+		&i.SpecHash,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.IsTest,
+	)
+	return i, err
+}
+
 const listActiveChildRuns = `-- name: ListActiveChildRuns :many
 select id, tenant_id, workflow_id, workflow_version_id, status, input, output, error, idempotency_key, correlation_id, trigger, parent_run_id, created_at, started_at, ended_at, deadline_at, request_hash, created_by from runs
  where parent_run_id = $1 and status in ('pending', 'running', 'waiting')

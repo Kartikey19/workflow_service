@@ -13,14 +13,17 @@ import (
 	"github.com/kartikey/workflow_service/internal/core/executor/agent"
 	"github.com/kartikey/workflow_service/internal/core/executor/builtin"
 	"github.com/kartikey/workflow_service/internal/core/executor/connectors"
+	"github.com/kartikey/workflow_service/internal/core/executor/email"
 	"github.com/kartikey/workflow_service/internal/core/executor/httpexec"
 	mcpexec "github.com/kartikey/workflow_service/internal/core/executor/mcp"
 	"github.com/kartikey/workflow_service/internal/services/agents"
+	"github.com/kartikey/workflow_service/internal/services/alerts"
 	"github.com/kartikey/workflow_service/internal/services/assistant"
 	"github.com/kartikey/workflow_service/internal/services/connections"
 	"github.com/kartikey/workflow_service/internal/services/identity"
 	"github.com/kartikey/workflow_service/internal/services/providers"
 	"github.com/kartikey/workflow_service/internal/services/runs"
+	"github.com/kartikey/workflow_service/internal/services/schedules"
 	"github.com/kartikey/workflow_service/internal/services/tasks"
 	"github.com/kartikey/workflow_service/internal/services/triggers"
 	"github.com/kartikey/workflow_service/internal/services/vault"
@@ -49,6 +52,8 @@ type Deps struct {
 	Agents    *agents.Service
 	Conns     *connections.Service
 	Triggers  *triggers.Service
+	Schedules *schedules.Service
+	Alerts    *alerts.Service
 	Assistant *assistant.Service
 	Auth      auth.Authenticator
 	Secrets   engine.SecretSource
@@ -129,6 +134,9 @@ func Build(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *zap.
 		Pool: pool, Log: log, Registry: registry, Runs: svc, Tasks: tasks.NewService(svc),
 		Workflows: workflows.NewService(pool, registry), Identity: ident, Vault: vaultSvc,
 		Providers: providerSvc, Agents: agentSvc, Conns: connectionSvc, Triggers: triggers.New(pool, keyring, svc), cfgAuth: cfg.Auth,
+		Schedules: schedules.New(pool, svc, log),
+		Alerts: alerts.New(pool, keyring, policy, connectionSvc, email.New(connectionSvc, policy, cfg.Services.ResendBaseURL),
+			cfg.Auth.PublicURL, log),
 	}
 	var assistantPlatform agent.Clients = agent.Unconfigured{}
 	if cfg.Assistant.APIKey != "" {
@@ -184,7 +192,7 @@ func (d *Deps) Services() *api.Services {
 	return &api.Services{
 		Pool: d.Pool, Workflows: d.Workflows, Runs: d.Runs, Executors: d.Registry,
 		Tasks: d.Tasks, Admin: d.Runs, Identity: d.Identity, Vault: d.Vault,
-		Assistant: d.Assistant, Triggers: d.Triggers, Providers: d.Providers, Agents: d.Agents, Connections: d.Conns,
+		Assistant: d.Assistant, Triggers: d.Triggers, Schedules: d.Schedules, Alerts: d.Alerts, Providers: d.Providers, Agents: d.Agents, Connections: d.Conns,
 		CookieSecure: d.cfgAuth.CookieSecure, PublicURL: d.cfgAuth.PublicURL, Auth: d.Auth,
 	}
 }
@@ -196,5 +204,7 @@ func (d *Deps) Worker(cfg config.WorkerConfig) *engine.Worker {
 		PollInterval: cfg.PollInterval, LeaseTTL: cfg.LeaseTTL, SweepInterval: cfg.SweepInterval,
 	}
 	dispatcher := engine.NewDispatcher(engineCfg, d.Runs, d.Registry, d.Secrets, d.Log)
-	return engine.NewWorker(engineCfg, d.Log, d.Pool, d.Runs, dispatcher.Run)
+	return engine.NewWorker(engineCfg, d.Log, d.Pool, d.Runs, dispatcher.Run,
+		engine.Chore{Name: "schedule_slots", Run: d.Schedules.Dispatch},
+		engine.Chore{Name: "alerts_sent", Run: d.Alerts.Deliver})
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kartikey/workflow_service/internal/spec"
 	"github.com/kartikey/workflow_service/internal/store/gen"
 	"github.com/kartikey/workflow_service/pkg/exception"
 )
@@ -130,8 +131,39 @@ func (s *Service) Retry(ctx context.Context, tenantID, id pgtype.UUID, actor, id
 		return StartResult{}, fmt.Errorf("decode run input: %w", err)
 	}
 	return s.Start(ctx, StartParams{
-		TenantID: tenantID, Workflow: row.WorkflowName, Version: row.WorkflowVersion, Input: input,
+		TenantID: tenantID, Workflow: row.WorkflowName, VersionID: row.Run.WorkflowVersionID, Input: input,
 		CorrelationID: row.Run.CorrelationID.String, IdempotencyKey: idempotencyKey,
 		Trigger: "retry", CreatedBy: actor, ParentRunID: row.Run.ID,
 	})
+}
+
+// CheckInput validates input against the latest published version of a
+// workflow without starting a run, so a schedule is rejected when it is saved
+// rather than when it first fires.
+func (s *Service) CheckInput(ctx context.Context, tenantID pgtype.UUID, workflow string, input map[string]any) error {
+	row, err := s.Q.GetWorkflowByName(ctx, gen.GetWorkflowByNameParams{TenantID: tenantID, Name: workflow})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load workflow: %w", err)
+	}
+	if row.ArchivedAt.Valid {
+		return ErrArchived
+	}
+	version, err := s.Q.LatestWorkflowVersion(ctx, row.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load workflow version: %w", err)
+	}
+	compiled, err := s.Specs.Get(ctx, s.Q, version.ID, tenantID)
+	if err != nil {
+		return err
+	}
+	if _, fields := spec.ValidateInput(compiled.Spec.Inputs, input); len(fields) > 0 {
+		return &InputError{Fields: fields}
+	}
+	return nil
 }
