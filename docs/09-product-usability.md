@@ -35,6 +35,14 @@ Account setup remains outside workflow history. Saved account credentials are ne
 
 Browser coverage exercises refresh during a pending field edit, invalid YAML recovery, shared canvas/YAML undo, deleted-step restoration, publication cleanup, account isolation, newer-version conflicts, setup-key exclusion and storage failures. Unit coverage also checks edits during publication and detection of changes from another tab.
 
+## Typed Start inputs
+
+Start inputs use rows for name, type and Required, with Add variable and Remove actions. The type selector supports Text, Number, Integer, Boolean, Object, Array and Any. Each row shows its `input.name` reference. New variables start with a unique name, Text type and Required enabled; the name receives focus for immediate editing.
+
+Valid changes enter the shared draft and undo history immediately. Duplicate or invalid names show an inline error and keep the saved name; leaving the field restores that name. Renaming or removing an input does not rewrite step expressions, so the editor tells users to update their references. Row edits preserve defaults, enum choices, formats and other validation rules authored in YAML. Those advanced rules remain editable in the YAML view.
+
+The compact rows and separate advanced editor follow Railway's documented [variable editing pattern](https://docs.railway.com/variables). Typed workflow inputs are a Weft adaptation, not a claim about Railway's environment-variable types. Browser coverage checks creation, validation, removal, undo/redo, refresh recovery, advanced schema preservation, narrow screens and execution with typed defaults.
+
 ## Later refinements
 
 Investigate a publish review showing changed steps and account references, a searchable command palette, starter workflows, and richer failed-step diagnostics. Prioritize these using observed user completion rates and support reports; a competitor’s interface alone is not evidence that every pattern belongs in Weft.

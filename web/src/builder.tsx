@@ -49,6 +49,7 @@ import { NodeCreator, type CreatorEntry } from "./creator";
 import { ConnectorForm, ModelFields, ProviderForm, SetupModal } from "./setup";
 import { StepPicker, type PickerItem } from "./picker";
 import { isPlaceholder, type Problem } from "./problems";
+import { WorkflowInputs } from "./workflow-inputs";
 import "@xyflow/react/dist/style.css";
 
 function parsed(source: string): RecordData | null {
@@ -146,39 +147,6 @@ export function quoteExpressions(text: string) {
     /^([ \t]*(?:-[ \t]+)?[\w.-]+:[ \t]+|[ \t]*-[ \t]+)(?![ \t"'[{|>])(.*\$\{.*)$/gm,
     (_, head: string, value: string) => `${head}'${value.replace(/'/g, "''")}'`,
   );
-}
-// A workflow's inputs as people write them: one "name: type" per line, with
-// "name?: type" for an optional one.
-const inputTypes = [
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "object",
-  "array",
-];
-function inputsText(inputs: RecordData = {}) {
-  return Object.entries(inputs)
-    .map(([name, raw]) => {
-      const s = (raw || {}) as RecordData;
-      return `${name}${s.required ? "" : "?"}: ${s.type || "string"}`;
-    })
-    .join("\n");
-}
-function parseInputs(text: string, old: RecordData = {}) {
-  const out: RecordData = {};
-  for (const line of text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    const m = /^([a-z][a-z0-9_]*)(\?)?\s*:\s*([a-z]+)$/.exec(line);
-    if (!m || !inputTypes.includes(m[3]))
-      throw new Error(
-        `Write each input as name: type (${inputTypes.join(", ")}). “${line}” is not.`,
-      );
-    out[m[1]] = { ...(old[m[1]] || {}), type: m[3], required: !m[2] };
-  }
-  return out;
 }
 // Steps in the order they can run: a step comes after everything it needs.
 function runOrder(rows: RecordData[]) {
@@ -295,8 +263,7 @@ export function Builder({
   // Where a new step joins: null keeps the creator closed.
   const [adding, setAdding] = useState<{ after: string } | null>(null),
     [diagram, setDiagram] = useState(false),
-    [startOpen, setStartOpen] = useState(false),
-    [inputsError, setInputsError] = useState("");
+    [startOpen, setStartOpen] = useState(false);
   const [setup, setSetup] = useState<{
     kind: "provider" | "connector";
     nodeID: string;
@@ -1238,38 +1205,17 @@ export function Builder({
             </button>
             {startOpen && (
               <div className="step-detail">
-                <Field
-                  label="Inputs"
-                  hint="What each run is given, one per line as name: type. Add ? for an optional one, as in note?: string. Steps read them as input.name."
-                >
-                  <textarea
-                    className="code"
-                    rows={4}
-                    spellCheck={false}
-                    readOnly={!editable}
-                    defaultValue={inputsText(doc.inputs)}
-                    placeholder={"amount: number\nreason: string"}
-                    onBlur={(e) => {
-                      try {
-                        const inputs = parseInputs(e.target.value, doc.inputs);
-                        setInputsError("");
-                        const { inputs: _old, ...rest } = doc;
-                        write(
-                          Object.keys(inputs).length
-                            ? { ...rest, inputs }
-                            : rest,
-                        );
-                      } catch (err) {
-                        setInputsError((err as Error).message);
-                      }
-                    }}
-                  />
-                </Field>
-                {inputsError && (
-                  <p className="error" role="alert">
-                    {inputsError}
-                  </p>
-                )}
+                <WorkflowInputs
+                  inputs={doc.inputs}
+                  editable={editable}
+                  onChange={(inputs, group) => {
+                    const { inputs: _old, ...rest } = doc;
+                    write(
+                      Object.keys(inputs).length ? { ...rest, inputs } : rest,
+                      group,
+                    );
+                  }}
+                />
               </div>
             )}
           </li>

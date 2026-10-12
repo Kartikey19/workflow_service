@@ -1619,6 +1619,41 @@ button.table-row:hover {
   line-height: 1.55;
   margin: 10px 0 0;
 }
+.workflow-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.7fr) auto auto;
+  align-items: end;
+  gap: 8px;
+}
+.workflow-input-row .field {
+  margin-bottom: 0;
+}
+.input-required {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 38px;
+  font-size: 12px;
+}
+.input-reference,
+.input-name-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.input-reference {
+  color: var(--muted);
+}
+.workflow-inputs > button {
+  margin-top: 12px;
+}
+@media (max-width: 600px) {
+  .workflow-input-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .workflow-input-row > button {
+    justify-self: end;
+  }
+}
 .step-detail .insert-secret {
   margin: 12px 0 0;
 }

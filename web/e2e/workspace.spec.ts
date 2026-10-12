@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { parse, stringify } from "yaml";
 // Set UI_TEST_SHOTS to a directory to keep review screenshots of key screens.
 const shot = async (page: Page, name: string) => {
   if (process.env.UI_TEST_SHOTS)
@@ -26,6 +27,120 @@ const signInOwner = async (page: Page, email = "browserco@example.com") => {
     page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
 };
+test("edit typed start variables without losing schema rules, drafts or history", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByLabel("Workflow name", { exact: true }).fill("typed-inputs");
+  await page.getByRole("button", { name: /^Start/ }).click();
+  await page.getByRole("button", { name: "Add variable", exact: true }).click();
+  const first = page.getByRole("group", { name: "Variable 1", exact: true });
+  const second = page.getByRole("group", { name: "Variable 2", exact: true });
+  await expect(first.getByLabel("Name", { exact: true })).toBeFocused();
+  await first.getByLabel("Name", { exact: true }).fill("amount");
+  await first.getByLabel("Type", { exact: true }).selectOption("number");
+  await expect(first.getByRole("option")).toHaveCount(7);
+  await page.getByRole("button", { name: "Add variable", exact: true }).click();
+  await second.getByLabel("Name", { exact: true }).fill("reason");
+  await second.getByLabel("Required", { exact: true }).uncheck();
+  await second.getByLabel("Name", { exact: true }).fill("amount");
+  await expect(second.getByRole("alert")).toContainText(
+    "already called amount",
+  );
+  await second.getByLabel("Name", { exact: true }).press("Tab");
+  await expect(second.getByLabel("Name", { exact: true })).toHaveValue(
+    "reason",
+  );
+  await second.getByLabel("Name", { exact: true }).fill("bad name");
+  await expect(second.getByRole("alert")).toContainText("has not been changed");
+  await second.getByLabel("Name", { exact: true }).press("Tab");
+  await expect(second.getByLabel("Name", { exact: true })).toHaveValue(
+    "reason",
+  );
+  await second.getByLabel("Name", { exact: true }).fill("notes");
+  await expect(second.getByRole("alert")).toHaveCount(0);
+  await first
+    .getByRole("button", { name: "Remove variable amount", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: /^Start/ }).click();
+  await expect(first.getByLabel("Name", { exact: true })).toHaveValue("amount");
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await page.getByRole("button", { name: /^Start/ }).click();
+  await expect(first.getByLabel("Name", { exact: true })).toHaveValue("notes");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: /^Start/ }).click();
+  await expect(first.getByLabel("Name", { exact: true })).toHaveValue("amount");
+  await expect(first.getByLabel("Type", { exact: true })).toHaveValue("number");
+  await expect(second.getByLabel("Name", { exact: true })).toHaveValue("notes");
+  await expect(
+    second.getByLabel("Required", { exact: true }),
+  ).not.toBeChecked();
+  // Advanced schema rules imported through YAML survive all row edits.
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  const definition = parse(await yaml.inputValue());
+  definition.inputs.amount = {
+    ...definition.inputs.amount,
+    default: 5,
+    minimum: 1,
+    maximum: 99,
+  };
+  definition.inputs.notes = {
+    ...definition.inputs.notes,
+    default: "one",
+    enum: ["one", "two"],
+    pattern: "^[a-z]+$",
+  };
+  await yaml.fill(stringify(definition));
+  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: /^Start/ }).click();
+  await first.getByLabel("Name", { exact: true }).fill("total");
+  await first.getByLabel("Type", { exact: true }).selectOption("integer");
+  await first.getByLabel("Required", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  const changed = parse(await yaml.inputValue());
+  expect(changed.inputs).toEqual({
+    total: {
+      type: "integer",
+      required: false,
+      default: 5,
+      minimum: 1,
+      maximum: 99,
+    },
+    notes: definition.inputs.notes,
+  });
+  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: /^Start/ }).click();
+  await shot(page, "12-typed-start-inputs");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(first.getByLabel("Type", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await addStep(page, "Transform");
+  await page
+    .getByLabel("Settings", { exact: true })
+    .fill("value:\n  total: ${input.total}\n  notes: ${input.notes}");
+  await expect(page.locator(".check-state")).toContainText("Valid workflow");
+  await page
+    .getByRole("button", { name: "Publish version", exact: true })
+    .click();
+  await expect(page.getByLabel("Total", { exact: true })).toHaveValue("5");
+  await page.getByRole("button", { name: "Start run", exact: true }).click();
+  await expect(page.locator(".run-detail .status").first()).toHaveText(
+    "succeeded",
+  );
+  await page.locator(".node-attempt summary").first().click();
+  await expect(page.locator(".node-attempt").first()).toContainText(
+    '"total": 5',
+  );
+});
 test("recover a draft after refresh, undo canvas and YAML edits, and clear it after publication", async ({
   page,
 }) => {
@@ -796,10 +911,15 @@ test("workflow inputs become run fields and a person approves a task", async ({
   await page.getByLabel("Workflow name", { exact: true }).fill("approval-flow");
   // The Start row declares what each run is given.
   await page.getByRole("button", { name: /^Start/ }).click();
+  await page.getByRole("button", { name: "Add variable", exact: true }).click();
+  const amount = page.getByRole("group", { name: "Variable 1", exact: true });
+  await amount.getByLabel("Name", { exact: true }).fill("amount");
+  await amount.getByLabel("Type", { exact: true }).selectOption("number");
+  await page.getByRole("button", { name: "Add variable", exact: true }).click();
   await page
-    .getByLabel("Inputs", { exact: true })
-    .fill("amount: number\nreason: string");
-  await page.getByRole("heading", { name: "Steps", exact: true }).click();
+    .getByRole("group", { name: "Variable 2", exact: true })
+    .getByLabel("Name", { exact: true })
+    .fill("reason");
   await expect(page.getByRole("button", { name: /^Start/ })).toContainText(
     "Inputs: amount, reason",
   );
