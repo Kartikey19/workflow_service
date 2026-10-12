@@ -1225,6 +1225,41 @@ button.link.back:hover {
   flex-wrap: wrap;
   gap: 10px 14px;
 }
+.edit-history,
+.editor-view {
+  display: inline-flex;
+  gap: 2px;
+}
+.editor-view button {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.editor-view button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.draft-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+.draft-notice {
+  padding: 10px 14px;
+  margin: 0;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.workflow-yaml {
+  min-height: 420px;
+  resize: vertical;
+}
 .check-state {
   display: inline-flex;
   align-items: center;

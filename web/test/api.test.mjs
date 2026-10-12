@@ -1,23 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import ts from "typescript";
+import { loadModule } from "./load-module.mjs";
 
-// Exercise the actual helper with simulated HTTP responses; no browser or
-// network is needed to reproduce cancellation while a JSON body is reading.
-const source = await readFile(
-  new URL("../src/api.ts", import.meta.url),
-  "utf8",
-);
-const compiled = ts.transpileModule(source, {
-  compilerOptions: {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-  },
-}).outputText;
-const { api, APIError } = await import(
-  `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`
-);
+const { api, APIError } = await loadModule("api");
 
 test("an aborted JSON body remains cancellation, never successful resource data", async (t) => {
   const controller = new AbortController();

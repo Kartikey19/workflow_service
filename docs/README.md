@@ -20,6 +20,7 @@ or compliance processes all run on the same seven tables.
 | 07 | [Deployment guide](07-deployment.md) | App Platform, DO Container Registry, Neon, CI/CD and rollback |
 | 08 | [Custom code nodes](08-code-nodes.md) | Scope, contract, sandbox options, threat model and milestones for running Python, TypeScript and Go in a workflow |
 | 09 | [Product usability](09-product-usability.md) | Railway research, contextual setup decisions and acceptance criteria |
+| 10 | [Railway feature opportunities](10-railway-feature-opportunities.md) | Expanded research, proposed Weft features, priorities and implementation boundaries |
 
 If you only read two: **01** for the schema and **03 §5** for the resolver. Those
 two are where correctness lives; everything else is plumbing around them.

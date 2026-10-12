@@ -25,6 +25,18 @@ Railway uses its [project canvas](https://docs.railway.com/projects) as the home
 
 Start a workflow without an agent or saved provider, enter its model and prompt, connect two accounts for one provider, select the second account, and publish without navigating away. Verify that secrets never enter the YAML. Set a model-only override on a reusable agent, run it, and verify that its saved account, instructions and model default remain unchanged. Cancel setup and use Escape without losing the draft. Test keyboard focus and narrow screens.
 
+## Recoverable workflow editing
+
+The editor now saves unpublished definitions locally, scoped to the signed-in user and organization. Existing workflows have separate draft slots; each workspace also has one new-workflow draft. Refresh reopens the active saved draft. After returning to the workflow list, Resume draft opens an unfinished new workflow and an Unpublished draft label identifies edited published workflows.
+
+Canvas and YAML edits use one history. Undo/redo restores definition changes, including deleted steps and their configuration; canvas positions remain separate. Typing in one field is grouped into an edit. The latest draft survives refresh, while up to 80 undo entries remain in memory for the current editing session. Text fields retain native keyboard undo; toolbar actions and shortcuts outside text fields use workflow history. Revert changes returns to the published baseline (or the empty new workflow) and can itself be undone.
+
+Account setup remains outside workflow history. Saved account credentials are never copied into the draft store by setup forms. Workflow definitions can contain prompts and sample data; local drafts are browser data, not encrypted server drafts. Publishing clears the submitted draft while preserving subsequent edits. A newer published version or changed browser storage never silently replaces the current definition: review the notice, or copy YAML before reloading when another tab changed the saved drafts. Storage failure is visible and unsaved changes trigger a browser warning when closing or reloading the tab.
+
+Browser coverage exercises refresh during a pending field edit, invalid YAML recovery, shared canvas/YAML undo, deleted-step restoration, publication cleanup, account isolation, newer-version conflicts, setup-key exclusion and storage failures. Unit coverage also checks edits during publication and detection of changes from another tab.
+
 ## Later refinements
 
 Investigate a publish review showing changed steps and account references, a searchable command palette, starter workflows, and richer failed-step diagnostics. Prioritize these using observed user completion rates and support reports; a competitor’s interface alone is not evidence that every pattern belongs in Weft.
+
+See [Railway feature opportunities](10-railway-feature-opportunities.md) for the expanded comparison, current Weft foundations, recommended sequence and implementation boundaries.

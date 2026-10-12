@@ -15,14 +15,193 @@ const addStep = async (page: Page, search: string) => {
   await page.getByRole("dialog").getByRole("option").first().click();
   await expect(box).toHaveCount(0);
 };
-const signInOwner = async (page: Page) => {
+const signInOwner = async (page: Page, email = "browserco@example.com") => {
   await page.goto("/ui/");
-  await page.getByLabel("Email", { exact: true }).fill("browserco@example.com");
+  await page.getByLabel("Email", { exact: true }).fill(email);
   await page
     .getByLabel("Password", { exact: true })
     .fill("owner-long-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Workflows", exact: true }),
+  ).toBeVisible();
 };
+test("recover a draft after refresh, undo canvas and YAML edits, and clear it after publication", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("draft-recovery");
+  await addStep(page, "AI step");
+  await page.getByLabel("Model", { exact: true }).fill("fake-model");
+  await page
+    .getByLabel("Agent prompt", { exact: true })
+    .fill("Recover this prompt, including pending input.");
+  // Refresh before the structured-field debounce finishes.
+  await page.reload();
+  await expect(
+    page.getByText("Recovered your unpublished draft.", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "draft-recovery",
+  );
+  await page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }).click();
+  await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
+    "Recover this prompt, including pending input.",
+  );
+  await shot(page, "10-recovered-draft");
+  await page.getByRole("button", { name: "Delete step", exact: true }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }).click();
+  await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
+    "Recover this prompt, including pending input.",
+  );
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }),
+  ).toHaveCount(0);
+  await page.locator("body").press("Control+z");
+  await expect(
+    page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Add provider account", exact: true })
+    .click();
+  const setup = page.getByRole("dialog", {
+    name: "Add provider account",
+    exact: true,
+  });
+  await setup
+    .getByLabel("API key", { exact: true })
+    .fill("draft-setup-key-must-not-be-saved");
+  await setup.getByRole("button", { name: "Close setup" }).click();
+  expect(
+    await page.evaluate(() =>
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith("weft:drafts:"))
+        .some((key) =>
+          localStorage
+            .getItem(key)
+            ?.includes("draft-setup-key-must-not-be-saved"),
+        ),
+    ),
+  ).toBe(false);
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  const saved = await yaml.inputValue();
+  await yaml.fill("nodes: [invalid but recoverable");
+  await page.reload();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  await expect(yaml).toHaveValue("nodes: [invalid but recoverable");
+  await yaml.fill(saved);
+  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  await expect(yaml).toHaveValue("nodes: [invalid but recoverable");
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(yaml).toHaveValue(saved);
+  await page
+    .getByRole("button", { name: "All workflows", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Resume draft", exact: true }).click();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  const runnable =
+    "apiVersion: workflow/v1\nname: draft-recovery\nnodes:\n  - id: done\n    type: transform\n    config: {value: {result: restored}}\n";
+  await yaml.fill(runnable);
+  await expect(
+    page.getByText("Draft saved on this browser", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Valid workflow", { exact: true })).toBeVisible();
+  await shot(page, "10-draft-recovery");
+  await page
+    .getByRole("button", { name: "Publish version", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Run draft-recovery", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No unpublished changes", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Resume draft", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: /^draft-recovery / }).click();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  await expect(yaml).toHaveValue(runnable);
+});
+
+test("a newer published version does not replace a local draft, and storage failures are visible", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const definition = (value: string) =>
+    `apiVersion: workflow/v1\nname: draft-conflict\nnodes:\n  - id: done\n    type: transform\n    config: {value: {result: ${value}}}\n`;
+  expect(
+    (
+      await page.request.post("/be/v1/workflows", {
+        data: { yaml: definition("first") },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
+  await page.getByRole("button", { name: /^draft-conflict / }).click();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  await yaml.fill(definition("local"));
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+  await signInOwner(page, "freshsetup@example.com");
+  await expect(
+    page.getByRole("button", { name: "New workflow", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+  await signInOwner(page);
+  expect(
+    (
+      await page.request.post("/be/v1/workflows", {
+        data: { yaml: definition("remote") },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
+  await expect(
+    page.getByText("A newer version was published", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  await expect(yaml).toHaveValue(definition("local"));
+  await page
+    .getByRole("button", { name: "Revert changes", exact: true })
+    .click();
+  await expect(yaml).toHaveValue(definition("remote"));
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(yaml).toHaveValue(definition("local"));
+  await page.addInitScript(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("weft:drafts:"))
+        throw new DOMException("Full", "QuotaExceededError");
+      return set.call(this, key, value);
+    };
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  await yaml.fill(definition("not-saved"));
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Browser storage is unavailable or full" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Draft could not be saved on this browser", { exact: true }),
+  ).toBeVisible();
+});
 test("invite to successful agent workflow, administration, and responsive navigation", async ({
   page,
 }) => {
@@ -458,7 +637,7 @@ test("shared connectors, explicit agent permissions, and visual workflow builder
 
   await addStep(page, "Transform");
   // An empty transform is not valid yet, and the message names the step.
-  await expect(page.getByRole("status")).toContainText("to fix");
+  await expect(page.locator(".check-state")).toContainText("to fix");
   await page.getByRole("button", { name: /to fix/ }).click();
   await expect(
     page.getByRole("list", { name: "Problems" }).first(),

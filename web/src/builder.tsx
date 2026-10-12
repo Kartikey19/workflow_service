@@ -258,7 +258,7 @@ export function Builder({
   admin,
 }: {
   source: string;
-  onChange: (source: string) => void;
+  onChange: (source: string, group?: string) => void;
   editable: boolean;
   admin: boolean;
   organizationID: string;
@@ -283,6 +283,8 @@ export function Builder({
   );
   const placed = useRef<Record<string, { x: number; y: number }>>({}),
     pending = useRef<ReturnType<typeof setTimeout>>(undefined),
+    pendingForm = useRef<HTMLFormElement | null>(null),
+    pendingGroup = useRef(""),
     panel = useRef<HTMLElement>(null),
     focusSettings = useRef(false),
     lastField = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null),
@@ -425,13 +427,16 @@ export function Builder({
   const selectedAgent = agents.data?.items.find(
     (a: RecordData) => a.name === node?.config?.agent,
   );
-  function write(next: RecordData) {
-    onChange(stringify(next));
+  function write(next: RecordData, group?: string) {
+    onChange(stringify(next), group);
     setError("");
   }
-  function updateNode(next: RecordData) {
+  function updateNode(next: RecordData, group?: string) {
     if (doc)
-      write({ ...doc, nodes: rows.map((n) => (n.id === next.id ? next : n)) });
+      write(
+        { ...doc, nodes: rows.map((n) => (n.id === next.id ? next : n)) },
+        group,
+      );
   }
   // Renaming keeps the flow intact: steps that run after it, and expressions
   // that read nodes.<old>, follow the new name.
@@ -705,7 +710,7 @@ export function Builder({
   }, [node?.id]);
   // Settings apply as you type; the canvas and checks follow. Leaving the form
   // applies anything still waiting.
-  function applySettings(form: HTMLFormElement) {
+  function applySettings(form: HTMLFormElement, group: string) {
     // A form left over from another step must not write into this one.
     if (!node || form.dataset.node !== node.id) return;
     const data = new FormData(form);
@@ -743,7 +748,7 @@ export function Builder({
         config = next;
       }
       setSettingsError("");
-      updateNode({ ...node, config });
+      updateNode({ ...node, config }, group);
     } catch (e) {
       setSettingsError((e as Error).message);
     }
@@ -756,8 +761,25 @@ export function Builder({
     if (!pending.current) return;
     clearTimeout(pending.current);
     pending.current = undefined;
-    latestApply.current(form);
+    latestApply.current(form, pendingGroup.current);
   }
+  useEffect(() => {
+    const flush = () => {
+      if (pendingForm.current) flushSettings(pendingForm.current);
+    };
+    const hidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("beforeunload", flush, true);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      clearTimeout(pending.current);
+      window.removeEventListener("beforeunload", flush, true);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, []);
   // Vault secrets, a group's keys together, ready to drop into a setting.
   const secretItems: PickerItem[] = (secrets.data?.items || []).map(
     (s: RecordData) => {
@@ -952,7 +974,10 @@ export function Builder({
                 if (!selectedAgent || Object.hasOwn(config, "model"))
                   config.model = model;
               } else config.model = model;
-              updateNode({ ...node, config });
+              updateNode(
+                { ...node, config },
+                changed === "model" ? `model:${node.id}` : undefined,
+              );
             }}
             onAdd={
               admin && editable
@@ -981,9 +1006,11 @@ export function Builder({
         onInput={(e) => {
           const form = e.currentTarget;
           clearTimeout(pending.current);
+          pendingForm.current = form;
+          pendingGroup.current = `settings:${node.id}:${(e.target as HTMLInputElement).name}`;
           pending.current = setTimeout(() => {
             pending.current = undefined;
-            latestApply.current(form);
+            latestApply.current(form, pendingGroup.current);
           }, 300);
         }}
         onFocus={(e) => {

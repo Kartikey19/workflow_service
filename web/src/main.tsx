@@ -264,6 +264,7 @@ function App() {
     };
   }, []);
   function navigate(page: string) {
+    if (page !== "workflows") setAgentName("");
     setPage(page);
     history.pushState({}, "", `/ui/${page}`);
     setMenu(false);
@@ -424,7 +425,10 @@ function App() {
             <button onClick={() => setError("")}>Dismiss</button>
           </p>
         )}
-        <div key={session.organization.id} className="page-content">
+        <div
+          key={`${session.organization.id}:${session.user.id}`}
+          className="page-content"
+        >
           <PageBoundary key={currentPage[0]}>
             <Suspense fallback={<p role="status">Opening page…</p>}>
               {!allowed ? (
@@ -436,6 +440,7 @@ function App() {
                   editable={editable}
                   agentName={agentName}
                   organizationID={session.organization.id}
+                  userID={session.user.id}
                   onRun={(id) => {
                     setRunID(id);
                     navigate("runs");
