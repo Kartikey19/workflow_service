@@ -51,12 +51,25 @@ See [Railway feature opportunities](10-railway-feature-opportunities.md) for the
 
 ## Reviewed AI authoring
 
-The workflow creator uses OpenRouter's GLM 5.3 Flash without a model dropdown.
-Users provide full workflow context, review one proposed step, accept or discard
-it, then ask for the next. Accepted steps use the existing draft history and
+Chat is the default workflow editor. It uses OpenRouter's GLM 5.3 Flash without a
+model dropdown. Users describe the workflow, review proposed steps inside the
+conversation, accept or discard them, and send feedback or ask for the next.
+Messages and earlier reviews stay visible when switching between editor views.
+The conversation lasts for the open workflow session; accepted YAML drafts retain
+the existing browser recovery behavior. Accepted steps use the existing draft history and
 remain unpublished. The server preserves their values while sending only step
 IDs, types, dependencies and input structure to the authoring model. Stored
 credentials, agent instructions and schema samples are excluded.
+
+Chat and Visualization appear side by side on wider screens and stack on phones.
+Proposals show readable step settings and typed inputs inside chat, without YAML.
+The diagram marks the proposed step as pending review until it is accepted.
+Steps replaces the diagram with manual editing, keeping chat visible and one detail
+expanded at a time. Visualization includes pan, zoom in/out, and fit controls.
+Selecting a diagram node opens its details in Steps. Zoom and layout
+changes do not alter the workflow definition. YAML remains available for advanced
+edits. A pending proposal cannot be accepted after manual edits change its base
+definition; users request a fresh proposal instead.
 
 Start and step details share a single expanded selection. Agent and workflow
 account selection use the same JSON provider catalog as account setup, including

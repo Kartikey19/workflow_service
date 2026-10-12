@@ -10,6 +10,7 @@ const shot = async (page: Page, name: string) => {
 };
 // Steps are added from the step catalog: open it, search, pick the first match.
 const addStep = async (page: Page, search: string) => {
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   const box = page.getByLabel("Search steps and apps");
   await page.getByRole("button", { name: "Add step", exact: true }).click();
   await box.fill(search);
@@ -28,6 +29,7 @@ const signInOwner = async (page: Page, email = "browserco@example.com") => {
   ).toBeVisible();
 };
 const openStart = async (page: Page) => {
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   const row = page.getByRole("button", { name: /^Start/ });
   if ((await row.getAttribute("aria-expanded")) !== "true") await row.click();
 };
@@ -36,6 +38,7 @@ test("edit typed start variables without losing schema rules, drafts or history"
 }) => {
   await signInOwner(page);
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("typed-inputs");
   await openStart(page);
   await page.getByRole("button", { name: "Add variable", exact: true }).click();
@@ -99,7 +102,7 @@ test("edit typed start variables without losing schema rules, drafts or history"
     pattern: "^[a-z]+$",
   };
   await yaml.fill(stringify(definition));
-  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await openStart(page);
   await first.getByLabel("Name", { exact: true }).fill("total");
   await first.getByLabel("Type", { exact: true }).selectOption("integer");
@@ -116,7 +119,7 @@ test("edit typed start variables without losing schema rules, drafts or history"
     },
     notes: definition.inputs.notes,
   });
-  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await openStart(page);
   await shot(page, "12-typed-start-inputs");
   await page.setViewportSize({ width: 390, height: 844 });
@@ -150,6 +153,7 @@ test("recover a draft after refresh, undo canvas and YAML edits, and clear it af
 }) => {
   await signInOwner(page);
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page
     .getByLabel("Workflow name", { exact: true })
     .fill("draft-recovery");
@@ -166,6 +170,7 @@ test("recover a draft after refresh, undo canvas and YAML edits, and clear it af
   await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
     "draft-recovery",
   );
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }).click();
   await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
     "Recover this prompt, including pending input.",
@@ -173,6 +178,7 @@ test("recover a draft after refresh, undo canvas and YAML edits, and clear it af
   await shot(page, "10-recovered-draft");
   await page.getByRole("button", { name: "Delete step", exact: true }).click();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }).click();
   await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
     "Recover this prompt, including pending input.",
@@ -215,7 +221,7 @@ test("recover a draft after refresh, undo canvas and YAML edits, and clear it af
   await page.getByRole("button", { name: "YAML", exact: true }).click();
   await expect(yaml).toHaveValue("nodes: [invalid but recoverable");
   await yaml.fill(saved);
-  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await page.getByRole("button", { name: "YAML", exact: true }).click();
   await expect(yaml).toHaveValue("nodes: [invalid but recoverable");
@@ -225,6 +231,7 @@ test("recover a draft after refresh, undo canvas and YAML edits, and clear it af
     .getByRole("button", { name: "All workflows", exact: true })
     .click();
   await page.getByRole("button", { name: "Resume draft", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByRole("button", { name: "YAML", exact: true }).click();
   const runnable =
     "apiVersion: workflow/v1\nname: draft-recovery\nnodes:\n  - id: done\n    type: transform\n    config: {value: {result: restored}}\n";
@@ -641,6 +648,7 @@ test("typed agent inputs, provider test-before-save, live validation and version
     .getByRole("button", { name: "Workflows", exact: true })
     .click();
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page
     .getByLabel("Workflow name", { exact: true })
     .fill("editor-workflow");
@@ -748,8 +756,13 @@ test("shared connectors, explicit agent permissions, and visual workflow builder
     .getByRole("button", { name: "Workflows", exact: true })
     .click();
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
-  // Steps on the left, the diagram on the right.
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
+  // Steps and visualization are separate views.
   await expect(page.getByRole("region", { name: "Steps" })).toBeVisible();
+  await expect(page.getByLabel("Workflow diagram")).toBeHidden();
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
+    .click();
   await expect(page.getByLabel("Workflow diagram")).toBeVisible();
   await page.getByLabel("Workflow name", { exact: true }).fill("visual-basics");
   await shot(page, "10-builder-empty");
@@ -769,7 +782,11 @@ test("shared connectors, explicit agent permissions, and visual workflow builder
   await addStep(page, "Sleep");
   await expect(page.getByText("After transform_1")).toBeVisible();
   await page.getByLabel("Settings", { exact: true }).fill("duration: 1s");
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
+    .click();
   await expect(page.getByLabel("Workflow diagram")).toContainText("1s");
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await expect(page.getByRole("region", { name: "Steps" })).toContainText("1s");
   await expect(
     page.getByRole("status").filter({ hasText: "Valid workflow" }),
@@ -796,6 +813,9 @@ test("shared connectors, explicit agent permissions, and visual workflow builder
     .getByRole("button", { name: "Workflows", exact: true })
     .click();
   await page.getByRole("button", { name: /visual-basics/ }).click();
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
+    .click();
   await expect(page.getByLabel("Workflow diagram")).toContainText(
     "transform_1",
   );
@@ -809,7 +829,9 @@ test("shared connectors, explicit agent permissions, and visual workflow builder
   // On a phone the steps come first and the diagram shows only on request.
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByLabel("Workflow diagram")).toBeHidden();
-  await page.getByRole("button", { name: "Show diagram" }).click();
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
+    .click();
   await expect(page.getByLabel("Workflow diagram")).toBeVisible();
   await expect
     .poll(() =>
@@ -871,6 +893,7 @@ test("a secret group holds several keys and a workflow step reads one of them", 
     .getByRole("button", { name: "Workflows", exact: true })
     .click();
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("uses-group");
   await addStep(page, "HTTP request");
   const settings = page.getByLabel("Settings", { exact: true });
@@ -912,6 +935,7 @@ test("workflow inputs become run fields and a person approves a task", async ({
   page.on("pageerror", (e) => errors.push(e.message));
   await signInOwner(page);
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("approval-flow");
   // The Start row declares what each run is given.
   await openStart(page);
@@ -1024,6 +1048,7 @@ test("set up two client accounts inside a fresh workflow and keep its draft", as
     .fill("owner-long-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page
     .getByLabel("Workflow name", { exact: true })
     .fill("two-client-workflow");
@@ -1172,11 +1197,12 @@ test("set up two client accounts inside a fresh workflow and keep its draft", as
     .getByRole("button", { name: "Workflows", exact: true })
     .click();
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page
     .getByLabel("Workflow name", { exact: true })
     .fill("connector-draft");
   await page
-    .getByRole("button", { name: "Add first step", exact: true })
+    .getByRole("button", { name: "Add step", exact: true })
     .first()
     .click();
   await page.getByLabel("Search steps and apps").fill("Send a Slack message");
@@ -1256,6 +1282,7 @@ test("OAuth popup returns to the workflow without discarding its prompt", async 
   });
   await signInOwner(page);
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByLabel("Workflow name", { exact: true }).fill("oauth-draft");
   await addStep(page, "AI step");
   await page
@@ -1285,69 +1312,116 @@ test("OAuth popup returns to the workflow without discarding its prompt", async 
   await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
     "oauth-draft",
   );
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await page.getByRole("button", { name: /^(?:1 )?agent_1(?: |$)/ }).click();
   await expect(page.getByLabel("Agent prompt", { exact: true })).toHaveValue(
     "Keep my original task after OAuth.",
   );
 });
 
-test("review creator steps before accepting and open only one detail at a time", async ({
+test("chat shows readable steps beside the visualization and preserves reviewed edits", async ({
   page,
 }) => {
   await signInOwner(page);
-  await page
-    .getByRole("button", { name: "Create with AI", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("GLM 5.3 Flash · OpenRouter");
-  await expect(dialog.getByRole("combobox")).toHaveCount(0);
-  await dialog
-    .getByLabel("Workflow context", { exact: true })
-    .fill("Make a greeting and pass it to a second transform.");
-  await dialog
-    .getByRole("button", { name: "Propose first step", exact: true })
-    .click();
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  const chat = page.getByRole("region", { name: "Workflow chat", exact: true });
   await expect(
-    dialog.getByRole("heading", { name: "first · transform", exact: true }),
+    page.getByRole("button", { name: "Visualization", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(chat).toContainText("GLM 5.3 Flash · OpenRouter");
+  await expect(page.getByLabel("Workflow diagram")).toBeVisible();
+  await expect(chat.getByRole("combobox")).toHaveCount(0);
+  const context = "Make a greeting and pass it to a second transform.";
+  await chat.getByLabel("Message", { exact: true }).fill(context);
+  await chat.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(
+    chat.getByRole("heading", { name: "First", exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveCount(
-    0,
+  await expect(chat.getByRole("status")).toHaveText("0 accepted steps");
+  await expect(chat.getByLabel("Step settings", { exact: true })).toContainText(
+    "hello",
   );
-  await dialog
-    .getByRole("button", { name: "Accept step", exact: true })
-    .click();
-  await expect(dialog.getByRole("status")).toHaveText("1 accepted step");
-  await expect(
-    dialog.getByRole("button", { name: "Accept step", exact: true }),
-  ).toHaveCount(0);
-  await dialog
+  await expect(chat.locator("pre")).toHaveCount(0);
+  await expect(chat.getByText("Step details", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Workflow diagram")).toContainText(
+    "Pending review",
+  );
+  await expect(page.getByLabel("Workflow diagram")).toContainText("first");
+  await chat.getByRole("button", { name: "Accept step", exact: true }).click();
+  await expect(chat.getByRole("status")).toHaveText("1 accepted step");
+  await expect(chat.getByText("Accepted", { exact: true })).toHaveCount(1);
+  await chat
     .getByRole("button", { name: "Propose next step", exact: true })
     .click();
   await expect(
-    dialog.getByRole("heading", { name: "second · transform", exact: true }),
+    chat.getByRole("heading", { name: "Second", exact: true }),
   ).toBeVisible();
+  await expect(chat.getByText(context, { exact: true })).toBeVisible();
   await expect(
-    dialog.getByLabel("Workflow context", { exact: true }),
-  ).toHaveValue("Make a greeting and pass it to a second transform.");
-  await shot(page, "13-step-review");
-  await dialog
-    .getByRole("button", { name: "Accept step", exact: true })
+    chat.getByRole("heading", { name: "First", exact: true }),
+  ).toHaveCount(1);
+  // A tab change preserves the conversation; a manual edit makes pending approval unsafe.
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  const original = await yaml.inputValue();
+  await yaml.fill(original.replace("value: hello", "value: edited"));
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
     .click();
-  await expect(dialog.getByRole("status")).toHaveText("2 accepted steps");
-  await dialog
-    .getByRole("button", { name: "Finish editing", exact: true })
+  await expect(chat).toContainText("workflow changed after this proposal");
+  await expect(
+    chat.getByRole("button", { name: "Accept step", exact: true }),
+  ).toBeDisabled();
+  await chat
+    .getByLabel("Message", { exact: true })
+    .fill("Use the edited first step and propose the next transform.");
+  await chat.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(
+    chat.getByRole("button", { name: "Accept step", exact: true }),
+  ).toBeEnabled();
+  await chat.getByRole("button", { name: "Accept step", exact: true }).click();
+  await expect(chat.getByRole("status")).toHaveText("2 accepted steps");
+  await expect(chat.getByText("Accepted", { exact: true })).toHaveCount(2);
+  await shot(page, "16-workflow-chat");
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
     .click();
-  const rows = page.locator(".step-row");
+  const diagram = page.getByLabel("Workflow diagram");
+  await expect(diagram).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Steps", exact: true }),
+  ).toBeHidden();
+  await expect(diagram).toContainText("second");
+  const viewport = page.locator(".react-flow__viewport");
+  await expect
+    .poll(() => viewport.getAttribute("style"))
+    .toContain("transform");
+  // Fit settles after the graph mounts; zoom must actually change the viewport.
+  await page.getByRole("button", { name: "Fit View", exact: true }).click();
+  await expect
+    .poll(async () =>
+      (await viewport.getAttribute("style"))?.includes("scale("),
+    )
+    .toBe(true);
+  const beforeZoom = await viewport.getAttribute("style");
+  await page.getByRole("button", { name: "Zoom In", exact: true }).click();
+  await expect.poll(() => viewport.getAttribute("style")).not.toBe(beforeZoom);
+  const zoomed = await viewport.getAttribute("style");
+  await page.getByRole("button", { name: "Zoom Out", exact: true }).click();
+  await expect.poll(() => viewport.getAttribute("style")).not.toBe(zoomed);
+  await shot(page, "17-workflow-visualization");
+  await diagram.getByTestId("rf__node-first").click();
+  await expect(
+    page.getByRole("button", { name: "Steps", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   const openRows = page.locator('.step-row[aria-expanded="true"]');
   await expect(openRows).toHaveCount(1);
-  await page.getByRole("button", { name: /^1 first / }).click();
-  await expect(openRows).toHaveCount(1);
+  await expect(chat).toBeVisible();
   await expect(page.getByLabel("Settings", { exact: true })).toHaveValue(
-    "value: hello",
+    "value: edited",
   );
   await openStart(page);
   await expect(openRows).toHaveCount(1);
-  await expect(page.getByLabel("Settings", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /^2 second / }).click();
   await expect(openRows).toHaveCount(1);
   await expect(page.getByRole("button", { name: /^Start/ })).toHaveAttribute(
@@ -1356,16 +1430,10 @@ test("review creator steps before accepting and open only one detail at a time",
   );
   await page.getByRole("button", { name: /^2 second / }).click();
   await expect(openRows).toHaveCount(0);
-  await page.getByRole("button", { name: /^1 first / }).click();
-  await expect(openRows).toHaveCount(1);
-  await expect(rows).toHaveCount(3);
-  await shot(page, "14-step-accordion");
   await page.getByRole("button", { name: "YAML", exact: true }).click();
-  const definition = parse(
-    await page.getByLabel("Workflow YAML", { exact: true }).inputValue(),
-  );
+  const definition = parse(await yaml.inputValue());
   expect(definition.nodes).toEqual([
-    { id: "first", type: "transform", config: { value: "hello" } },
+    { id: "first", type: "transform", config: { value: "edited" } },
     {
       id: "second",
       type: "transform",
@@ -1373,12 +1441,102 @@ test("review creator steps before accepting and open only one detail at a time",
       config: { value: "${nodes.first.output}" },
     },
   ]);
-  await page.reload();
-  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
+    .click();
+  await expect(chat.getByText(context, { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(chat.getByLabel("Message", { exact: true })).toBeVisible();
   expect(
-    parse(await page.getByLabel("Workflow YAML", { exact: true }).inputValue())
-      .nodes,
-  ).toEqual(definition.nodes);
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page
+    .getByRole("button", { name: "Visualization", exact: true })
+    .click();
+  await expect(diagram).toBeVisible();
+  await expect(
+    diagram.getByRole("button", { name: "Zoom In", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Visualization", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  expect(parse(await yaml.inputValue()).nodes).toEqual(definition.nodes);
+});
+
+test("review a human approval step and typed inputs without reading YAML", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await signInOwner(page);
+  await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  const chat = page.getByRole("region", { name: "Workflow chat", exact: true });
+  await chat
+    .getByLabel("Message", { exact: true })
+    .fill(
+      "Create a payment review: the store enters the vendor and amount, and finance verifies it.",
+    );
+  await chat.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(
+    chat.getByRole("heading", { name: "Finance review", exact: true }),
+  ).toBeVisible();
+  await expect(chat).toContainText("Human task");
+  const inputs = chat.getByRole("region", { name: "Run inputs", exact: true });
+  await expect(inputs.getByLabel("Name", { exact: true }).first()).toHaveValue(
+    "amount",
+  );
+  await expect(inputs.getByLabel("Type", { exact: true }).first()).toHaveValue(
+    "number",
+  );
+  await expect(inputs.getByLabel("Name", { exact: true }).nth(1)).toHaveValue(
+    "vendor",
+  );
+  await expect(inputs.getByLabel("Type", { exact: true }).nth(1)).toHaveValue(
+    "string",
+  );
+  await expect(
+    inputs.getByLabel("Required", { exact: true }).first(),
+  ).toBeChecked();
+  await expect(
+    inputs.getByLabel("Type", { exact: true }).first(),
+  ).toBeDisabled();
+  const settings = chat.getByLabel("Step settings", { exact: true });
+  for (const text of [
+    "finance",
+    "vendor-payment",
+    "Input · Amount",
+    "Input · Vendor",
+  ])
+    await expect(settings).toContainText(text);
+  await expect(chat.locator("pre")).toHaveCount(0);
+  await expect(chat.locator("textarea")).toHaveCount(1);
+  await expect(chat.getByRole("status")).toHaveText("0 accepted steps");
+  await expect(page.getByLabel("Workflow diagram")).toContainText(
+    "Pending review",
+  );
+  await shot(page, "18-readable-approval-review");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await shot(page, "19-readable-approval-mobile");
+  await chat.getByRole("button", { name: "Accept step", exact: true }).click();
+  await expect(chat.getByRole("status")).toHaveText("1 accepted step");
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
+  await expect(chat).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Steps", exact: true }),
+  ).toContainText("finance_review");
 });
 
 test("all providers appear in agent and workflow account selection", async ({
@@ -1402,6 +1560,7 @@ test("all providers appear in agent and workflow account selection", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
+  await page.getByRole("button", { name: "Steps", exact: true }).click();
   await addStep(page, "AI step");
   await expect(account.locator("optgroup")).toHaveCount(22);
   await account.selectOption("add:deepseek");

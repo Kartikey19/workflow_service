@@ -11,7 +11,7 @@ const Builder = lazy(() =>
   import("./builder").then((m) => ({ default: m.Builder })),
 );
 import { parse, stringify } from "yaml";
-import { WorkflowCreator } from "./workflow-creator";
+import { WorkflowChat, type WorkflowPreview } from "./workflow-chat";
 import { useWorkflowDraft } from "./use-workflow-draft";
 import { isBlankWorkflow, problemsFor } from "./problems";
 import { api, APIError, enc, type RecordData } from "./api";
@@ -59,12 +59,14 @@ export function Workflows({
   const source = editing.source;
   const [mode, setMode] = useState(editing.open ? "editor" : "list"),
     [workflow, setWorkflow] = useState<RecordData | null>(null),
-    [editorMode, setEditorMode] = useState("canvas"),
+    [editorMode, setEditorMode] = useState(
+      agentName || !editable ? "steps" : "visualization",
+    ),
     [starterAgent, setStarterAgent] = useState(agentName);
   const [spec, setSpec] = useState<RecordData | null>(null),
     [diagnostics, setDiagnostics] = useState<RecordData[]>([]),
     [validating, setValidating] = useState(false);
-  const [creator, setCreator] = useState<{ source: string } | null>(null);
+  const [preview, setPreview] = useState<WorkflowPreview | null>(null);
   const [version, setVersion] = useState<RecordData | null>(null);
   const detail = useResource(selected ? `/workflows/${enc(selected)}` : null);
   useEffect(() => {
@@ -124,6 +126,7 @@ export function Workflows({
     setWorkflow(null);
     setVersion(null);
     setStarterAgent("");
+    setEditorMode("visualization");
     setMode("editor");
   }
   function view(name: string) {
@@ -131,6 +134,7 @@ export function Workflows({
     setStep("");
     setWorkflow(null);
     setVersion(null);
+    setEditorMode(editable ? "visualization" : "steps");
     setMode("editor");
   }
   async function publish(yaml: string) {
@@ -202,23 +206,6 @@ export function Workflows({
       : "—";
   return (
     <>
-      {creator && (
-        <WorkflowCreator
-          source={creator.source}
-          onClose={() => setCreator(null)}
-          onAccept={(yaml, id) => {
-            if (mode === "list") {
-              editor.begin("");
-              setWorkflow(null);
-              setVersion(null);
-              setStarterAgent("");
-            }
-            editor.change(yaml);
-            setStep(id);
-            setMode("editor");
-          }}
-        />
-      )}
       {mode === "list" && (
         <section className="overview">
           <div className="toolbar">
@@ -227,9 +214,6 @@ export function Workflows({
             </p>
             {editable && (
               <div className="row">
-                <button onClick={() => setCreator({ source: "" })}>
-                  Create with AI
-                </button>
                 <button className="primary" onClick={startNew}>
                   {Object.hasOwn(editing.drafts, "")
                     ? "Resume draft"
@@ -273,7 +257,8 @@ export function Workflows({
           )}
           {list.data && !list.data.items.length && (
             <Empty>
-              No workflows yet. Choose New workflow and add your first step.
+              No workflows yet. Choose New workflow and describe what it should
+              do.
             </Empty>
           )}
         </section>
@@ -310,13 +295,6 @@ export function Workflows({
             </div>
             <div className="editor-actions">
               {editable && (
-                <button
-                  onClick={() => setCreator({ source: blank ? "" : source })}
-                >
-                  Create with AI
-                </button>
-              )}
-              {editable && (
                 <div className="edit-history" aria-label="Edit history">
                   <button
                     className="icon-button"
@@ -339,18 +317,17 @@ export function Workflows({
                 </div>
               )}
               <div className="editor-view" aria-label="Editor view">
-                <button
-                  aria-pressed={editorMode === "canvas"}
-                  onClick={() => setEditorMode("canvas")}
-                >
-                  Canvas
-                </button>
-                <button
-                  aria-pressed={editorMode === "yaml"}
-                  onClick={() => setEditorMode("yaml")}
-                >
-                  YAML
-                </button>
+                {["visualization", "steps", "yaml"].map((view) => (
+                  <button
+                    key={view}
+                    aria-pressed={editorMode === view}
+                    onClick={() => setEditorMode(view)}
+                  >
+                    {view === "yaml"
+                      ? "YAML"
+                      : view[0].toUpperCase() + view.slice(1)}
+                  </button>
+                ))}
               </div>
               {workflow?.versions && (
                 <select
@@ -501,7 +478,74 @@ export function Workflows({
               </button>
             </p>
           )}
-          {editorMode === "yaml" ? (
+          <div
+            className={`workflow-workspace ${editable ? "with-chat" : ""}`}
+            hidden={editorMode === "yaml"}
+          >
+            {editable && (
+              <div>
+                <WorkflowChat
+                  key={editing.session}
+                  source={source}
+                  active={editorMode !== "yaml"}
+                  onPreview={setPreview}
+                  onEdit={(id) => {
+                    if (id) setStep(id);
+                    setEditorMode("steps");
+                  }}
+                  onAccept={(yaml, id, base) => {
+                    if (editor.getSnapshot().source !== base) return false;
+                    editor.change(yaml);
+                    setStep(id);
+                    setStarterAgent("");
+                    return true;
+                  }}
+                />
+              </div>
+            )}
+            <Suspense fallback={<p>Opening editor…</p>}>
+              <Builder
+                key={`${editing.session}:${editing.revision}`}
+                organizationID={organizationID}
+                view={editorMode === "steps" ? "steps" : "visualization"}
+                source={
+                  editorMode !== "steps" && preview?.base === source
+                    ? preview.yaml
+                    : source
+                }
+                previewID={
+                  editorMode !== "steps" && preview?.base === source
+                    ? preview.nodeID
+                    : undefined
+                }
+                editable={
+                  editable &&
+                  !(editorMode !== "steps" && preview?.base === source)
+                }
+                admin={admin}
+                selected={step}
+                onSelect={(id) => {
+                  if (
+                    editorMode !== "steps" &&
+                    preview?.nodeID === id &&
+                    preview.base === source
+                  )
+                    return;
+                  setStep(id);
+                  if (id && editorMode !== "steps") setEditorMode("steps");
+                }}
+                problems={problems}
+                starter={
+                  starterAgent && !selected ? `agent:${starterAgent}` : ""
+                }
+                onChange={(value, group) => {
+                  editor.change(value, group);
+                  setStarterAgent("");
+                }}
+              />
+            </Suspense>
+          </div>
+          {editorMode === "yaml" && (
             <Field
               label="Workflow YAML"
               hint="Unpublished drafts are stored on this browser and may include prompts or sample data. Account credentials are stored separately."
@@ -516,26 +560,6 @@ export function Workflows({
                 }}
               />
             </Field>
-          ) : (
-            <Suspense fallback={<p>Opening editor…</p>}>
-              <Builder
-                key={`${editing.session}:${editing.revision}`}
-                organizationID={organizationID}
-                source={source}
-                editable={editable}
-                admin={admin}
-                selected={step}
-                onSelect={setStep}
-                problems={problems}
-                starter={
-                  starterAgent && !selected ? `agent:${starterAgent}` : ""
-                }
-                onChange={(value, group) => {
-                  editor.change(value, group);
-                  setStarterAgent("");
-                }}
-              />
-            </Suspense>
           )}
           {workflow &&
             workflow.name === selected &&
