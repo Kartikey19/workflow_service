@@ -76,6 +76,7 @@ type TaskService interface {
 
 // IdentityService is the accounts, organization and platform use-cases.
 type IdentityService interface {
+	CreateOrganization(ctx context.Context, actor auth.Principal, name string) (identity.Membership, error)
 	Login(ctx context.Context, email, password string) (identity.Session, error)
 	Logout(ctx context.Context, sessionID pgtype.UUID) error
 	Me(ctx context.Context, p auth.Principal) (identity.User, identity.Membership, []identity.Membership, error)

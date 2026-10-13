@@ -65,11 +65,20 @@ never reset from the environment, but it is restored to platform admin,
 re-enabled, unlocked, and given an organization if it has none. Keep
 `BOOTSTRAP_ADMIN_EMAIL` set in every environment that should keep this admin.
 
+Multiple organizations. Open **Organizations** to create a workspace for another
+company or project. Any signed-in user can create one and becomes its owner.
+Switch using the organization selector or the Organizations page. Each organization
+has separate workflows, members, connections, secrets, AI providers, API keys and
+plan usage. Switching opens its workspace and preserves drafts under their original
+organization. Existing memberships and roles are unchanged.
+
 Inviting people. Invites are links, not emails (nothing is sent automatically):
 
 - **Teammates in an organization you belong to:** Team page, enter an email and
   role, then copy the link shown once and send it. They set a password on that
-  page and join that organization.
+  page and join that organization. If they already have an account, they enter
+  its existing password. Acceptance signs them in; afterwards they can sign in
+  with that email and password and switch between their organizations.
 - **A new customer organization:** sign in as the platform admin, open the
   Platform page, enter the owner's email and an organization name, and send the
   link. The invitee becomes owner of a new, empty organization. The same page

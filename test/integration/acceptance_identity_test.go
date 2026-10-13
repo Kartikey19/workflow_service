@@ -677,3 +677,68 @@ func TestBootstrapRestoresExistingAdministrator(t *testing.T) {
 		t.Fatalf("the administrator was not restored: %v", me)
 	}
 }
+
+func TestIdentityCreateOrganizationIsolation(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, ctx)
+	base, ident := h.identityAPI()
+	if _, err := ident.Bootstrap(ctx, "root@example.com", adminPassword); err != nil {
+		t.Fatal(err)
+	}
+	root := newPerson(t, base)
+	root.mustLogin("root@example.com", adminPassword)
+	original := root.orgID()
+	anon := newPerson(t, base)
+	if status, _ := anon.call("POST", "/be/v1/organizations", map[string]any{"name": "Foreign"}); status != 401 {
+		t.Fatalf("anonymous creation = %d, want 401", status)
+	}
+	for _, name := range []string{" ", strings.Repeat("x", 101)} {
+		if status, _ := root.call("POST", "/be/v1/organizations", map[string]any{"name": name}); status != 400 {
+			t.Fatalf("invalid name creation = %d, want 400", status)
+		}
+	}
+	status, body := root.call("POST", "/be/v1/organizations", map[string]any{"name": "  Acme  "})
+	if status != 201 {
+		t.Fatalf("create organization = %d %v", status, body)
+	}
+	org := body["organization"].(map[string]any)
+	if org["name"] != "Acme" || org["role"] != "owner" || root.orgID() != original {
+		t.Fatalf("created organization or current selection = %v", org)
+	}
+	second := org["id"].(string)
+	root.mustOK("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": second}, 200)
+	_, members := root.call("GET", "/be/v1/members", nil)
+	if len(members["items"].([]any)) != 1 {
+		t.Fatalf("new organization should have only its owner: %v", members)
+	}
+	inv := root.mustOK("POST", "/be/v1/invites", map[string]any{"email": "viewer@example.com", "role": "viewer"}, 201)
+	viewer := newPerson(t, base)
+	if status, _ := accept(t, viewer, inv["token"].(string), "viewer-password-123", "Viewer"); status != 201 {
+		t.Fatalf("accept invite = %d", status)
+	}
+	viewer.mustLogin("viewer@example.com", "viewer-password-123")
+	if status, _ := viewer.call("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": original}); status != 404 {
+		t.Fatalf("foreign organization switch = %d", status)
+	}
+	// A viewer can own an independent tenant without changing their role in Acme.
+	created := viewer.mustOK("POST", "/be/v1/organizations", map[string]any{"name": "Acme"}, 201)["organization"].(map[string]any)
+	if created["id"] == second || created["slug"] == org["slug"] {
+		t.Fatalf("duplicate names must create independent tenants: %v", created)
+	}
+	viewer.mustOK("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": created["id"]}, 200)
+	key := viewer.mustOK("POST", "/be/v1/api-keys", map[string]any{"name": "automation", "role": "admin"}, 201)
+	keyClient := newPerson(t, base)
+	keyClient.bearer = key["token"].(string)
+	if status, _ := keyClient.call("POST", "/be/v1/organizations", map[string]any{"name": "No account"}); status != 403 {
+		t.Fatalf("API key organization creation = %d", status)
+	}
+	viewer.mustOK("POST", "/be/v1/auth/switch-org", map[string]any{"organization_id": second}, 200)
+	_, me := viewer.call("GET", "/be/v1/auth/me", nil)
+	if me["organization"].(map[string]any)["role"] != "viewer" || len(me["organizations"].([]any)) != 2 {
+		t.Fatalf("original role and memberships = %v", me)
+	}
+	_, usage := viewer.call("GET", "/be/v1/usage", nil)
+	if usage["plan"].(map[string]any)["id"] != "free" {
+		t.Fatalf("new organization plan = %v", usage)
+	}
+}

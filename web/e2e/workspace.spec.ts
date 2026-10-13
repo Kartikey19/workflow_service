@@ -1328,7 +1328,7 @@ test("chat shows readable steps beside the visualization and preserves reviewed 
   await expect(
     page.getByRole("button", { name: "Visualization", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  await expect(chat).toContainText("GLM 5.3 Flash · OpenRouter");
+  await expect(chat).not.toContainText("GLM 5.3");
   await expect(page.getByLabel("Workflow diagram")).toBeVisible();
   await expect(chat.getByRole("combobox")).toHaveCount(0);
   const context = "Make a greeting and pass it to a second transform.";

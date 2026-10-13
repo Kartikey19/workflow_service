@@ -158,7 +158,6 @@ export function WorkflowChat({
   return (
     <section className="workflow-chat" aria-label="Workflow chat">
       <header className="chat-header row spread">
-        <span className="muted">GLM 5.3 Flash · OpenRouter</span>
         <span className="muted" role="status">
           {accepted} accepted {accepted === 1 ? "step" : "steps"}
         </span>

@@ -42,6 +42,7 @@ import { Runs } from "./runs";
 import { Schedules } from "./schedules";
 import { Alerts } from "./alerts";
 import { Platform } from "./platform";
+import { Organizations } from "./organizations";
 const Providers = lazy(() =>
   import("./providers").then((m) => ({ default: m.Providers })),
 );
@@ -69,17 +70,20 @@ const pages = [
   ["connectors", "Connectors", Plug, "Connect"],
   ["vault", "Vault", LockKeyhole, "Connect"],
   ["webhooks", "Webhooks", Webhook, "Connect"],
+  ["organizations", "Organizations", Building2, "Manage"],
   ["team", "Team", Users, "Manage"],
   ["api-keys", "API keys", KeyRound, "Manage"],
   ["usage", "Usage & plans", ChartNoAxesCombined, "Manage"],
   ["platform", "Platform", Building2, "Platform"],
 ] as const;
 const groups = ["Build", "Operate", "Connect", "Manage", "Platform"] as const;
+function inviteToken() {
+  return location.pathname === "/ui/accept-invite"
+    ? new URLSearchParams(location.search).get("token")
+    : null;
+}
 function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
-  const token =
-    location.pathname === "/ui/accept-invite"
-      ? new URLSearchParams(location.search).get("token")
-      : null;
+  const token = inviteToken();
   const [invite, setInvite] = useState<RecordData | null>(null),
     [error, setError] = useState("");
   useEffect(() => {
@@ -165,11 +169,11 @@ function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
               onSession(session);
             }}
           >
-            {token ? (
+            {token && !invite?.has_account ? (
               <Field label="Your name">
                 <input name="name" required autoComplete="name" />
               </Field>
-            ) : (
+            ) : !token ? (
               <Field label="Email">
                 <input
                   name="email"
@@ -178,14 +182,14 @@ function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
                   autoComplete="username"
                 />
               </Field>
-            )}
+            ) : null}
             <Field
               label="Password"
               hint={
                 token
                   ? invite?.has_account
                     ? "Enter your existing account password."
-                    : "Choose a password with at least 12 characters."
+                    : "Choose a password with at least 10 characters."
                   : undefined
               }
             >
@@ -193,8 +197,12 @@ function SignIn({ onSession }: { onSession: (session: RecordData) => void }) {
                 name="password"
                 type="password"
                 required
-                minLength={token && !invite?.has_account ? 12 : undefined}
-                autoComplete={token ? "new-password" : "current-password"}
+                minLength={token && !invite?.has_account ? 10 : undefined}
+                autoComplete={
+                  token && !invite?.has_account
+                    ? "new-password"
+                    : "current-password"
+                }
               />
             </Field>
           </ActionForm>
@@ -300,7 +308,7 @@ function App() {
         Opening your workspace…
       </div>
     );
-  if (!session)
+  if (!session || inviteToken())
     return (
       <>
         {error && (
@@ -361,11 +369,7 @@ function App() {
                 await api("/auth/switch-org", "POST", {
                   organization_id: e.target.value,
                 });
-                const next = await api("/auth/me");
-                setAgentName("");
-                setRunID("");
-                setSession(next);
-                setError("");
+                location.assign("/ui/workflows");
               } catch (e) {
                 setError((e as Error).message);
               }
@@ -503,6 +507,11 @@ function App() {
                 <Vault admin={admin} />
               ) : currentPage[0] === "webhooks" ? (
                 <Webhooks admin={admin} />
+              ) : currentPage[0] === "organizations" ? (
+                <Organizations
+                  session={session}
+                  onCreated={async () => setSession(await api("/auth/me"))}
+                />
               ) : currentPage[0] === "team" ? (
                 <Team admin={admin} selfID={session.user.id} />
               ) : currentPage[0] === "api-keys" ? (

@@ -20,6 +20,7 @@ func (h *Handler) registerIdentity(r Router) {
 	r.Handle("POST /be/v1/auth/logout", auth.RoleViewer, h.logout)
 	r.Handle("GET /be/v1/auth/me", auth.RoleViewer, h.me)
 	r.Handle("POST /be/v1/auth/switch-org", auth.RoleViewer, h.switchOrg)
+	r.Handle("POST /be/v1/organizations", auth.RoleViewer, h.createOrganization)
 
 	r.Handle("GET /be/v1/members", auth.RoleViewer, h.listMembers)
 	r.Handle("PATCH /be/v1/members/{user_id}", auth.RoleAdmin, h.updateMember)
@@ -426,4 +427,20 @@ func (h *Handler) setOrganizationPlan(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id": uid.String(id), "plan": req.Plan})
+}
+
+func (h *Handler) createOrganization(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	organization, err := h.services.Identity.CreateOrganization(r.Context(), p, req.Name)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"organization": membershipView(organization)})
 }
