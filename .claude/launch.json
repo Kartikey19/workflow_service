@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "weft-api",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/api"],
+      "port": 8080,
+      "url": "http://localhost:8080"
+    },
+    {
+      "name": "weft-worker",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/worker"],
+      "port": 9091
+    }
+  ]
+}
